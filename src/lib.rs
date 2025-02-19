@@ -1,7 +1,7 @@
 #![feature(test)]
 extern crate test;
 
-pub fn size_to_sizeclass_fit_usize(requested_size: usize) -> usize {
+pub fn size_to_sizeclass(requested_size: usize) -> usize {
    if requested_size <= 64 {
       let fitted: usize = 64 / requested_size;
       return 64 / fitted;
@@ -10,7 +10,7 @@ pub fn size_to_sizeclass_fit_usize(requested_size: usize) -> usize {
    }
 }
 
-pub fn size_to_sizeclassnum_fit_usize(requested_size: usize) -> u8 {
+pub fn size_to_sizeclassnum(requested_size: usize) -> u8 {
    let rs: usize = requested_size;
    if rs == 1 {
       return 0;
@@ -47,7 +47,7 @@ pub fn size_to_sizeclassnum_fit_usize(requested_size: usize) -> u8 {
    }
 }
 
-pub fn sizeclassnum_to_sizeclass_fit_usize(scn: u8) -> usize {
+pub fn sizeclassnum_to_sizeclass(scn: u8) -> usize {
    if scn == 0 {
       return 1;
    } else if scn == 1 {
@@ -88,54 +88,58 @@ pub fn sizeclassnum_to_sizeclass_fit_usize(scn: u8) -> usize {
 mod tests {
     use super::*;
 
-    // fit usize
     #[test]
-    fn test_s2scnfu_arg_32() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(32), 13);
+    fn test_s2scn_arg_3() {
+       assert_eq!(size_to_sizeclassnum(3), 2);
     }
 
     #[test]
-    fn test_s2scnfu_arg_64() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(64), 14);
+    fn test_s2scn_arg_32() {
+       assert_eq!(size_to_sizeclassnum(32), 13);
     }
 
     #[test]
-    fn test_s2scnfu_arg_65() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(65), 15);
+    fn test_s2scn_arg_64() {
+       assert_eq!(size_to_sizeclassnum(64), 14);
     }
 
     #[test]
-    fn test_s2scnfu_arg_127() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(127), 15);
+    fn test_s2scn_arg_65() {
+       assert_eq!(size_to_sizeclassnum(65), 15);
     }
 
     #[test]
-    fn test_s2scnfu_arg_128() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(128), 15);
+    fn test_s2scn_arg_127() {
+       assert_eq!(size_to_sizeclassnum(127), 15);
     }
 
     #[test]
-    fn test_s2scnfu_arg_129() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(129), 16);
+    fn test_s2scn_arg_128() {
+       assert_eq!(size_to_sizeclassnum(128), 15);
     }
 
     #[test]
-    fn test_s2scnfu_arg_256() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(256), 16);
+    fn test_s2scn_arg_129() {
+       assert_eq!(size_to_sizeclassnum(129), 16);
     }
 
     #[test]
-    fn test_s2scnfu_arg_257() {
-       assert_eq!(size_to_sizeclassnum_fit_usize(257), 17);
+    fn test_s2scn_arg_256() {
+       assert_eq!(size_to_sizeclassnum(256), 16);
     }
 
     #[test]
-    fn test_roundtrip_fit_usize() {
+    fn test_s2scn_arg_257() {
+       assert_eq!(size_to_sizeclassnum(257), 17);
+    }
+
+    #[test]
+    fn test_roundtripe() {
         for siz in 1..1001 {
-	    let scn_a: u8 = size_to_sizeclassnum_fit_usize(siz);
+	    let scn_a: u8 = size_to_sizeclassnum(siz);
 
-	    let sc: usize = size_to_sizeclass_fit_usize(siz);
-	    let scn_b: u8 = size_to_sizeclassnum_fit_usize(sc);
+	    let sc: usize = size_to_sizeclass(siz);
+	    let scn_b: u8 = size_to_sizeclassnum(sc);
 
 	    assert_eq!(scn_a, scn_b, "siz: {}, sc: {}", siz, sc);
 	}
