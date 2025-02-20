@@ -121,6 +121,7 @@ pub fn layout_to_sizeclass(size: usize, alignment: usize) -> u8 {
 }
 
 pub fn sizeclass_to_slotsize(scn: u8) -> usize {
+//XXX what's the max sizeclass?
     if scn == 0 {
         return 1;
     } else if scn == 1 {
@@ -346,5 +347,13 @@ mod tests {
 	    }
         }
     }
+
+//XXX    #[test]
+//XXX    fn test_overflow_sc_to_ss() {
+//XXX        let ss: usize = sizeclass_to_slotsize(255);
+//XXX        println!("ss: {}", ss);
+//XXX        panic!("WhheeeE");
+//XXX    }
+
 
 }
