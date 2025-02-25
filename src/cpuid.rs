@@ -15,7 +15,7 @@ pub enum Vendor {
 
 pub fn get_vendor_info() -> Vendor {
     let cpuid = unsafe { __cpuid_count(0x0, 0x0) };
-    if cpuid.ebx == 0x68747561&& cpuid.edx == 0x646d6163 && cpuid.ecx == 0x69746e65 {
+    if cpuid.ebx == 0x68747541 && cpuid.edx == 0x69746e65 && cpuid.ecx == 0x444d4163 {
 	Vendor::Amd
     } else if cpuid.ebx == 0x756e6547 && cpuid.edx == 0x49656e69 && cpuid.ecx == 0x6c65746e {
 	Vendor::Intel
