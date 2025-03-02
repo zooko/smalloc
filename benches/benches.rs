@@ -71,6 +71,16 @@ fn bench_sizeclass_to_slotsize(b: &mut Bencher) {
     });
 }
 
+#[inline(always)]
+fn pot_builtin(x: usize) -> bool {
+    x.is_power_of_two()
+}
+
+#[inline(always)]
+fn pot_bittwiddle(x: usize) -> bool {
+    x > 0 && (x & (x - 1)) != 0
+}
+
 #[bench]
 fn bench_pot_builtin_randoms(b: &mut Bencher) {
     let mut r = rand::rng();
@@ -79,7 +89,7 @@ fn bench_pot_builtin_randoms(b: &mut Bencher) {
 
     b.iter(|| {
         let align = reqalignments[i];
-        black_box(align.is_power_of_two());
+        black_box(pot_builtin(align));
 
         i = (i + 1) % NUM_ARGS;
     });
@@ -93,7 +103,7 @@ fn bench_pot_builtin_powtwos(b: &mut Bencher) {
 
     b.iter(|| {
         let align = reqalignments[i];
-        black_box(align.is_power_of_two());
+        black_box(pot_builtin(align));
 
         i = (i + 1) % NUM_ARGS;
     });
@@ -107,7 +117,7 @@ fn bench_pot_bittwiddle_randoms(b: &mut Bencher) {
 
     b.iter(|| {
         let align = reqalignments[i];
-        black_box(align > 0 && (align & (align - 1)) != 0);
+	black_box(pot_bittwiddle(align));
 
         i = (i + 1) % NUM_ARGS;
     });
@@ -121,7 +131,7 @@ fn bench_pot_bittwiddle_powtwos(b: &mut Bencher) {
 
     b.iter(|| {
         let align = reqalignments[i];
-        black_box(align > 0 && (align & (align - 1)) != 0);
+	black_box(pot_bittwiddle(align));
 
         i = (i + 1) % NUM_ARGS;
     });

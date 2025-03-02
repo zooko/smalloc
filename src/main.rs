@@ -80,7 +80,7 @@ fn virtual_bytes_map() {
         
         vbu += space_per_slabset;
         
-        if vbu < 2u128.pow(47) {
+        if vbu <= 2u128.pow(47) {
             println!("{:<20} {:<20}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
         } else {
             println!("{:<20} {:<20} XXXX This exceeds 47 bits of address space", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));

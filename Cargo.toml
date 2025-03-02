@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [package]
 name = "smalloc"
 version = "0.1.1"
@@ -11,3 +13,4 @@ rustix = { version = "0.38.44", features = ["mm"] }
 
 [profile.release]
 lto = "fat"
+rustflags = ["-C", "target-cpu=native"]
