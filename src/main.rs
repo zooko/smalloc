@@ -10,10 +10,6 @@ fn conv(size: u128) -> String {
     byte_size.to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
 }
 
-fn ceil_log2(n: u128) -> u32 {
-    (n - 1).next_power_of_two().trailing_zeros()
-}
-
 fn convsum(size: u128) -> String {
     format!("{} ({:.3}b)", conv(size), (size as f64).log2())
 }
@@ -68,78 +64,68 @@ fn virtual_bytes_map() {
     println!("{:<5} {:<10} {:<10} {:<5} {:<5} {:5} {:<10} {:<20} {:<20}", "sc", "slotsize", "slabsize", "l", "eaws", "flhs", "perslab", "allslabs", "vbu");
     println!("{:<5} {:<10} {:<10} {:<5} {:<5} {:5} {:<10} {:<20} {:<20}", "--", "--------", "--------", "-", "----", "----", "-------", "--------", "---");
     while vbu < 2u128.pow(47) {
-        let space_per_slab: u128 = sc_to_slab_vm_space(sc);
+        let mut space_per_slab: u128 = sc_to_slab_vm_space(sc);
         
-        // We have NUM_SLABSETS of these (one per possible cpuid -- see the docs for details).
-        let mut space_per_slabset = space_per_slab * NUM_SLABSETS;
+        // align the next slab to PAGE_ALIGNMENT
+	space_per_slab = ((space_per_slab - 1) | (PAGE_ALIGNMENT - 1)) + 1;
 
-        // align each slabset to PAGE_ALIGNMENT
-        if space_per_slabset % PAGE_ALIGNMENT != 0 {
-            space_per_slabset += space_per_slabset % PAGE_ALIGNMENT;
-        }
-        
+        // We have NUM_SLABSETS of these
+        let space_per_slabset = space_per_slab * NUM_SLABSETS;
+
         vbu += space_per_slabset;
         
-        if vbu <= 2u128.pow(47) {
-            println!("{:<20} {:<20}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
-        } else {
-            println!("{:<20} {:<20} XXXX This exceeds 47 bits of address space", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
-        }
+        print!("{:<20} {:<20}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
+
+	if vbu > 2u128.pow(45) {
+            let c_void = mm(vbu as usize);
+
+            println!("{:?}", c_void);
+
+	    unsafe { munmap(c_void, vbu as usize).expect("munmap!?") };
+	} else {
+            println!(" ... ");
+	}
 
         sc += 1;
     }
     
 }
 
-use rustix::mm::{mmap_anonymous, MapFlags, ProtFlags};
+use rustix::mm::{mmap_anonymous, munmap, MapFlags, ProtFlags};
 use core::ffi::c_void;
 
 
 fn mm(reqsize: usize) -> *mut c_void {
+    // XXX on MacOSX (and maybe on iOS?) MAP_ANON, MAP_PRIVATE
     let addr = unsafe { mmap_anonymous(
         std::ptr::null_mut(), // Address hint (None for any address)
         reqsize, // Size of the mapping
         ProtFlags::READ | ProtFlags::WRITE, // Protection flags
-        MapFlags::PRIVATE | MapFlags::UNINITIALIZED
+        MapFlags::PRIVATE
     ).expect("Failed to create anonymous mapping") };
 
-    println!("Anonymous mapping created at address: {:?}", addr);
+        //XXX for Linux: MapFlags::UNINITIALIZED . doesn't really optimize much even when it works and it only works on very limited platforms (because it is potentially exposing other process's information to our process
+//XXX    println!("Anonymous mapping created at address: {:?}", addr);
     //XXX | MapFlags::MADV_RANDOM | MapFlags::MADV_DONTDUMP
+    //XXX Look into purgable memory on Mach https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/CachingandPurgeableMemory.html
+    //XXX Look into MADV_FREE on MacOS (and maybe iOS?) (compared to MADV_DONTNEED on Linux)
     return addr;
 }
 
-fn mmap() {
-    println!("mmap'ing!");
-    let mut siz: usize = 1;
-
-    loop { 
-        println!("about to try to mmap {}", convsum(siz as u128));
-
-        let c_void = mm(siz);
-
-        println!("{:?}", c_void);
-
-        siz *= 2;
-    }
-
-}
-
-
-mod cpuid;
-use cpuid::{get_vendor_info, Vendor};
+//XXXmod cpuid;
+//xxxuse cpuid::{get_vendor_info, Vendor};
 
 fn main() {
     println!("Howdy, world!");
 
-    let v: Vendor = get_vendor_info();
-    println!("get_vendor_info(): {:?}", v);
-    if let Vendor::Intel = v {
-        println!("it is Intel");
-    }
+//xxx    let v: Vendor = get_vendor_info();
+//xxx    println!("get_vendor_info(): {:?}", v);
+//xxx    if let Vendor::Intel = v {
+//xxx        println!("it is Intel");
+//xxx    }
     
     //XXXrun_gtlp();
     virtual_bytes_map();
-    //mmap();
     //try_sbrk();
 }
 

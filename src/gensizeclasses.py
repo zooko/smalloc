@@ -28,10 +28,10 @@ prevspace = 0
 #     prevbest = 0
 #     bests = set()
 #     for size in range(space, prevspace, -1):
-#         fitted = math.floor(space/size)
-#         if fitted > prevbest:
-#             # print("size: %2d, fitted: %2d" % (size, fitted))
-#             prevbest = fitted
+#         numfitted = math.floor(space/size)
+#         if numfitted > prevbest:
+#             # print("size: %2d, numfitted: %2d" % (size, numfitted))
+#             prevbest = numfitted
 #             bests.add(size)
 # 
 # #    print(bests)
@@ -42,19 +42,20 @@ prevspace = 0
 # print(spacebests)
 
 spacebests2 = {}
-prevspace = 0
+prevspace = 1
 # for space in (64, 128, 256):
 # for space in (64, 4*2**10):
-for space in (64,):
+for space in (64, 4096):
     bests = set()
-    for siz in range(prevspace+1, space+1):
-        fitted = math.floor(space/siz)
-        biggestfit = math.floor(space/fitted)
-        bests.add(biggestfit)
-        # print("space: %s, siz: %s, fitted: %s, biggestfit: %s" % (space, siz, fitted, biggestfit,))
+    for siz in range(prevspace+1, space):
+        numfitted = math.floor(space/siz)
+        if numfitted > 1:
+            biggestfit = math.floor(space/numfitted)
+            bests.add((biggestfit, numfitted))
+        # print("space: %s, siz: %s, numfitted: %s, biggestfit: %s" % (space, siz, numfitted, biggestfit,))
         
     spacebests2[space] = bests
-    prevspace = space
+    prevspace = space-1
 
 
 print(spacebests2)
@@ -69,10 +70,10 @@ print(spacebests2)
 #    prevbest = 0
 #    bests = []
 #    for size in range(space, 0, -1):
-#        fitted = math.floor(space/size)
-#        if fitted > prevbest:
-#            print("size: %2d, fitted: %2d" % (size, fitted))
-#            prevbest = fitted
+#        numfitted = math.floor(space/size)
+#        if numfitted > prevbest:
+#            print("size: %2d, numfitted: %2d" % (size, numfitted))
+#            prevbest = numfitted
 #            bests.append(size)
 
 #     prevspace = space

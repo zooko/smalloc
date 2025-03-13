@@ -10,7 +10,7 @@ use smalloc::sizeclass_to_slotsize;
 use std::hint::black_box;
 
 const MAX: usize = 2usize.pow(39);
-const NUM_ARGS: usize = 64;
+const NUM_ARGS: usize = 128;
 
 #[bench]
 fn bench_layout_to_sizeclass_noalign(b: &mut Bencher) {
@@ -19,9 +19,9 @@ fn bench_layout_to_sizeclass_noalign(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let num = reqsizs[i];
+        let num = reqsizs[i % NUM_ARGS];
         black_box(layout_to_sizeclass(num, 1));
-        i = (i + 1) % NUM_ARGS;
+        i += 1;
     });
 }
 
@@ -33,11 +33,11 @@ fn bench_layout_to_sizeclass_align(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let num = reqsizs[i];
-        let align = reqalignments[i];
+        let num = reqsizs[i % NUM_ARGS];
+        let align = reqalignments[i % NUM_ARGS];
         black_box(layout_to_sizeclass(num, align));
 
-        i = (i + 1) % NUM_ARGS;
+        i += 1;
     });
 }
 
@@ -49,11 +49,11 @@ fn bench_layout_to_sizeclass_hugealign(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let num = reqsizs[i];
-        let align = reqalignments[i];
+        let num = reqsizs[i % NUM_ARGS];
+        let align = reqalignments[i % NUM_ARGS];
         black_box(layout_to_sizeclass(num, align));
 
-        i = (i + 1) % NUM_ARGS;
+        i += 1;
     });
 }
 
@@ -64,10 +64,10 @@ fn bench_sizeclass_to_slotsize(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let sc = reqscs[i];
+        let sc = reqscs[i % NUM_ARGS];
         black_box(sizeclass_to_slotsize(sc));
 
-        i = (i + 1) % NUM_ARGS;
+	i += 1;
     });
 }
 
@@ -88,10 +88,10 @@ fn bench_pot_builtin_randoms(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let align = reqalignments[i];
+        let align = reqalignments[i % NUM_ARGS];
         black_box(pot_builtin(align));
 
-        i = (i + 1) % NUM_ARGS;
+	i += 1;
     });
 }
 
@@ -102,10 +102,10 @@ fn bench_pot_builtin_powtwos(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let align = reqalignments[i];
+        let align = reqalignments[i % NUM_ARGS];
         black_box(pot_builtin(align));
 
-        i = (i + 1) % NUM_ARGS;
+	i += 1;
     });
 }
 
@@ -116,10 +116,10 @@ fn bench_pot_bittwiddle_randoms(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let align = reqalignments[i];
+        let align = reqalignments[i % NUM_ARGS];
 	black_box(pot_bittwiddle(align));
 
-        i = (i + 1) % NUM_ARGS;
+	i += 1;
     });
 }
 
@@ -130,10 +130,9 @@ fn bench_pot_bittwiddle_powtwos(b: &mut Bencher) {
     let mut i = 0;
 
     b.iter(|| {
-        let align = reqalignments[i];
+        let align = reqalignments[i % NUM_ARGS];
 	black_box(pot_bittwiddle(align));
 
-        i = (i + 1) % NUM_ARGS;
+	i += 1;
     });
 }
-
