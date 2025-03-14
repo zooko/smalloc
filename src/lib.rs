@@ -96,10 +96,10 @@ mod tests {
 	    (9, 32, 12), // 32 byte slots
 	    (9, 64, 13), // 64 byte slots
 	    (9, 128, 14), // 128 byte slots
-	    (9, 256, 15), // 512 byte slots
-	    (9, 512, 15), // 512 byte slots
-	    (9, 1024, 16), // 2048 byte slots
-	    (9, 2048, 16), // 2048 byte slots
+	    (9, 256, 15), // 256 byte slots
+	    (9, 512, 16), // 512 byte slots
+	    (9, 1024, 17), // 1024 byte slots
+	    (9, 2048, 19), // 2048 byte slots
 	    (10, 1, 8),
 	    (10, 2, 8),
 	    (10, 4, 9), // 12 byte slots
@@ -109,19 +109,19 @@ mod tests {
 	    (65, 1, 14),
 	    (127, 1, 14),
 	    (128, 1, 14),
-	    (129, 1, 15), // 512 byte slots
-	    (256, 1, 15), // 512 byte slots
-	    (257, 1, 15),
-	    (2047, 1, 16), // 2 KiB slots
-	    (2048, 1, 16), // 2 KiB slots
-	    (2049, 1, 17), // 8 KiB slots
-	    (4095, 1, 17), // 8 KiB slots
-	    (4096, 1, 17), // 8 KiB slots
-	    (4097, 1, 17), // 8 KiB slots
-	    (8191, 1, 17), // 8 KiB slots
-	    (8192, 1, 17), // 8 KiB slots
-	    (8193, 1, 18), // 32 KiB slots
-	    (16384, 1, 18) // 32 KiB slots
+	    (129, 1, 15), // 256 byte slots
+	    (256, 1, 15), // 256 byte slots
+	    (257, 1, 16), // 512 byte slots
+	    (2047, 1, 19), // 2 KiB slots
+	    (2048, 1, 19), // 2 KiB slots
+	    (2049, 1, 20), // 1 MiB slots
+	    (4095, 1, 20), // 1 MiB slots
+	    (4096, 1, 20), // 1 MiB slots
+	    (4097, 1, 20), // 1 MiB slots
+	    (8191, 1, 20), // 1 MiB slots
+	    (8192, 1, 20), // 1 MiB slots
+	    (8193, 1, 20), // 1 MiB slots
+	    (16384, 1, 20) // 1 MiB slots
 	];
 
 	
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_sc2ss2sc() {
-	for sc in 0..NUM_SCS {
+	for sc in 0..NUM_SCSU8 {
 	    let ss = sizeclass_to_slotsize(sc);
 	    let rtsc = layout_to_sizeclass(ss, 1);
 	    assert_eq!(sc, rtsc, "{}", ss);
