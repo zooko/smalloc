@@ -1,8 +1,6 @@
 use smalloc::sizeclass_to_slotsize;
 use rustix;
 
-extern crate bytesize;
-
 use bytesize::ByteSize;
 
 fn conv(size: u128) -> String {
@@ -23,7 +21,9 @@ fn sc_to_slab_vm_space(sc: u8) -> u128 {
     //XXXlet l: u128 = if ss <= 2u128.pow(20) { 2 } else { if ss <= 2u128.pow(30) { 1 } else { 0 }};
     //XXXlet l: u128 = if ss <= 2u128.pow(20) { 2 } else { if ss <= 2u128.pow(28) { 1 } else { 0 }};
     //XXXlet l: u128 = if ss <= 2u128.pow(21) { 2 } else { 1 };
-    let l: u128 = 2;
+    //XXXlet l: u128 = 2;
+    //XXXlet l: u128 = 3;
+    let l: u128 = if ss == 1 { 1 } else if ss == 2 { 2 } else { 3 };
 
     let freelistheadsize: u128;
     let everallocatedwordsize: u128;
@@ -49,7 +49,7 @@ fn sc_to_slab_vm_space(sc: u8) -> u128 {
         slabsize = ss;
     }
 
-    print!("{:<5} {:<10} {:<10} {:<5} {:<5} {:<5} {:<10} ", sc, conv(ss), conv(slabsize), l, everallocatedwordsize, freelistheadsize, conv(freelistheadsize+everallocatedwordsize+slabsize));
+    print!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} ", sc, conv(ss), conv(slabsize), l, everallocatedwordsize, freelistheadsize, conv(freelistheadsize+everallocatedwordsize+slabsize));
 
     // Okay that's all the virtual space we need for this slab!
     return freelistheadsize + everallocatedwordsize + slabsize;
@@ -60,9 +60,9 @@ fn virtual_bytes_map() {
 
     let mut sc: u8 = 0; // sizeclass / slab number
 
-    println!("NUM_SLABSETS: {}, Using l = 2", NUM_SLABSETS);
-    println!("{:<5} {:<10} {:<10} {:<5} {:<5} {:5} {:<10} {:<20} {:<20}", "sc", "slotsize", "slabsize", "l", "eaws", "flhs", "perslab", "allslabs", "vbu");
-    println!("{:<5} {:<10} {:<10} {:<5} {:<5} {:5} {:<10} {:<20} {:<20}", "--", "--------", "--------", "-", "----", "----", "-------", "--------", "---");
+    println!("NUM_SLABSETS: {}", NUM_SLABSETS);
+    println!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} {:>24} {:>24}", "sc", "slotsize", "slabsize", "l", "eaws", "flhs", "perslab", "allslabs", "vbu");
+    println!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} {:>24} {:>24}", "--", "--------", "--------", "-", "----", "----", "-------", "--------", "---");
     while vbu < 2u128.pow(47) {
         let mut space_per_slab: u128 = sc_to_slab_vm_space(sc);
         
@@ -74,7 +74,7 @@ fn virtual_bytes_map() {
 
         vbu += space_per_slabset;
         
-        print!("{:<20} {:<20}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
+        print!("{:>24} {:>24}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
 
 	if vbu > 2u128.pow(45) {
             let c_void = mm(vbu as usize);
