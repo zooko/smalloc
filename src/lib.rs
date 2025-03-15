@@ -6,7 +6,7 @@ extern crate test;
 // sc    slotsize   slabsize   l     eaws  flhs  perslab    allslabs             vbu                 
 // --    --------   --------   -     ----  ----  -------    --------             ---                 
 
-pub const NUM_SCSU8: u8 =21;
+pub const NUM_SCSU8: u8 =22;
 
 #[inline(always)]
 pub fn layout_to_sizeclass(size: usize, alignment: usize) -> u8 {
@@ -15,61 +15,63 @@ pub fn layout_to_sizeclass(size: usize, alignment: usize) -> u8 {
     // Round up size to the nearest multiple of alignment:
     let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
 
-    // Sizes where we can fit more slots into a 64-byte cache line.
-    if alignedsize <= 2 { return 0; }
-    else if alignedsize == 3 { return 1; }
-    else if alignedsize == 4 { return 2; }
-    else if alignedsize == 5 { return 3; }
-    else if alignedsize == 6 { return 4; }
-    else if alignedsize == 7 { return 5; }
-    else if alignedsize == 8 { return 6; }
-    else if alignedsize == 9 { return 7; }
-    else if alignedsize == 10 { return 8; }
-    else if alignedsize <= 12 { return 9; }
-    else if alignedsize <= 16 { return 10; }
-    else if alignedsize <= 21 { return 11; }
-    else if alignedsize <= 32 { return 12; }
+    // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
+    if alignedsize <= 1 { return 0; }
+    else if alignedsize <= 2 { return 1; }
+    else if alignedsize == 3 { return 2; }
+    else if alignedsize == 4 { return 3; }
+    else if alignedsize == 5 { return 4; }
+    else if alignedsize == 6 { return 5; }
+    else if alignedsize == 7 { return 6; }
+    else if alignedsize == 8 { return 7; }
+    else if alignedsize == 9 { return 8; }
+    else if alignedsize == 10 { return 9; }
+    else if alignedsize <= 12 { return 10; }
+    else if alignedsize <= 16 { return 11; }
+    else if alignedsize <= 21 { return 12; }
+    else if alignedsize <= 32 { return 13; }
+    else if alignedsize <= 64 { return 14; }
 
     // Sizes where we can fit more slots into a 4096-byte memory page.
-    else if alignedsize <= 64 { return 13; }
-    else if alignedsize <= 128 { return 14; }
-    else if alignedsize <= 256 { return 15; }
-    else if alignedsize <= 512 { return 16; }
-    else if alignedsize <= 1024 { return 17; }
-    else if alignedsize <= 1365 { return 18; }
-    else if alignedsize <= 2048 { return 19; }
+    else if alignedsize <= 128 { return 15; }
+    else if alignedsize <= 256 { return 16; }
+    else if alignedsize <= 512 { return 17; }
+    else if alignedsize <= 1024 { return 18; }
+    else if alignedsize <= 1365 { return 19; }
+    else if alignedsize <= 2048 { return 20; }
 
     // Huge slots.
-    else { return 20; }
+    else { return 21; }
 }
 
 pub fn sizeclass_to_slotsize(scn: u8) -> usize {
-    // Sizes where we can fit more slots into a 64-byte cache line.
-    if scn == 0 { return 2; }
-    else if scn == 1 { return 3; }
-    else if scn == 2 { return 4; }
-    else if scn == 3 { return 5; }
-    else if scn == 4 { return 6; }
-    else if scn == 5 { return 7; }
-    else if scn == 6 { return 8; }
-    else if scn == 7 { return 9; }
-    else if scn == 8 { return 10; }
-    else if scn == 9 { return 12; }
-    else if scn == 10 { return 16; }
-    else if scn == 11 { return 21; }
-    else if scn == 12 { return 32; }
-    else if scn == 13 { return 64; }
+    // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
+    if scn == 0 { return 1; }
+    else if scn == 1 { return 2; }
+    else if scn == 2 { return 3; }
+    else if scn == 3 { return 4; }
+    else if scn == 4 { return 5; }
+    else if scn == 5 { return 6; }
+    else if scn == 6 { return 7; }
+    else if scn == 7 { return 8; }
+    else if scn == 8 { return 9; }
+    else if scn == 9 { return 10; }
+    else if scn == 10 { return 12; }
+    else if scn == 11 { return 16; }
+    else if scn == 12 { return 21; }
+    else if scn == 13 { return 32; }
+    else if scn == 14 { return 64; }
 
     // Sizes where we can fit more slots into a 4096-byte memory page.
-    else if scn == 14 { return 128; }
-    else if scn == 15 { return 256; }
-    else if scn == 16 { return 512; }
-    else if scn == 17 { return 1024; }
-    else if scn == 18 { return 1365; }
-    else if scn == 19 { return 2048; }
+    else if scn == 15 { return 128; }
+    else if scn == 16 { return 256; }
+    else if scn == 17 { return 512; }
+    else if scn == 18 { return 1024; }
+    else if scn == 19 { return 1365; }
+    else if scn == 20 { return 2048; }
 
     // Huge slots.
-    else { return 2usize.pow(20); }
+    else { return 2usize.pow(29); }
 }
 
 
