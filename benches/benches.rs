@@ -60,7 +60,7 @@ fn bench_layout_to_sizeclass_hugealign(b: &mut Bencher) {
 #[bench]
 fn bench_sizeclass_to_slotsize(b: &mut Bencher) {
     let mut r = rand::rng();
-    let reqscs: Vec<u8> = (0..NUM_ARGS).map(|_| r.random_range(0..35)).collect();
+    let reqscs: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..35)).collect();
     let mut i = 0;
 
     b.iter(|| {
