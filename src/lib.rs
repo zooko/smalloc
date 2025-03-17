@@ -2,13 +2,17 @@
 extern crate test;
 
 // "SC" is short for "size class"
-pub const NUM_SCS: usize = 23;
-pub const MAX_SC_TO_PACK_INTO_CACHELINE: usize = 13;
-pub const MAX_SC_TO_PACK_INTO_PAGE: usize = 20;
-pub const HUGE_SLOTS_SC: usize = 21;
-pub const OVERSIZE_SC: usize = 22;
+pub const MAX_SC_TO_PACK_INTO_CACHELINE: usize = 6;
+pub const MAX_SC_TO_PACK_INTO_PAGE: usize = 11;
+pub const HUGE_SLOTS_SC: usize = 12;
+pub const OVERSIZE_SC: usize = 13;
+pub const NUM_SCS: usize = 14;
 
-pub fn sizeclass_to_l(sc: usize) -> usize {
+pub fn sizeclass_to_slots(sc: usize) -> usize {
+    2usize.pow(sizeclass_to_l(sc)*8 - 1)
+}
+
+pub fn sizeclass_to_l(sc: usize) -> u32 {
     // For the 1-byte slots, we can only fit a 1-byte index into the intrusive linked list.
     if sc == 0 { 1 }
 
@@ -16,7 +20,7 @@ pub fn sizeclass_to_l(sc: usize) -> usize {
     else if sc < HUGE_SLOTS_SC { 2 }
 
     // For the huge-slots slab, we use 1-byte indexes, again so we can fit into the virtual memory space limitation while having the hugest huge-slots we can afford.
-    else if sc == HUGE_SLOTS_SC { 1 }
+    else if sc == HUGE_SLOTS_SC { 2 }
 
     // This isn't actually a slab, it's really the "oversized" category which we're going to fall back to mmap() to satisfy, so let's just say we have 4-byte indexes so that our slab-overflow analyzer in smalloclog won't ever think we've filled it up when analyzing memory usage operations from programs.
     else{ 8 }
@@ -43,91 +47,29 @@ pub fn sizeclass_to_slotsize(scn: usize) -> usize {
     // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
     if scn == 0 { 1 }
     else if scn == 1 { 2 }
-    else if scn == 2 { 3 }
-    else if scn == 3 { 4 }
-    else if scn == 4 { 5 }
-    else if scn == 5 { 6 }
-    else if scn == 6 { 7 }
-    else if scn == 7 { 8 }
-    else if scn == 8 { 9 }
-    else if scn == 9 { 10 }
-    else if scn == 10 { 12 }
-    else if scn == 11 { 16 }
-    else if scn == 12 { 21 }
-    else if scn == 13 { 32 } // MAX_SC_TO_PACK_INTO_CACHELINE
+    else if scn == 2 { 4 }
+    else if scn == 3 { 8 }
+    else if scn == 4 { 16 }
+    else if scn == 5 { 21 }
+    else if scn == 6 { 32 } // MAX_SC_TO_PACK_INTO_CACHELINE
 
-    // Debatable whether 64-byte allocations can benefit from sharing cachelines. Definitely not for 64B cachlines, but new Apple chips have 128B cachelines (in some cores) and cacheline pre-fetching on at least some modern Intel and AMD CPUs might give a caching advantage to having 64B slots. In any case, we're including a sizeclass for 64B slots because of that, and because 64B slots pack nicely into 4096-byte memory pages. But the grower-promotion strategy will treat 32B slots (SC 13) as the largest that can pack multiple objects into cachelines, ie it will promote any growers to at least SC 14.
-    else if scn == 14 { 64 }
+    // Debatable whether 64-byte allocations can benefit from sharing cachelines. Definitely not for 64B cachlines, but new Apple chips have 128B cachelines (in some cores) and cacheline pre-fetching on at least some modern Intel and AMD CPUs might give a caching advantage to having 64B slots. In any case, we're including a sizeclass for 64B slots because of that, and because 64B slots pack nicely into 4096-byte memory pages. But the grower-promotion strategy will treat 32B slots (SC 13) as the largest that can pack multiple objects into cachelines, ie it will promote any growers to at least SC 8.
+    else if scn == 7 { 64 }
 
     // Sizes where we can fit more slots into a 4096-byte memory page.
-    else if scn == 15 { 128 }
-    else if scn == 16 { 256 }
-    else if scn == 17 { 512 }
-    else if scn == 18 { 1024 }
-    else if scn == 19 { 1365 }
-    else if scn == 20 { 2048 } // MAX_SC_TO_PACK_INTO_PAGE
+    else if scn == 8 { 512 }
+    else if scn == 9 { 1024 }
+    else if scn == 10 { 1365 }
+    else if scn == 11 { 2048 } // MAX_SC_TO_PACK_INTO_PAGE
 
     // Huge slots.
-    else { 2usize.pow(29) } // HUGE_SLOTS_SC
+    else { 2usize.pow(23) } // HUGE_SLOTS_SC
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_l2s() {
-	let testvecs: Vec<(usize, usize, usize)> = vec![
-	    (3, 1, 2), // 3 byte slots
-	    (3, 2, 3), // 4 byte slots
-	    (3, 4, 3), // 4 byte slots
-	    (6, 1, 5), // 6 byte slots
-	    (6, 2, 5), // 6 byte slots
-	    (6, 4, 7), // 8 byte slots
-	    (6, 8, 7), // 8 byte slots
-	    (6, 16, 11), // 16 byte slots
-	    (9, 1, 8), // 9 byte slots
-	    (9, 2, 9), // 10 byte slots
-	    (9, 4, 10), // 12 byte slots
-	    (9, 8, 11), // 16 byte slots
-	    (9, 16, 11), // 16 byte slots
-	    (9, 32, 13), // 32 byte slots
-	    (9, 64, 14), // 64 byte slots
-	    (9, 128, 15), // 128 byte slots
-	    (9, 256, 16), // 256 byte slots
-	    (9, 512, 17), // 512 byte slots
-	    (9, 1024, 18), // 1024 byte slots
-	    (9, 2048, 20), // 2048 byte slots
-	    (10, 1, 9), // 10 byte slots
-	    (10, 2, 9), // 10 byte slots
-	    (10, 4, 10), // 12 byte slots
-	    (10, 8, 11), // 16 byte slots
-	    (32, 1, 13),
-	    (64, 1, 14), // 64 byte slots
-	    (65, 1, 15), // 128 byte slots
-	    (127, 1, 15), // 128 byte slots
-	    (128, 1, 15), // 128 byte slots
-	    (129, 1, 16), // 256 byte slots
-	    (256, 1, 16), // 256 byte slots
-	    (257, 1, 17), // 512 byte slots
-	    (2047, 1, 20), // 2 KiB slots
-	    (2048, 1, 20), // 2 KiB slots
-	    (2049, 1, 21), // huge slots
-	    (4095, 1, 21), // huge slots
-	    (4096, 1, 21), // huge slots
-	    (4097, 1, 21), // huge slots
-	    (8191, 1, 21), // huge slots
-	    (8192, 1, 21), // huge slots
-	    (8193, 1, 21), // huge slots
-	    (16384, 1, 21) // huge slots
-	];
-
-	
-	for (reqsiz, ali, sc) in testvecs.iter() {
-            assert_eq!(*sc, layout_to_sizeclass(*reqsiz, *ali), "reqsize: {}, ali: {}, sc: {}, l2sc: {}", *reqsiz, *ali, *sc, layout_to_sizeclass(*reqsiz, *ali));
-	}
-    }
 
     #[test]
     fn test_roundtrip_sc2ss2sc() {

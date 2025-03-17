@@ -1,10 +1,9 @@
-use smalloc::{sizeclass_to_slotsize, OVERSIZE_SC};
+use smalloc::{sizeclass_to_slotsize, sizeclass_to_l, sizeclass_to_slots, OVERSIZE_SC, HUGE_SLOTS_SC};
 
 use bytesize::ByteSize;
 
 fn conv(size: usize) -> String {
-    let byte_size = ByteSize::b(size as u64);
-    byte_size.to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
+    ByteSize::b(size as u64).to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
 }
 
 fn convsum(size: usize) -> String {
@@ -15,46 +14,22 @@ fn convsum(size: usize) -> String {
 const NUM_SLABSETS: usize = 256;
 const PAGE_ALIGNMENT: usize = 4096;
 
-use smalloc::sizeclass_to_l;
-
 fn sc_to_slab_vm_space(sc: usize) -> usize {
     let ss = sizeclass_to_slotsize(sc);
+    let l = sizeclass_to_l(sc) as usize; // number of bytes in this sizeclass's indexes
+    let s = sizeclass_to_slots(sc);
 
-    //XXXlet l: usize = if ss <= 2usize.pow(20) { 2 } else { if ss <= 2usize.pow(30) { 1 } else { 0 }};
-    //XXXlet l: usize = if ss <= 2usize.pow(20) { 2 } else { if ss <= 2usize.pow(28) { 1 } else { 0 }};
-    //XXXlet l: usize = if ss <= 2usize.pow(21) { 2 } else { 1 };
-    //XXXlet l: usize = 3;
-    //XXXlet l: usize = 2;
-    //XXXlet l: usize = if ss == 1 { 1 } else if ss == 2 { 2 } else { 3 };
-    //XXXlet l: usize = if sc < NUM_SCS-1 { 2 } else { 1 };
-    //XXXlet l: usize = if sc == 0 { 1 } else if sc < NUM_SCS-1 { 2 } else { 1 };
-    let l = sizeclass_to_l(sc); // number of bytes in this sizeclass's indexes
+    // We need one words of size `l` for the head pointer to the free list.
+    let freelistheadsize = l;
 
-    let freelistheadsize;
-    let everallocatedwordsize;
-    let slabsize;
-    if l > 0 {
-        let s = 2usize.pow((l as u32)*8 - 1);
+    // We need this many bytes for the `everallocated` word:
+    let everallocatedwordsize = l;
 
-        // The slab takes up `s * ss` virtual bytes:
-        slabsize = s * ss;
+    // The slab takes up `s * ss` virtual bytes:
+    let slabsize = s * ss;
 
-        // We need one words of size `l` for the head pointer to the free list.
-        freelistheadsize = l;
-
-        // We need this many bytes for the `everallocated` word:
-        everallocatedwordsize = l;
-    } else {
-        // No free list for 1-slot slabs
-        // But we do need a single bit to indicate whether this slot is allocated or not. Let's use the free list head for that.
-        freelistheadsize = 1;
-        everallocatedwordsize = 0; // No everallocated word for 1-slot slabs
-
-        // The slab takes up `ss` virtual bytes:
-        slabsize = ss;
-    }
-
-    print!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} ", sc, conv(ss), conv(slabsize), l, everallocatedwordsize, freelistheadsize, conv(freelistheadsize+everallocatedwordsize+slabsize));
+    let tot = freelistheadsize+everallocatedwordsize+slabsize;
+    print!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} ", sc, conv(ss), conv(slabsize), l, everallocatedwordsize, freelistheadsize, conv(tot));
 
     // Okay that's all the virtual space we need for this slab!
     freelistheadsize + everallocatedwordsize + slabsize
@@ -77,23 +52,28 @@ fn virtual_bytes_map() {
 
         vbu += space_per_slabset;
         
-        print!("{:>24} {:>24}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
+        println!("{:>24} {:>24}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
 
-        let c_void = mm(vbu);
-
-        println!("{:?}", c_void);
     }
 
-    let maxvbu = 2usize.pow(47);
-    let remainder = maxvbu-vbu;
-    println!("Okay this vmmap takes up {}, out of {}, leaving {}...", convsum(vbu), convsum(maxvbu), convsum(remainder));
+    //XXXlet maxvbu = 2usize.pow(47);
+    //XXXlet remainder = maxvbu-vbu;
+    //XXXprintln!("Okay this vmmap takes up {}, out of {}, leaving {}...", convsum(vbu), convsum(maxvbu), convsum(remainder));
+    let mmap = mm(vbu);
+
+    println!("{:?}", mmap);
+
+    //XXX // How big of huge slots could we fit in here if we have 2^16-1 huge slots?
+    //XXX let hugeslotsize = remainder / (NUM_SLABSETS * (2usize.pow(16)-1));
+    //XXX println!("We could have {} * {} huge slots of size {}", NUM_SLABSETS, (2u32.pow(16)-1), hugeslotsize);
 }
 
-use memmapix::{MmapOptions, MmapMut};
-
+use memmapix::{MmapOptions, MmapMut, Advice};
 
 fn mm(reqsize: usize) -> MmapMut {
-    MmapOptions::new().len(reqsize).map_anon().unwrap()
+    let mm = MmapOptions::new().len(reqsize).map_anon().unwrap();
+    mm.advise(Advice::Random).ok();
+    mm
 
     // XXX We'll have to use https://docs.rs/rustix/latest/rustix/mm/fn.madvise.html to madvise more flags...
 	
