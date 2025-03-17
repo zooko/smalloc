@@ -82,8 +82,6 @@ fn virtual_bytes_map() {
         let c_void = mm(vbu);
 
         println!("{:?}", c_void);
-
-	unsafe { munmap(c_void, vbu).expect("munmap!?") };
     }
 
     let maxvbu = 2usize.pow(47);
@@ -91,23 +89,15 @@ fn virtual_bytes_map() {
     println!("Okay this vmmap takes up {}, out of {}, leaving {}...", convsum(vbu), convsum(maxvbu), convsum(remainder));
 }
 
-use rustix::mm::{mmap_anonymous, munmap, MapFlags, ProtFlags};
-use core::ffi::c_void;
+use memmapix::{MmapOptions, MmapMut};
 
 
-fn mm(reqsize: usize) -> *mut c_void {
-    // XXX on MacOSX (and maybe on iOS?) MAP_ANON, MAP_PRIVATE
-    unsafe {
-	mmap_anonymous(
-            std::ptr::null_mut(), // Address hint (None for any address)
-            reqsize, // Size of the mapping
-            ProtFlags::READ | ProtFlags::WRITE, // Protection flags
-            MapFlags::PRIVATE
-	).expect("Failed to create anonymous mapping")
-    }
-    
+fn mm(reqsize: usize) -> MmapMut {
+    MmapOptions::new().len(reqsize).map_anon().unwrap()
+
+    // XXX We'll have to use https://docs.rs/rustix/latest/rustix/mm/fn.madvise.html to madvise more flags...
+	
     //XXX for Linux: MapFlags::UNINITIALIZED . doesn't really optimize much even when it works and it only works on very limited platforms (because it is potentially exposing other process's information to our process
-    //XXX    println!("Anonymous mapping created at address: {:?}", addr);
     //XXX | MapFlags::MADV_RANDOM | MapFlags::MADV_DONTDUMP
     //XXX Look into purgable memory on Mach https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/CachingandPurgeableMemory.html
     //XXX Look into MADV_FREE on MacOS (and maybe iOS?) (compared to MADV_DONTNEED on Linux)
@@ -125,8 +115,6 @@ fn main() {
 //xxx        println!("it is Intel");
 //xxx    }
     
-    //XXXrun_gtlp();
     virtual_bytes_map();
-    //try_sbrk();
 }
 
