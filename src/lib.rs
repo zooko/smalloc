@@ -1,11 +1,6 @@
 #![feature(test)]
 extern crate test;
 
-// This algorithm generates the following slot sizes for slabs:
-
-// sc    slotsize   slabsize   l     eaws  flhs  perslab    allslabs             vbu                 
-// --    --------   --------   -     ----  ----  -------    --------             ---                 
-
 // "SC" is short for "size class"
 pub const NUM_SCS: usize = 23;
 pub const MAX_SC_TO_PACK_INTO_CACHELINE: usize = 13;
@@ -84,48 +79,48 @@ mod tests {
     #[test]
     fn test_l2s() {
 	let testvecs: Vec<(usize, usize, usize)> = vec![
-	    (3, 1, 1),
-	    (3, 2, 2),
-	    (3, 4, 2),
-	    (6, 1, 4), // 6 byte slots
-	    (6, 2, 4), // 6 byte slots
-	    (6, 4, 6), // 8 byte slots
-	    (6, 8, 6), // 8 byte slots
-	    (6, 16, 10), // 16 byte slots
-	    (9, 1, 7), // 9 byte slots
-	    (9, 2, 8), // 10 byte slots
-	    (9, 4, 9), // 12 byte slots
-	    (9, 8, 10), // 16 byte slots
-	    (9, 16, 10), // 16 byte slots
-	    (9, 32, 12), // 32 byte slots
-	    (9, 64, 13), // 64 byte slots
-	    (9, 128, 14), // 128 byte slots
-	    (9, 256, 15), // 256 byte slots
-	    (9, 512, 16), // 512 byte slots
-	    (9, 1024, 17), // 1024 byte slots
-	    (9, 2048, 19), // 2048 byte slots
-	    (10, 1, 8),
-	    (10, 2, 8),
-	    (10, 4, 9), // 12 byte slots
-	    (10, 8, 10),
-	    (32, 1, 12),
-	    (64, 1, 13),
-	    (65, 1, 14),
-	    (127, 1, 14),
-	    (128, 1, 14),
-	    (129, 1, 15), // 256 byte slots
-	    (256, 1, 15), // 256 byte slots
-	    (257, 1, 16), // 512 byte slots
-	    (2047, 1, 19), // 2 KiB slots
-	    (2048, 1, 19), // 2 KiB slots
-	    (2049, 1, 20), // 1 MiB slots
-	    (4095, 1, 20), // 1 MiB slots
-	    (4096, 1, 20), // 1 MiB slots
-	    (4097, 1, 20), // 1 MiB slots
-	    (8191, 1, 20), // 1 MiB slots
-	    (8192, 1, 20), // 1 MiB slots
-	    (8193, 1, 20), // 1 MiB slots
-	    (16384, 1, 20) // 1 MiB slots
+	    (3, 1, 2), // 3 byte slots
+	    (3, 2, 3), // 4 byte slots
+	    (3, 4, 3), // 4 byte slots
+	    (6, 1, 5), // 6 byte slots
+	    (6, 2, 5), // 6 byte slots
+	    (6, 4, 7), // 8 byte slots
+	    (6, 8, 7), // 8 byte slots
+	    (6, 16, 11), // 16 byte slots
+	    (9, 1, 8), // 9 byte slots
+	    (9, 2, 9), // 10 byte slots
+	    (9, 4, 10), // 12 byte slots
+	    (9, 8, 11), // 16 byte slots
+	    (9, 16, 11), // 16 byte slots
+	    (9, 32, 13), // 32 byte slots
+	    (9, 64, 14), // 64 byte slots
+	    (9, 128, 15), // 128 byte slots
+	    (9, 256, 16), // 256 byte slots
+	    (9, 512, 17), // 512 byte slots
+	    (9, 1024, 18), // 1024 byte slots
+	    (9, 2048, 20), // 2048 byte slots
+	    (10, 1, 9), // 10 byte slots
+	    (10, 2, 9), // 10 byte slots
+	    (10, 4, 10), // 12 byte slots
+	    (10, 8, 11), // 16 byte slots
+	    (32, 1, 13),
+	    (64, 1, 14), // 64 byte slots
+	    (65, 1, 15), // 128 byte slots
+	    (127, 1, 15), // 128 byte slots
+	    (128, 1, 15), // 128 byte slots
+	    (129, 1, 16), // 256 byte slots
+	    (256, 1, 16), // 256 byte slots
+	    (257, 1, 17), // 512 byte slots
+	    (2047, 1, 20), // 2 KiB slots
+	    (2048, 1, 20), // 2 KiB slots
+	    (2049, 1, 21), // huge slots
+	    (4095, 1, 21), // huge slots
+	    (4096, 1, 21), // huge slots
+	    (4097, 1, 21), // huge slots
+	    (8191, 1, 21), // huge slots
+	    (8192, 1, 21), // huge slots
+	    (8193, 1, 21), // huge slots
+	    (16384, 1, 21) // huge slots
 	];
 
 	
@@ -136,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_sc2ss2sc() {
-	for sc in 0..NUM_SCS {
+	for sc in 0..OVERSIZE_SC {
 	    let ss = sizeclass_to_slotsize(sc);
 	    let rtsc = layout_to_sizeclass(ss, 1);
 	    assert_eq!(sc, rtsc, "{}", ss);

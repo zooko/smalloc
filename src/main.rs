@@ -1,4 +1,4 @@
-use smalloc::{sizeclass_to_slotsize, NUM_SCS, OVERSIZE_SC};
+use smalloc::{sizeclass_to_slotsize, OVERSIZE_SC};
 
 use bytesize::ByteSize;
 
