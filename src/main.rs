@@ -1,4 +1,4 @@
-use smalloc::{sizeclass_to_slotsize, sizeclass_to_l, sizeclass_to_slots, OVERSIZE_SC, HUGE_SLOTS_SC};
+use smalloc::{sizeclass_to_slotsize, sizeclass_to_l, sizeclass_to_numslots, sizeclass_to_percpuslabs, OVERSIZE_SC};
 
 use bytesize::ByteSize;
 
@@ -11,61 +11,56 @@ fn convsum(size: usize) -> String {
     format!("{} ({:.3}b)", conv(size), logtwo)
 }
 
-const NUM_SLABSETS: usize = 256;
 const PAGE_ALIGNMENT: usize = 4096;
 
-fn sc_to_slab_vm_space(sc: usize) -> usize {
-    let ss = sizeclass_to_slotsize(sc);
-    let l = sizeclass_to_l(sc) as usize; // number of bytes in this sizeclass's indexes
-    let s = sizeclass_to_slots(sc);
-
-    // We need one words of size `l` for the head pointer to the free list.
-    let freelistheadsize = l;
-
-    // We need this many bytes for the `everallocated` word:
-    let everallocatedwordsize = l;
-
-    // The slab takes up `s * ss` virtual bytes:
-    let slabsize = s * ss;
-
-    let tot = freelistheadsize+everallocatedwordsize+slabsize;
-    print!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} ", sc, conv(ss), conv(slabsize), l, everallocatedwordsize, freelistheadsize, conv(tot));
-
-    // Okay that's all the virtual space we need for this slab!
-    freelistheadsize + everallocatedwordsize + slabsize
-}
-
+use thousands::Separable;
 fn virtual_bytes_map() {
     let mut vbu: usize = 0; // virtual bytes used
 
-    println!("NUM_SLABSETS: {}", NUM_SLABSETS);
-    println!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} {:>24} {:>24}", "sc", "slotsize", "slabsize", "l", "eaws", "flhs", "perslab", "allslabs", "vbu");
-    println!("{:>5} {:>10} {:>12} {:>3} {:>4} {:>4} {:>12} {:>24} {:>24}", "--", "--------", "--------", "-", "----", "----", "-------", "--------", "---");
+    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "sc", "slots", "slotsize", "eaws", "flhs", "slabsize", "slabs", "totpersc", "sum");
+    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "--", "-----", "--------", "----", "----", "--------", "-----", "--------", "---");
     for sc in 0..OVERSIZE_SC {
-        let mut space_per_slab = sc_to_slab_vm_space(sc);
+	let numslots = sizeclass_to_numslots(sc);
+
+	let slotsize = sizeclass_to_slotsize(sc);
+
+	let everallocatedwordsize = sizeclass_to_l(sc) as usize;
+	let freelistheadsize = sizeclass_to_l(sc) as usize;
+	
+	// The slab takes up `numslots * slotsize + eaws + flhs` virtual bytes
+        // Pad it to align the next slab to PAGE_ALIGNMENT.
+	let slabsize = ((numslots * slotsize + everallocatedwordsize + freelistheadsize - 1) | (PAGE_ALIGNMENT - 1)) + 1;
+
+	let numslabs = sizeclass_to_percpuslabs(sc);
+	
+	let totpersc = slabsize * numslabs;
+
+        vbu += totpersc;
         
-        // align the next slab to PAGE_ALIGNMENT
-	space_per_slab = ((space_per_slab - 1) | (PAGE_ALIGNMENT - 1)) + 1;
-
-        // We have NUM_SLABSETS of these
-        let space_per_slabset = space_per_slab * NUM_SLABSETS;
-
-        vbu += space_per_slabset;
-        
-        println!("{:>24} {:>24}", convsum(space_per_slab*NUM_SLABSETS), convsum(vbu));
-
+	println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>19} {:>18}", sc, numslots.separate_with_commas(), conv(slotsize), everallocatedwordsize, freelistheadsize, conv(slabsize), numslabs, convsum(totpersc), convsum(vbu));
     }
+
+    println!("About to try to allocate {} ({}) ({}) bytes...", vbu, vbu.separate_with_commas(), convsum(vbu));
+    let mmap = mm(vbu);
+    println!("{:?}", mmap);
 
     //XXXlet maxvbu = 2usize.pow(47);
     //XXXlet remainder = maxvbu-vbu;
     //XXXprintln!("Okay this vmmap takes up {}, out of {}, leaving {}...", convsum(vbu), convsum(maxvbu), convsum(remainder));
-    let mmap = mm(vbu);
 
-    println!("{:?}", mmap);
+    // How big of huge slots could we fit in here if we have 2^24-1 huge slots?
+    //XXXlet mut hugeslotsize = remainder / (2usize.pow(24)-1);
+    //XXXlet mut hugeslotsize = (remainder / (2usize.pow(24)-1)) - 1;
+    //XXXlet mut newalloc = hugeslotsize * (2usize.pow(24)-1);
+    //XXXprintln!("We could have 2^24-1 ({}) huge slots of size {}, which should add back up to {}+{}=={}", (2u32.pow(24)-1), hugeslotsize, vbu, newalloc, vbu+newalloc);
 
-    //XXX // How big of huge slots could we fit in here if we have 2^16-1 huge slots?
-    //XXX let hugeslotsize = remainder / (NUM_SLABSETS * (2usize.pow(16)-1));
-    //XXX println!("We could have {} * {} huge slots of size {}", NUM_SLABSETS, (2u32.pow(16)-1), hugeslotsize);
+    //XXX// How big of huge slots could we fit in here if we have 2^16-1 huge slots?
+    //XXXlet hugeslotsize = remainder / (2usize.pow(16)-1);
+    //XXXprintln!("We could have 2^16-1 ({}) huge slots of size {}", (2u32.pow(16)-1), hugeslotsize);
+
+    //XXX// How big of huge slots could we fit in here if we have 2^8-1 huge slots?
+    //XXXlet hugeslotsize = remainder / (2usize.pow(8)-1);
+    //XXXprintln!("We could have 2^8-1 ({}) huge slots of size {}", (2u32.pow(8)-1), hugeslotsize);
 }
 
 use memmapix::{MmapOptions, MmapMut, Advice};
