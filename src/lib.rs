@@ -8,40 +8,6 @@ pub const HUGE_SLOTS_SC: usize = 12;
 pub const OVERSIZE_SC: usize = 13;
 pub const NUM_SCS: usize = 14;
 
-pub fn sizeclass_to_slots(sc: usize) -> usize {
-    2usize.pow(sizeclass_to_l(sc)*8 - 1)
-}
-
-pub fn sizeclass_to_l(sc: usize) -> u32 {
-    // For the 1-byte slots, we can only fit a 1-byte index into the intrusive linked list.
-    if sc == 0 { 1 }
-
-    // For most slabs, we use 2-byte indexes instead of 3-byte, so we can have more size classes before we run out of virtual memory space.
-    else if sc < HUGE_SLOTS_SC { 2 }
-
-    // For the huge-slots slab, we use 1-byte indexes, again so we can fit into the virtual memory space limitation while having the hugest huge-slots we can afford.
-    else if sc == HUGE_SLOTS_SC { 2 }
-
-    // This isn't actually a slab, it's really the "oversized" category which we're going to fall back to mmap() to satisfy, so let's just say we have 4-byte indexes so that our slab-overflow analyzer in smalloclog won't ever think we've filled it up when analyzing memory usage operations from programs.
-    else{ 8 }
-}
-
-#[inline(always)]
-pub fn layout_to_sizeclass(size: usize, alignment: usize) -> usize {
-    assert!(alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
-
-    // Round up size to the nearest multiple of alignment:
-    let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
-
-    for sc in 0..NUM_SCS {
-	if alignedsize <= sizeclass_to_slotsize(sc) {
-	    return sc;
-	}
-    }
-
-    OVERSIZE_SC
-}
-
 #[inline(always)]
 pub fn sizeclass_to_slotsize(scn: usize) -> usize {
     // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
@@ -66,6 +32,37 @@ pub fn sizeclass_to_slotsize(scn: usize) -> usize {
     else { 2usize.pow(23) } // HUGE_SLOTS_SC
 }
 
+pub fn sizeclass_to_slots(sc: usize) -> usize {
+    2usize.pow(sizeclass_to_l(sc)*8 - 1)
+}
+
+pub fn sizeclass_to_l(sc: usize) -> u32 {
+    // For the 1-byte slots, we can only fit a 1-byte index into the intrusive linked list.
+    if sc == 0 { 1 }
+
+    // For most slabs, we use 2-byte indexes instead of 3-byte, so we can have more size classes before we run out of virtual memory space.
+    else if sc < HUGE_SLOTS_SC { 2 }
+    else if sc == HUGE_SLOTS_SC { 2 }
+
+    // This isn't actually a slab, it's really the "oversized" category which we're going to fall back to mmap() to satisfy, so let's just say we have 4-byte indexes so that our slab-overflow analyzer in smalloclog won't ever think we've filled it up when analyzing memory usage operations from programs.
+    else{ 8 }
+}
+
+#[inline(always)]
+pub fn layout_to_sizeclass(size: usize, alignment: usize) -> usize {
+    assert!(alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
+
+    // Round up size to the nearest multiple of alignment:
+    let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
+
+    for sc in 0..NUM_SCS {
+	if alignedsize <= sizeclass_to_slotsize(sc) {
+	    return sc;
+	}
+    }
+
+    OVERSIZE_SC
+}
 
 #[cfg(test)]
 mod tests {
