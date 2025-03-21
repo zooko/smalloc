@@ -1,4 +1,4 @@
-use smalloc::{sizeclass_to_slotsize, sizeclass_to_l, sizeclass_to_numslots, sizeclass_to_percpuslabs, OVERSIZE_SC};
+use smalloc::{slabnum_to_slotsize, slabnum_to_numareas, slabnum_to_l, slabnum_to_numslots, OVERSIZE_SLABNUM, NUM_AREAS, MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_SLABS};
 
 use bytesize::ByteSize;
 
@@ -11,35 +11,106 @@ fn convsum(size: usize) -> String {
     format!("{} ({:.3}b)", conv(size), logtwo)
 }
 
-const PAGE_ALIGNMENT: usize = 4096;
-
 use thousands::Separable;
 fn virtual_bytes_map() {
     let mut vbu: usize = 0; // virtual bytes used
 
-    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "sc", "slots", "slotsize", "eaws", "flhs", "slabsize", "slabs", "totpersc", "sum");
-    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "--", "-----", "--------", "----", "----", "--------", "-----", "--------", "---");
-    for sc in 0..OVERSIZE_SC {
-	let numslots = sizeclass_to_numslots(sc);
+    // See the README.md to understand this layout.
+    
+    // First count up the space needed for the variables.
+    for slabnum in 0..OVERSIZE_SLABNUM {
+	let wordsize = slabnum_to_l(slabnum) as usize;
+	let numslabs = slabnum_to_numareas(slabnum);
 
-	let slotsize = sizeclass_to_slotsize(sc);
-
-	let everallocatedwordsize = sizeclass_to_l(sc) as usize;
-	let freelistheadsize = sizeclass_to_l(sc) as usize;
-	
-	// The slab takes up `numslots * slotsize + eaws + flhs` virtual bytes
-        // Pad it to align the next slab to PAGE_ALIGNMENT.
-	let slabsize = ((numslots * slotsize + everallocatedwordsize + freelistheadsize - 1) | (PAGE_ALIGNMENT - 1)) + 1;
-
-	let numslabs = sizeclass_to_percpuslabs(sc);
-	
-	let totpersc = slabsize * numslabs;
-
-        vbu += totpersc;
-        
-	println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>19} {:>18}", sc, numslots.separate_with_commas(), conv(slotsize), everallocatedwordsize, freelistheadsize, conv(slabsize), numslabs, convsum(totpersc), convsum(vbu));
+	vbu += (wordsize*2) * numslabs;
     }
 
+    println!("The total virtual memory space for all the variables is {} ({})", vbu.separate_with_commas(), convsum(vbu));
+
+    let mut totalpaddingneeded = 0;
+    
+    // Then the space needed for the data slabs.
+
+    // First layout the areas...
+    // Do area 0 separately since it is a different shape than all the other areas:
+    for slabnum in 0..OVERSIZE_SLABNUM {
+	    
+	// If this slab's slot size is a power of 2 then we need to
+	// pad it before laying it out, to align its first byte onto
+	// an address which is an integer multiple of its slot size.
+	let slotsize = slabnum_to_slotsize(slabnum);
+	if slotsize.is_power_of_two() {
+	    let unalignedbytes = vbu % slotsize;
+	    if unalignedbytes > 0 {
+		let paddingneeded = slotsize - unalignedbytes;
+		totalpaddingneeded += paddingneeded;
+		//println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingneeded, 0, slabnum, slotsize);
+		vbu += paddingneeded;
+		assert!(vbu % slotsize == 0);
+	    }
+	}
+	// Okay the total space needed for this slab is
+	let totspaceperslab = slotsize * slabnum_to_numslots(slabnum);
+
+	vbu += totspaceperslab;
+    }
+    
+    // For areas 1 and up, we only have space for the first
+    // MAX_SLABNUM_TO_PACK_INTO_CACHELINE slabs:
+    for _area in 1..NUM_AREAS {
+	// For each area, the slabs...
+	for slabnum in 0..MAX_SLABNUM_TO_PACK_INTO_CACHELINE+1 {
+	    // If this slab's slot size is a power of 2 then we need
+	    // to pad it before laying it out, to align its first byte
+	    // onto an address which is an integer multiple of its
+	    // slot size.
+	    let slotsize = slabnum_to_slotsize(slabnum);
+	    if slotsize.is_power_of_two() {
+		let unalignedbytes = vbu % slotsize;
+		if unalignedbytes > 0 {
+		    let paddingneeded = slotsize - unalignedbytes;
+		    totalpaddingneeded += paddingneeded;
+		    //println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingneeded, area, slabnum, slotsize);
+		    vbu += paddingneeded;
+		    assert!(vbu % slotsize == 0);
+		}
+	    }
+
+	    // Okay the total space needed for this slab is
+	    assert!(slabnum < NUM_SLABS);
+	    assert!(slabnum < OVERSIZE_SLABNUM, "{}", slabnum);
+	    let totspaceperslab = slotsize * slabnum_to_numslots(slabnum);
+	    
+	    vbu += totspaceperslab;
+	}
+    }
+    
+    println!("The total virtual memory space for all the variables and slots is {} ({})", vbu.separate_with_commas(), convsum(vbu));
+    println!("Total padding needed was {}", totalpaddingneeded);
+
+//XXX    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "slabnum", "slots", "slotsize", "eaws", "flhs", "slabsize", "slabs", "totpersc", "sum");
+//XXX    println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>18} {:>18}", "-------", "-----", "--------", "----", "----", "--------", "-----", "--------", "---");
+//XXX    for slabnum in 0..OVERSIZE_SLABNUM {
+//XXX	let numslots = slabnum_to_numslots(slabnum);
+//XXX
+//XXX	let slotsize = slabnum_to_slotsize(slabnum);
+//XXX
+//XXX	let everallocatedwordsize = slabnum_to_l(slabnum) as usize;
+//XXX	let freelistheadsize = slabnum_to_l(slabnum) as usize;
+//XXX	
+//XXX	// The slab takes up `numslots * slotsize + eaws + flhs` virtual bytes
+    //XXX        // Pad it to align the next slab to PAGE_ALIGNMENT.
+//XXX	let slabsize = ((numslots * slotsize + everallocatedwordsize + freelistheadsize - 1) | (PAGE_ALIGNMENT - 1)) + 1;
+//XXX
+//XXX	let numslabs = slabnum_to_percpuslabs(sc); xxx
+//XXX	
+//XXX	let totpersc = slabsize * numslabs;
+//XXX
+//XXX        vbu += totpersc;
+//XXX        
+//XXX	println!("{:>4} {:>11} {:>8} {:>4} {:>4} {:>10} {:>4} {:>19} {:>18}", sc, numslots.separate_with_commas(), conv(slotsize), everallocatedwordsize, freelistheadsize, conv(slabsize), numslabs, convsum(totpersc), convsum(vbu));
+//XXX    }
+//XXX
     println!("About to try to allocate {} ({}) ({}) bytes...", vbu, vbu.separate_with_commas(), convsum(vbu));
     let mmap = mm(vbu);
     println!("{:?}", mmap);
@@ -48,19 +119,19 @@ fn virtual_bytes_map() {
     //XXXlet remainder = maxvbu-vbu;
     //XXXprintln!("Okay this vmmap takes up {}, out of {}, leaving {}...", convsum(vbu), convsum(maxvbu), convsum(remainder));
 
-    // How big of huge slots could we fit in here if we have 2^24-1 huge slots?
-    //XXXlet mut hugeslotsize = remainder / (2usize.pow(24)-1);
-    //XXXlet mut hugeslotsize = (remainder / (2usize.pow(24)-1)) - 1;
-    //XXXlet mut newalloc = hugeslotsize * (2usize.pow(24)-1);
-    //XXXprintln!("We could have 2^24-1 ({}) huge slots of size {}, which should add back up to {}+{}=={}", (2u32.pow(24)-1), hugeslotsize, vbu, newalloc, vbu+newalloc);
+    // How big of large slots could we fit in here if we have 2^24-1 large slots?
+    //XXXlet mut largeslotsize = remainder / (2usize.pow(24)-1);
+    //XXXlet mut largeslotsize = (remainder / (2usize.pow(24)-1)) - 1;
+    //XXXlet mut newalloc = largeslotsize * (2usize.pow(24)-1);
+    //XXXprintln!("We could have 2^24-1 ({}) large slots of size {}, which should add back up to {}+{}=={}", (2u32.pow(24)-1), largeslotsize, vbu, newalloc, vbu+newalloc);
 
-    //XXX// How big of huge slots could we fit in here if we have 2^16-1 huge slots?
-    //XXXlet hugeslotsize = remainder / (2usize.pow(16)-1);
-    //XXXprintln!("We could have 2^16-1 ({}) huge slots of size {}", (2u32.pow(16)-1), hugeslotsize);
+    //XXX// How big of large slots could we fit in here if we have 2^16-1 large slots?
+    //XXXlet largeslotsize = remainder / (2usize.pow(16)-1);
+    //XXXprintln!("We could have 2^16-1 ({}) large slots of size {}", (2u32.pow(16)-1), largeslotsize);
 
-    //XXX// How big of huge slots could we fit in here if we have 2^8-1 huge slots?
-    //XXXlet hugeslotsize = remainder / (2usize.pow(8)-1);
-    //XXXprintln!("We could have 2^8-1 ({}) huge slots of size {}", (2u32.pow(8)-1), hugeslotsize);
+    //XXX// How big of large slots could we fit in here if we have 2^8-1 large slots?
+    //XXXlet largeslotsize = remainder / (2usize.pow(8)-1);
+    //XXXprintln!("We could have 2^8-1 ({}) large slots of size {}", (2u32.pow(8)-1), largeslotsize);
 }
 
 use memmapix::{MmapOptions, MmapMut, Advice};
