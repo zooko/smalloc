@@ -52,9 +52,9 @@ pub const NUM_AREAS: usize = 256;
 
 pub fn slabnum_to_numareas(slabnum: usize) -> usize {
     if slabnum <= MAX_SLABNUM_TO_PACK_INTO_CACHELINE {
-	1
-    } else {
 	NUM_AREAS
+    } else {
+	1
     }
 }
 
