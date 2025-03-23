@@ -12,23 +12,22 @@ Or... at least I can claim that it is simpler than the others! 😂😂
 
 # How it works
 
-To understand how `smalloc` works, you need to know the data model and
-the algorithms that use it.
+To understand how it works, you need to know `smalloc`'s data model
+and the algorithms.
 
 ## Data model
 
 ### Data Slots and Slabs
 
-Here is the basic data model: all memory managed by `smalloc` is
-organized into "slabs". A slab is a fixed-length array of fixed-length
-"slots". Every pointer returned by a call to `smalloc`'s `malloc()` or
-`free()` is a pointer to the beginning of one of those slots, and that
-slot is used exclusively for that memory allocation until it is
-`free()`'ed [*].
+All memory managed by `smalloc` is organized into "slabs". A slab is a
+fixed-length array of fixed-length "slots" of bytes. Every pointer
+returned by a call to `smalloc`'s `malloc()` or `free()` is a pointer
+to the beginning of one of those slots, and that slot is used
+exclusively for that memory allocation until it is `free()`'ed [*].
 
-([*] Except for calls to `malloc()` or `realloc()` with requested
-sizes that are too big to fit into even the biggest of `smalloc`'s
-slots, which `smalloc` instead satisfies by falling back to `mmap()`.)
+([*] Except for calls to `malloc()` or `realloc()` for sizes that are
+too big to fit into even the biggest of `smalloc`'s slots, which
+`smalloc` instead satisfies by falling back to `mmap()`.)
 
 All slabs have 16,777,215 slots (one less than 2^24). They are
 0-indexed, so the largest slot number in each slab is 16,777,214.
@@ -552,6 +551,12 @@ layout described above.)
 
 Get the Rust ThreadID, call `.as_u64()` to convert it to a u64, and
 take mod (`%`) 256 to take the least-significant 8 bits if ut
+
+### Sentinel Value for ffs
+
+The sentinel value is actually `0` so you have to add 1 to an index
+value before storing it in `ffs` and subtract 1 from `ffs` before
+using it as an index.
 
 # Rationale / Philosophy
 
