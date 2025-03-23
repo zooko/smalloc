@@ -7,13 +7,15 @@ pub const MAX_SLABNUM_TO_PACK_INTO_PAGE: usize = 25;
 pub const LARGE_SLOTS_SLABNUM: usize = 26;
 pub const OVERSIZE_SLABNUM: usize = 27;
 pub const NUM_SLABS: usize = 28;
-pub const SIZE_OF_LARGE_SLOTS: usize = 6200000; // 6.2 million bytes
+pub const SIZE_OF_LARGE_SLOTS: usize = 6100000; // 6.2 million bytes
+
+pub const NUM_SLOTS: usize = 16_777_215;
 
 #[inline(always)]
 pub fn slabnum_to_slotsize(slabnum: usize) -> usize {
     // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
     if slabnum == 0 { 1 }
-    else if slabnum == 1 { 2 }
+   else if slabnum == 1 { 2 }
     else if slabnum == 2 { 3 }
     else if slabnum == 3 { 4 }
     else if slabnum == 4 { 5 }
@@ -56,28 +58,6 @@ pub fn slabnum_to_numareas(slabnum: usize) -> usize {
     } else {
 	1
     }
-}
-
-pub fn slabnum_to_l(slabnum: usize) -> u32 {
-    // For the 1-byte slots, we can only fit a 1-byte index into the intrusive linked list.
-    if slabnum == 0 { 1 }
-
-    // For the 2-byte slots, we can only fit a 2-byte index into the intrusive linked list.
-    else if slabnum == 1 { 2 }
-
-    // For most slabs, we use 3-byte indexes so that our slabs won't get filled up
-    else if slabnum <= LARGE_SLOTS_SLABNUM { 3 }
-    
-    // This isn't actually a slab, it's really the "oversized" category which we're going to fall back to mmap() to satisfy, so let's just say we have 7-byte indexes so that our slab-overflow analyzer in smalloclog won't ever think we've filled it up when analyzing memory usage operations from programs.
-    else { 7 }
-}
-
-pub fn slabnum_to_numslots(slabnum: usize) -> usize {
-    assert!(slabnum < NUM_SLABS);
-    let l = slabnum_to_l(slabnum);
-    assert!(l <= 7, "{} {}", l, slabnum);
-    
-    2usize.pow(l*8) - 1
 }
 
 #[inline(always)]

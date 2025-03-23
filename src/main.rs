@@ -1,4 +1,4 @@
-use smalloc::{slabnum_to_slotsize, slabnum_to_numareas, slabnum_to_l, slabnum_to_numslots, OVERSIZE_SLABNUM, NUM_AREAS, MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_SLABS};
+use smalloc::{slabnum_to_slotsize, OVERSIZE_SLABNUM, NUM_AREAS, MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_SLABS, LARGE_SLOTS_SLABNUM, NUM_SLOTS};
 
 use bytesize::ByteSize;
 
@@ -17,72 +17,66 @@ fn virtual_bytes_map() {
 
     // See the README.md to understand this layout.
     
-    // First count up the space needed for the variables.
-    for slabnum in 0..OVERSIZE_SLABNUM {
-	let wordsize = slabnum_to_l(slabnum) as usize;
-	let numslabs = slabnum_to_numareas(slabnum);
+    // First count the space needed for the variables.
 
-	vbu += (wordsize*2) * numslabs;
-    }
+    // The slabs up to and including MAX_SLABNUM_TO_PACK_INTO_CACHELINE have one slab in each area.
+    let totslabs = (MAX_SLABNUM_TO_PACK_INTO_CACHELINE + 1) * NUM_AREAS + LARGE_SLOTS_SLABNUM + 1 - MAX_SLABNUM_TO_PACK_INTO_CACHELINE;
+    let variablessize = 6;
+    let variablesvbu = totslabs * NUM_SLOTS * variablessize;
 
-    println!("The total virtual memory space for all the variables is {} ({})", vbu.separate_with_commas(), convsum(vbu));
+    println!("The virtual memory space for all the variables is {} ({})", variablesvbu.separate_with_commas(), convsum(variablesvbu));
+
+    vbu += variablesvbu;
+
+    // The free lists for slabs 0 and 1
+    let freelistslotsize = 3;
+    let freelistspace = 2 * NUM_AREAS * NUM_SLOTS * freelistslotsize;
+
+    println!("The virtual memory space for the free lists is {} ({})", freelistspace.separate_with_commas(), convsum(freelistspace));
+
+    vbu += freelistspace;
 
     let mut totalpaddingneeded = 0;
+    let mut paddingneeded;
     
     // Then the space needed for the data slabs.
 
     // First layout the areas...
-    // Do area 0 separately since it is a different shape than all the other areas:
+    println!("{:>7} {:>8} {:>3} {:>19} {:>19}", "slabnum", "slotsize", "pad", "sum", "tot");
+    println!("{:>7} {:>8} {:>3} {:>19} {:>19}", "-------", "--------", "---", "---", "---");
     for slabnum in 0..OVERSIZE_SLABNUM {
 	    
 	// If this slab's slot size is a power of 2 then we need to
 	// pad it before laying it out, to align its first byte onto
 	// an address which is an integer multiple of its slot size.
 	let slotsize = slabnum_to_slotsize(slabnum);
+	paddingneeded = 0;
 	if slotsize.is_power_of_two() {
 	    let unalignedbytes = vbu % slotsize;
 	    if unalignedbytes > 0 {
-		let paddingneeded = slotsize - unalignedbytes;
+		paddingneeded = slotsize - unalignedbytes;
 		totalpaddingneeded += paddingneeded;
 		//println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingneeded, 0, slabnum, slotsize);
 		vbu += paddingneeded;
 		assert!(vbu % slotsize == 0);
 	    }
-	}
+	} 
 	// Okay the total space needed for this slab is
-	let totspaceperslab = slotsize * slabnum_to_numslots(slabnum);
+	let spaceperslab = slotsize * 16_777_215;
 
-	vbu += totspaceperslab;
-    }
-    
-    // For areas 1 and up, we only have space for the first
-    // MAX_SLABNUM_TO_PACK_INTO_CACHELINE slabs:
-    for _area in 1..NUM_AREAS {
-	// For each area, the slabs...
-	for slabnum in 0..MAX_SLABNUM_TO_PACK_INTO_CACHELINE+1 {
-	    // If this slab's slot size is a power of 2 then we need
-	    // to pad it before laying it out, to align its first byte
-	    // onto an address which is an integer multiple of its
-	    // slot size.
-	    let slotsize = slabnum_to_slotsize(slabnum);
-	    if slotsize.is_power_of_two() {
-		let unalignedbytes = vbu % slotsize;
-		if unalignedbytes > 0 {
-		    let paddingneeded = slotsize - unalignedbytes;
-		    totalpaddingneeded += paddingneeded;
-		    //println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingneeded, area, slabnum, slotsize);
-		    vbu += paddingneeded;
-		    assert!(vbu % slotsize == 0);
-		}
-	    }
+	// There are this many slots of this size:
+	let numslabs= if slabnum <= MAX_SLABNUM_TO_PACK_INTO_CACHELINE {
+	    NUM_AREAS
+	} else {
+	    1
+	};
 
-	    // Okay the total space needed for this slab is
-	    assert!(slabnum < NUM_SLABS);
-	    assert!(slabnum < OVERSIZE_SLABNUM, "{}", slabnum);
-	    let totspaceperslab = slotsize * slabnum_to_numslots(slabnum);
-	    
-	    vbu += totspaceperslab;
-	}
+	
+	let totslabspace = spaceperslab * numslabs;
+
+	vbu += totslabspace;
+
+	println!("{:>7} {:>8} {:>3} {:>19} {:>19}", slabnum, conv(slotsize), paddingneeded, convsum(totslabspace), convsum(vbu));
     }
     
     println!("The total virtual memory space for all the variables and slots is {} ({})", vbu.separate_with_commas(), convsum(vbu));
@@ -152,8 +146,15 @@ fn mm(reqsize: usize) -> MmapMut {
 //XXXmod cpuid;
 //xxxuse cpuid::{get_vendor_info, Vendor};
 
+//XXXXmod cpu;
+//XXXXuse cpu::mpidr;
+
+mod cpu;
+use cpu::get_thread_id;
+
 fn main() {
     println!("Howdy, world!");
+    get_thread_id();
 
 //xxx    let v: Vendor = get_vendor_info();
 //xxx    println!("get_vendor_info(): {:?}", v);
