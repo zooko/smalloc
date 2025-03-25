@@ -7,15 +7,18 @@ pub const MAX_SLABNUM_TO_PACK_INTO_PAGE: usize = 25;
 pub const LARGE_SLOTS_SLABNUM: usize = 26;
 pub const OVERSIZE_SLABNUM: usize = 27;
 pub const NUM_SLABS: usize = 28;
-pub const SIZE_OF_LARGE_SLOTS: usize = 6100000; // 6.2 million bytes
+pub const SIZE_OF_LARGE_SLOTS: usize = 6_100_000; // 6.1 million bytes
 
 pub const NUM_SLOTS: usize = 16_777_215;
+
+// Total virtual memory space that we were able to allocate in testing on MacOS on Apple M4, rounded down to the nearest 5 trillion bytes. :-)
+pub const TOT_VM_ALLOCATABLE: usize = 105_000_000_000_000;
 
 #[inline(always)]
 pub fn slabnum_to_slotsize(slabnum: usize) -> usize {
     // Sizes where we can fit more slots into a 64-byte cache line. (And kinda maybe 128-byte cache-areas in certain ways...)
     if slabnum == 0 { 1 }
-   else if slabnum == 1 { 2 }
+    else if slabnum == 1 { 2 }
     else if slabnum == 2 { 3 }
     else if slabnum == 3 { 4 }
     else if slabnum == 4 { 5 }
