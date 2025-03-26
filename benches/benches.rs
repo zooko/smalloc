@@ -20,7 +20,7 @@ fn bench_layout_to_slabnum_noalign(b: &mut Bencher) {
 
     b.iter(|| {
         let num = reqsizs[i % NUM_ARGS];
-        black_box(layout_to_slabnum(num, 1));
+        black_box(layout_to_slabnum(Layout(num, 1)));
         i += 1;
     });
 }

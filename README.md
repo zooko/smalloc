@@ -533,13 +533,13 @@ the pointer returned needs to point to an address which is an integer
 multiple of that alignment. Required alignments are always a power of
 2.
 
-In order to be able to satisfy such requests, we need to ensure that
-every slot whose size is a power of 2 begins at a virtual memory
-address which is an integer multiple of its slot size. Since slots are
-the least-significant part of the virtual memory address layout and
-slabs are the second-least-significant part, this mean that slabs with
-slots of power-of-2 sizes have to begin at a virtual memory address
-which is an integer multiple of the slot size.
+In order satisfy such requests we'll ensure that every slot whose size
+is a power of 2 begins at a virtual memory address which is an integer
+multiple of its slot size. Since slots are the least-significant part
+of the virtual memory address layout and slabs are the
+second-least-significant part, this mean that slabs with slots of
+power-of-2 sizes have to begin at a virtual memory address which is an
+integer multiple of the slot size.
 
 Okay, now you know everything there is to know about `smalloc`'s data
 model and memory layout. Given this information, you can calculate the
@@ -549,8 +549,11 @@ layout described above.)
 
 ### Mapping Processor/Core Numbers to Areas
 
+Maintain an atomically-incrementing u8 in thread-local storage
+xxx
+
 Get the Rust ThreadID, call `.as_u64()` to convert it to a u64, and
-take mod (`%`) 256 to take the least-significant 8 bits if ut
+take mod (`%`) 256 to take the least-significant 8 bits of it.
 
 ### Sentinel Value for ffs
 
@@ -561,3 +564,73 @@ using it as an index.
 # Rationale / Philosophy
 
 to be added
+
+# Open Issues / Future Work
+
+* The current design and implementation of `smalloc` is "tuned" to
+  64-byte cache line and 4096-bit virtal memory page. (See
+  `MAX_SLABNUM_TO_PACK_INTO_CACHELINE` and
+  `MAX_SLABNUM_TO_PACK_INTO_PAGE`.)
+  
+  The current version of `smalloc` works correctly with larger cache
+  lines but there might be a performance improvement from a variant of
+  `smalloc` tuned for 128-bit cache lines. Notably the new Apple ARM64
+  chips have 128-bit cache lines in some cases, and modern Intel chips
+  have a hardware cache prefetcher that sometimes fetches the next
+  64-bit cache line.
+ 
+  It works correctly with larger page tables but there might be
+  performance problems with extremely large ones -- I'm not sure.
+  Notably "huge pages" of 2 MiB or 1 GiB are sometimes configured in
+  Linux especially in "server"-flavored configurations.
+ 
+  There might also be a performance improvement from a variant of
+  `smalloc` tuned to larger virtual memory pages. Notably virtual
+  memory pages on modern MacOS and iOS are 16 KiB.
+
+* If we could allocate even more virtual memory space, `smalloc` could
+  be even *simpler* (eg apply the "areas" structure to all slabs and
+  not just the ones whose slots fit into cache lines), more scalable
+  (eg large slot-sizes could be larger than 6.1 million bytes), and
+  more flexible (eg have more than one `smalloc` heap in a single
+  process). Larger (than 48-bit) virtual memory addresses are already
+  supported on some platforms/configurations, especially
+  server-oriented ones, but are not widely supported on desktop and
+  smartphone platforms. We could consider creating a variant of
+  `smalloc` that works only platforms with larger (than 48-bit)
+  virtual memory addresses and offers these advantages.
+
+* The Rust ThreadId documentation specifically says not to rely on the
+  values of resulting ThreadIds for anything other than equality
+  testing. However, we are relying (for performance optimization, not
+  for correctness) on the lowest 8 bits of the values not colliding
+  with the lowest 8 bits of other ThreadIds (or at least not colliding
+  *much*). The current implementation of Rust ThreadId just has an
+  incrementing counter, which is perfect for us! Possible future work:
+  find some way to get a contract from the underlying platform
+  (whether Rust std lib, operating system, or CPU), not just an
+  implementation detail, that allows us to spread
+  `malloc()`/`realloc()` calls from different cores/threads out across
+  the areas (probabilistically--just for performance optimization). (I
+  looked into the `RDPID` instruction on x86 and the `MPIDR`
+  instruction on ARM as a way to do this without the overhead of an
+  operating system call, but using `MPIDR` resulted in an illegal
+  instruction exception on MacOS on Apple M4, so I gave up on that
+  approach.)
+
+Notes:
+
+Our variables need to be 4-byte aligned (for performance and
+correctness of atomic operations, on some/all architectures). They
+always will be, because the variables are laid out at the beginning of
+the mmap'ed region, which is always page-aligned.
+
+
+
+Things `smalloc` does not attempt to do:
+
+* Try to prevent exploitation after a memory-usage bug in the user
+  code.
+
+* Try to minimize allocation of virtual memory.
+

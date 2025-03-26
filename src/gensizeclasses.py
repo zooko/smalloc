@@ -1,3 +1,80 @@
+def gen_points(s, CACHELINESIZE):
+    points = [(0, 0)] # (offset, cachelinenum)
+    slotssplit = 0
+    worstfullpacking = None
+
+    slotsfullypacked = 0
+    while True:
+        prevoffset, cachelinenum = points[-1]
+        # print("prevoffset: %s, cachelinenum: %s" % (prevoffset, cachelinenum))
+        offset = prevoffset + s
+        if offset > CACHELINESIZE:
+            slotssplit += 1
+        else:
+            slotsfullypacked += 1
+
+        # print("slotsfullypackaged: %s" % (slotsfullypacked,))
+
+        if offset >= CACHELINESIZE:
+            cachelinenum += 1
+            offset -= CACHELINESIZE
+
+            if worstfullpacking is None:
+                worstfullpacking = slotsfullypacked
+            else:
+                if worstfullpacking > slotsfullypacked:
+                    worstfullpacking = slotsfullypacked
+            # print("worstfullpacking: %s" % (worstfullpacking,))
+
+            # Okay if we've wrapped around to the same as a previous offset we're done
+            for prevo, prevcln in points:
+                if prevo == offset:
+                    return points, slotssplit, worstfullpacking
+
+            if offset > 0:
+                slotsfullypacked = 0
+            else:
+                slotsfullypacked = 1
+        points.append((offset, cachelinenum))
+        
+def diff_cache_sizes():
+    winners = {}
+    for cachesize in [64, 128, 4096, 2**14]:
+        bestfits = gen_size_classes_new_version(cachesize)
+        bfs = set([ v[1] for k, v in bestfits.items() ])
+        winners[cachesize] = bfs
+
+    return winners
+
+def gen_size_classes_new_version(cachesize):
+    # Hm... Okay, let's say cache lines are 64 B in size. Now let's say we have slots of size S. What is: the best-case to pack slots into a cache line? The worst-case? The percentage of slots that are split across a cache line boundary. Then do 128 B cache lines too.
+
+    bestfits = {}
+
+    curmostfit = None
+
+    for s in range(cachesize//2, 0, -1):
+        # print("Ok, with s: %s" % s)
+        points, numslotssplit, worstfullpacking = gen_points(s, cachesize)
+        if curmostfit is None or worstfullpacking > curmostfit:
+            curmostfit = worstfullpacking
+            assert worstfullpacking not in bestfits
+            bestfits[worstfullpacking] = (points, s)
+        # print("len(points): %s, cache lines: %s, numslotssplit: %s, worstfullpacking: %s" % (len(points), points[-1][1]+1, numslotssplit, worstfullpacking))
+
+    # bfs = list(bestfits.items())
+    # bfs.sort()
+    # for k, v in bfs:
+    #     print("fits: %s, size: %s" % (k, v[1]))
+
+    return bestfits
+
+bestfits = diff_cache_sizes()
+
+print(bestfits)
+
+# gen_points(3, 64)
+   
 # Let's say there are the following sizes of spaces that we want to pack objects into in order to fit as many objects as we can into spaces of varying sizes.
 
 # There are two types:
@@ -20,69 +97,72 @@
 
 # First of all what size classes pack the most sizes of objects into the small-sized spaces (cache lines)?
 
-import math
-spacebests = {}
-prevspace = 0
-# # for space in (64, 128, 256):
-# for space in (64, 128, 256, 4*2**10, 16*2**10, 2*2**20, 1*2**30):
-#     prevbest = 0
-#     bests = set()
-#     for size in range(space, prevspace, -1):
-#         numfitted = math.floor(space/size)
-#         if numfitted > prevbest:
-#             # print("size: %2d, numfitted: %2d" % (size, numfitted))
-#             prevbest = numfitted
-#             bests.add(size)
-# 
-# #    print(bests)
-# 
-#     spacebests[space] = bests
-#     prevspace = space
-        
-# print(spacebests)
+def gen_size_classes_old_version():
+    import math
+    spacebests = {}
+    prevspace = 0
+    # # for space in (64, 128, 256):
+    # for space in (64, 128, 256, 4*2**10, 16*2**10, 2*2**20, 1*2**30):
+    #     prevbest = 0
+    #     bests = set()
+    #     for size in range(space, prevspace, -1):
+    #         numfitted = math.floor(space/size)
+    #         if numfitted > prevbest:
+    #             # print("size: %2d, numfitted: %2d" % (size, numfitted))
+    #             prevbest = numfitted
+    #             bests.add(size)
+    # 
+    # #    print(bests)
+    # 
+    #     spacebests[space] = bests
+    #     prevspace = space
 
-spacebests2 = {}
-prevspace = 1
-# for space in (64, 128, 256):
-# for space in (64, 4*2**10):
-for space in (64, 4096):
-    bests = set()
-    for siz in range(prevspace+1, space):
-        numfitted = math.floor(space/siz)
-        if numfitted > 1:
-            biggestfit = math.floor(space/numfitted)
-            bests.add((biggestfit, numfitted))
-        # print("space: %s, siz: %s, numfitted: %s, biggestfit: %s" % (space, siz, numfitted, biggestfit,))
-        
-    spacebests2[space] = bests
-    prevspace = space-1
+    # print(spacebests)
+
+    spacebests2 = {}
+    prevspace = 1
+    # for space in (64, 128, 256):
+    # for space in (64, 4*2**10):
+    for space in (64, 4096):
+        bests = set()
+        for siz in range(prevspace+1, space):
+            numfitted = math.floor(space/siz)
+            if numfitted > 1:
+                biggestfit = math.floor(space/numfitted)
+                bests.add((biggestfit, numfitted))
+            # print("space: %s, siz: %s, numfitted: %s, biggestfit: %s" % (space, siz, numfitted, biggestfit,))
+
+        spacebests2[space] = bests
+        prevspace = space-1
 
 
-print(spacebests2)
+    print(spacebests2)
 
-# for space in spacebests.keys():
-#     b1 = spacebests[space]
-#     b2 = spacebests2[space]
-#     if set(b1) != set(b2):
-#         print("wtf b1-b2: %s, b2-b1: %s, b1: %s, b2: %s" % (b1-b2, b2-b1, b1, b2))
-#         break
+    # for space in spacebests.keys():
+    #     b1 = spacebests[space]
+    #     b2 = spacebests2[space]
+    #     if set(b1) != set(b2):
+    #         print("wtf b1-b2: %s, b2-b1: %s, b1: %s, b2: %s" % (b1-b2, b2-b1, b1, b2))
+    #         break
 
-#    prevbest = 0
-#    bests = []
-#    for size in range(space, 0, -1):
-#        numfitted = math.floor(space/size)
-#        if numfitted > prevbest:
-#            print("size: %2d, numfitted: %2d" % (size, numfitted))
-#            prevbest = numfitted
-#            bests.append(size)
+    #    prevbest = 0
+    #    bests = []
+    #    for size in range(space, 0, -1):
+    #        numfitted = math.floor(space/size)
+    #        if numfitted > prevbest:
+    #            print("size: %2d, numfitted: %2d" % (size, numfitted))
+    #            prevbest = numfitted
+    #            bests.append(size)
 
-#     prevspace = space
-#     print(bests)
+    #     prevspace = space
+    #     print(bests)
 
-#     spacebests[space] = bests
+    #     spacebests[space] = bests
 
-# Okay here are the size classes which can pack the most objects into spaces of size 256 bytes (as well as into spaces of 128 bytes and of 64 bytes, excluding, of course, the size classes too large for those smaller spaces):
-# 256, 128, 85, 64, 51, 42, 36, 32, 28, 25, 23, 21, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+    # Okay here are the size classes which can pack the most objects into spaces of size 256 bytes (as well as into spaces of 128 bytes and of 64 bytes, excluding, of course, the size classes too large for those smaller spaces):
+    # 256, 128, 85, 64, 51, 42, 36, 32, 28, 25, 23, 21, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+
+    return spacebests2
 
 def c(num_bytes):
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']:
