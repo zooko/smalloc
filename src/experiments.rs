@@ -1,7 +1,9 @@
 mod lib;
-use lib::{MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_AREAS, LARGE_SLOTS_SLABNUM, NUM_SLOTS, OVERSIZE_SLABNUM, slabnum_to_slotsize, layout_to_slabnum, TOT_VM_ALLOCATABLE, slabnum_to_numareas};
+use lib::{MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_AREAS, LARGE_SLOTS_SLABNUM, NUM_SLOTS, OVERSIZE_SLABNUM, slabnum_to_slotsize, layout_to_slabnum, TOT_VM_ALLOCATABLE, slabnum_to_numareas, NUM_SLABS};
     
 use bytesize::ByteSize;
+
+const WORDSIZE: usize = 4;
 
 fn conv(size: usize) -> String {
     ByteSize::b(size as u64).to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
@@ -90,12 +92,22 @@ fn virtual_bytes_map() -> usize {
 
     println!("The virtual memory space for all the variables is {} ({})", variablesvbu.separate_with_commas(), convsum(variablesvbu));
 
-    // The free lists for slabs 0 and 1
-    let freelistslotsize = 4;
-    let freelistspace = 2 * NUM_AREAS * NUM_SLOTS * freelistslotsize;
+    // Free lists need to be 4-byte aligned.
+    let unalignedbytes = vbu % WORDSIZE;
+    if unalignedbytes > 0 {
+	let paddingforfreelists = WORDSIZE - unalignedbytes;
+	println!("Needed {} padding for free lists.", paddingforfreelists);
+	totalpaddingneeded += paddingforfreelists;
+	vbu += paddingforfreelists;
+    }
+    
+    // The free lists for slabs 0, 1, and 2 (all the slabs whose slots are < 4 bytes).
+    let numsmallslabs = 3;
+    let freelistslotsize = WORDSIZE;
+    let freelistspace: usize = numsmallslabs * NUM_AREAS * NUM_SLOTS * freelistslotsize;
 
     vbu += freelistspace;
-
+    
     println!("The virtual memory space for the free lists is {} ({})", freelistspace.separate_with_commas(), convsum(freelistspace));
 
     // Then the space needed for the data slabs.
@@ -110,12 +122,25 @@ fn virtual_bytes_map() -> usize {
 	if slotsize.is_power_of_two() {
 	    let unalignedbytes = vbu % slotsize;
 	    if unalignedbytes > 0 {
-		paddingneeded = slotsize - unalignedbytes;
-		println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingneeded, 0, slabnum, slotsize);
-		vbu += paddingneeded;
+		let paddingforpow2 = slotsize - unalignedbytes;
+		paddingneeded += paddingforpow2;
+		println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingforpow2, 0, slabnum, slotsize);
+		totalpaddingneeded += paddingforpow2;
+		vbu += paddingforpow2;
 		assert!(vbu % slotsize == 0);
 	    }
 	} 
+
+	// Also, we want every slab to begin on a 64-byte boundary for cache-line friendliness.
+	let unalignedbytes = vbu % 64;
+	if unalignedbytes > 0 {
+	    let paddingforcacheline = 64 - unalignedbytes;
+	    paddingneeded += paddingforcacheline;
+	    println!("needed {} padding for cache-line-friendliness", paddingforcacheline);
+	    totalpaddingneeded += paddingforcacheline;
+	    vbu += paddingforcacheline;
+	}
+	
 	// Okay the total space needed for this slab is
 	let spaceperslab = slotsize * NUM_SLOTS;
 
@@ -132,6 +157,8 @@ fn virtual_bytes_map() -> usize {
     
     println!("XXX The total virtual memory space for all the variables and slots is {} ({})", vbu.separate_with_commas(), convsum(vbu));
     println!("Total padding needed was {}", totalpaddingneeded);
+    for numsmallslabs in 0..NUM_SLABS { if slabnum_to_slotsize(numsmallslabs) >= WORDSIZE { break } }
+    
     let remaining = TOT_VM_ALLOCATABLE - vbu;
     println!("Extra vm space we can use! {} ({})", remaining, convsum(remaining));
     println!("About to try to allocate {} ({}) ({}) bytes...", vbu, vbu.separate_with_commas(), convsum(vbu));
@@ -139,10 +166,10 @@ fn virtual_bytes_map() -> usize {
     println!("{:?}", mmap);
 
     //// How big of large slots could we fit in here?
-//xxx    let largeslotsize = remaining / (NUM_SLOTS * slabnum_to_numareas(LARGE_SLOTS_SLABNUM));
-//xxx    let newalloc = largeslotsize * NUM_SLOTS;
-//xxx    assert!(newalloc <= remaining, "{} <= {}", newalloc, remaining);
-//xxx    println!("We could have {} * {} large slots of size {}, which should add back up to {} ({}) + {} ({}) == {} ({})", NUM_SLOTS, slabnum_to_numareas(LARGE_SLOTS_SLABNUM), largeslotsize, vbu, convsum(vbu), newalloc, convsum(newalloc), vbu+newalloc, convsum(vbu+newalloc));
+    //xxx    let largeslotsize = remaining / (NUM_SLOTS * slabnum_to_numareas(LARGE_SLOTS_SLABNUM));
+    //xxx    let newalloc = largeslotsize * NUM_SLOTS;
+    //xxx    assert!(newalloc <= remaining, "{} <= {}", newalloc, remaining);
+    //xxx    println!("We could have {} * {} large slots of size {}, which should add back up to {} ({}) + {} ({}) == {} ({})", NUM_SLOTS, slabnum_to_numareas(LARGE_SLOTS_SLABNUM), largeslotsize, vbu, convsum(vbu), newalloc, convsum(newalloc), vbu+newalloc, convsum(vbu+newalloc));
 
     vbu
 }

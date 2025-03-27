@@ -10,10 +10,11 @@ pub const NUM_SLABS: usize = 19;
 //pub const SIZE_OF_LARGE_SLOTS: usize = 10_485_760; // 10 mebibytes
 //pub const SIZE_OF_LARGE_SLOTS: usize = 8_388_608; // 8 mebibytes
 //pub const SIZE_OF_LARGE_SLOTS: usize = 6_291_456; // 6 mebibytes
-pub const SIZE_OF_LARGE_SLOTS: usize = 5_242_880; // 5 mebibytes
-//pub const SIZE_OF_LARGE_SLOTS: usize = 4_194_304; // 4 mebibytes
+//pub const SIZE_OF_LARGE_SLOTS: usize = 5_242_880; // 5 mebibytes
+pub const SIZE_OF_LARGE_SLOTS: usize = 4_194_304; // 4 mebibytes
 
-pub const NUM_SLOTS: usize = 16_777_215; // 8 * 2^20
+pub const NUM_SLOTS: usize = 20_971_520; // 20 * 2^20
+//pub const NUM_SLOTS: usize = 16_777_215; // 16 * 2^20
 // pub const NUM_SLOTS: usize = 35_000_000;
 // pub const NUM_SLOTS: usize = 5_000_000;
 //pub const NUM_SLOTS: usize = 8_388_608; // 8 * 2^20
@@ -147,7 +148,7 @@ fn thread_area_num() -> u8 {
     THREAD_AREA_NUM.with(|&id| id)
 }
 
-//xxxfn calc_addr_of_ffs(slabnum: usize, area: usize) {
+//xxxfn calc_addr_of_flh(slabnum: usize, area: usize) {
 //xxx    let sizeof_var = 4;
 //xxx    let sizeof_vars_for_one_slab = sizeofvar * 2;
 //xxx
@@ -160,24 +161,24 @@ fn thread_area_num() -> u8 {
 //xxx}
 
 //xxx /// Returns 0 if the free list is empty or one greater than the index of the former head of the free list.
-//xxxfn pop_ffs_head(slabnum: usize, area: usize) -> u16 {
-//xxx    let addr_of_ffs = calc_addr_of_ffs(slabnum, area);
+//xxxfn pop_flh_head(slabnum: usize, area: usize) -> u16 {
+//xxx    let addr_of_flh = calc_addr_of_flh(slabnum, area);
 //xxx
-//xxx    // Uh, now we need a Rust local variable which is actually the 3 bytes of the `ffs` in order to use Rust's atomic features on it... 🤔
-//xxx    let theffs = AtomicUsize::from_ptr(addr_of_ffs);
+//xxx    // Uh, now we need a Rust local variable which is actually the 3 bytes of the `flh` in order to use Rust's atomic features on it... 🤔
+//xxx    let theflh = AtomicUsize::from_ptr(addr_of_flh);
 //xxx
-//xxx    let ffs = load_ffs_from_mem(addr_of_ffs);
-//xxx    if ffs == 0 {
+//xxx    let flh = load_flh_from_mem(addr_of_flh);
+//xxx    if flh == 0 {
 //xxx	return 0;
 //xxx    }
-//xxx    let ffsindex = ffs-1;
+//xxx    let flhindex = flh-1;
 //xxx
 //xxx    let baseptr_of_freelist = calc_addr_of_freelist(slabnum, area);
 //xxx    let slot_size_of_freelist = calc_slot_size_of_freelist(slabnum);
-//xxx    let freelistnewheadindex = load_free_list_index(baseptr_of_freelist + ffsindex * slot_size_of_freelist);
+//xxx    let freelistnewheadindex = load_free_list_index(baseptr_of_freelist + flhindex * slot_size_of_freelist);
 //xxx
 //xxx
-//xxx//	.compare_and_exchange_weak(ffs, freelistnewheadindex, Ordering::This, Ordering::That);
+//xxx//	.compare_and_exchange_weak(flh, freelistnewheadindex, Ordering::This, Ordering::That);
 //xxx}
    
 
