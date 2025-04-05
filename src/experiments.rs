@@ -1,9 +1,12 @@
 mod lib;
-use lib::{MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_AREAS, LARGE_SLOTS_SLABNUM, NUM_SLOTS, OVERSIZE_SLABNUM, slabnum_to_slotsize, layout_to_slabnum, TOT_VM_ALLOCATABLE, slabnum_to_numareas, NUM_SLABS};
+use lib::{MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_AREAS, LARGE_SLOTS_SLABNUM, NUM_SLOTS, OVERSIZE_SLABNUM, slabnum_to_slotsize, layout_to_slabnum, slabnum_to_numareas, NUM_SLABS, WORDSIZE, mmap};
     
-use bytesize::ByteSize;
+// On MacOS on Apple M4, I could allocate more than 105 trillion bytes.
+// On a linux machine (AMD EPYC 3151) with 32,711,276 bytes RAM, with overcommit=1, the amount I was able to mmap() varied. :-( One time I could mmap() only 95,175,252,639,744 bytes.
+// According to https://learn.microsoft.com/en-us/windows/win32/memory/memory-limits-for-windows-releases a 64-bit process can access 128 TiB.
+TOT_VM_ALLOCATABLE = 90_000_000_000_000;
 
-const WORDSIZE: usize = 4;
+use bytesize::ByteSize;
 
 fn conv(size: usize) -> String {
     ByteSize::b(size as u64).to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
@@ -12,25 +15,6 @@ fn conv(size: usize) -> String {
 fn convsum(size: usize) -> String {
     let logtwo = size.ilog2();
     format!("{} ({:.3}b)", conv(size), logtwo)
-}
-
-use memmapix::{MmapOptions, MmapMut, Advice};
-
-fn mm(reqsize: usize) -> Result<MmapMut, std::io::Error> {
-    let mm = MmapOptions::new().len(reqsize).map_anon();
-    if mm.is_err() {
-	return mm;
-    }
-    let x: MmapMut = mm.unwrap();
-    x.advise(Advice::Random).ok();
-    Ok(x)
-
-    // XXX We'll have to use https://docs.rs/rustix/latest/rustix/mm/fn.madvise.html to madvise more flags...
-	
-    //XXX for Linux: MapFlags::UNINITIALIZED . doesn't really optimize much even when it works and it only works on very limited platforms (because it is potentially exposing other process's information to our process
-    //XXX | MapFlags::MADV_RANDOM | MapFlags::MADV_DONTDUMP
-    //XXX Look into purgable memory on Mach https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/CachingandPurgeableMemory.html
-    //XXX Look into MADV_FREE on MacOS (and maybe iOS?) (compared to MADV_DONTNEED on Linux)
 }
 
 //XXXmod cpuid;
@@ -88,8 +72,18 @@ fn virtual_bytes_map() -> usize {
     let variablessize = 8;
     let variablesvbu = totslabs * NUM_SLOTS * variablessize;
 
+    assert!(variablesvbu == VARIABLES_SPACE);
+
     vbu += variablesvbu;
 
+    // Free lists need to be 4-byte aligned.
+    let unalignedbytes = vbu % WORDSIZE;
+    if unalignedbytes > 0 {
+	let paddingforfreelists = WORDSIZE - unalignedbytes;
+//	println!("Needed {} padding for free lists.", paddingforfreelists);
+	vbu += paddingforfreelists;
+    }
+    
     println!("The virtual memory space for all the variables is {} ({})", variablesvbu.separate_with_commas(), convsum(variablesvbu));
 
     // Free lists need to be 4-byte aligned.
@@ -105,6 +99,8 @@ fn virtual_bytes_map() -> usize {
     let numsmallslabs = 3;
     let freelistslotsize = WORDSIZE;
     let freelistspace: usize = numsmallslabs * NUM_AREAS * NUM_SLOTS * freelistslotsize;
+
+    asserr!(freelistspace == SEPARATE_FREELISTS_SPACE);
 
     vbu += freelistspace;
     
@@ -124,7 +120,9 @@ fn virtual_bytes_map() -> usize {
 	    if unalignedbytes > 0 {
 		let paddingforpow2 = slotsize - unalignedbytes;
 		paddingneeded += paddingforpow2;
-		println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingforpow2, 0, slabnum, slotsize);
+		if paddingforpow2 > 0 {
+		    println!("needed {} padding for area {}, slabnum {}, slotsize {}", paddingforpow2, 0, slabnum, slotsize);
+		}
 		totalpaddingneeded += paddingforpow2;
 		vbu += paddingforpow2;
 		assert!(vbu % slotsize == 0);
@@ -136,7 +134,9 @@ fn virtual_bytes_map() -> usize {
 	if unalignedbytes > 0 {
 	    let paddingforcacheline = 64 - unalignedbytes;
 	    paddingneeded += paddingforcacheline;
-	    println!("needed {} padding for cache-line-friendliness", paddingforcacheline);
+	    if paddingforcacheline > 0 {
+		println!("needed {} padding for cache-line-friendliness", paddingforcacheline);
+	    }
 	    totalpaddingneeded += paddingforcacheline;
 	    vbu += paddingforcacheline;
 	}
@@ -157,7 +157,7 @@ fn virtual_bytes_map() -> usize {
     
     println!("XXX The total virtual memory space for all the variables and slots is {} ({})", vbu.separate_with_commas(), convsum(vbu));
     println!("Total padding needed was {}", totalpaddingneeded);
-    for numsmallslabs in 0..NUM_SLABS { if slabnum_to_slotsize(numsmallslabs) >= WORDSIZE { break } }
+    for numsmallslabs in 0..REAL_NUM_SLABS { if slabnum_to_slotsize(numsmallslabs) >= WORDSIZE { break } }
     
     let remaining = TOT_VM_ALLOCATABLE - vbu;
     println!("Extra vm space we can use! {} ({})", remaining, convsum(remaining));
@@ -174,6 +174,38 @@ fn virtual_bytes_map() -> usize {
     vbu
 }
 
+const fn sum_array<const N: usize>(arr: &[u8; N]) -> u8 {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < N {
+        sum += arr[i];
+        i += 1;
+    }
+    sum
+}
+
+const ARRAY: [u8; 4] = [1, 2, 3, 4];
+
+const fn generate_array2<const N: usize>(arr: &[u8; N]) -> [u8; N] {
+    let mut result = [0; N];
+    let mut i = 0;
+    while i < N {
+        result[i] = i as u8 * arr[i];
+        i += 1;
+    }
+    result
+}
+
+const ARRAY2: [u8; 4] = generate_array2(&ARRAY);
+
+const SUM: u8 = sum_array(&ARRAY2);
+
+const OFFSET_OF_DATA_SLABS_ARE_0 = xxx
+
+    
 fn main() {
     virtual_bytes_map();
+    println!("The array is: {:?}", ARRAY);
+    println!("The generated array is: {:?}", ARRAY2);
+    println!("The sum of the array is: {}", SUM);
 }

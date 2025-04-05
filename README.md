@@ -1,14 +1,21 @@
 # smalloc -- a simple memory allocator
 
-`smalloc` ("Simple Memory ALLOCator") is a new memory allocator,
-suitable (I hope) as a drop-in replacement for the glibc built-in
-memory allocator, `jemalloc`, `mimalloc`, etc.
+`smalloc` is a new memory allocator, suitable (I hope) as a drop-in
+replacement for the glibc built-in memory allocator, `dlmalloc`,
+`jemalloc`, `mimalloc`, `snmalloc`, etc.
 
 I would *like* to say that it exhibits good performance properties
 compared to those others, but I haven't actually implemented and
-tested it yet, so I'll have to limit myself to saying it is simple. 😂
+tested it yet, so I'll have to limit myself to saying it is simple.
 
-Or... at least I can claim that it is simpler than the others! 😂😂
+Or... at least I can claim that it is simpler than the others!
+
+A note on naming: One thing I've learned from decades of software
+engineering is that "Simplicity is in the eye of the beholder.". If
+the design described in this document makes sense to you, then great!
+For you, the "s" in `smalloc` stands for "simple". If this design is
+confusing -- no worries! For you, the "s" in `smalloc` stands for
+"sparse". :-)
 
 # How it works
 
@@ -198,21 +205,29 @@ free list slot contains the index of the *next* free slot (or the
 sentinel value if there is no next free slot).
 
 ```
-Figure 4. Free lists for slabs 0, 1, and 2
+Figure 4. Free list slots associated with data slots for slabs 0, 1, and 2
 
-data slots
-----------
-slot 0         slot 1         ... slot 20,971,519
-.------------. .------------.     .------------.
-| [data]     | | [data]     | ... | [data]     |
-.------------. .------------.     .------------.
+slab #     data slots
+------     ----------
+           slot 0         slot 1         ... slot 20,971,519
+           .------------. .------------.     .------------.
+     0     | [data]     | | [data]     | ... | [data]     |
+           .------------. .------------.     .------------.
+     1     | [data]     | | [data]     | ... | [data]     |
+           .------------. .------------.     .------------.
+     2     | [data]     | | [data]     | ... | [data]     |
+           .------------. .------------.     .------------.
 
-free list space
----------------
-slot 0         slot 1         ... slot 20,971,519
-.------------. .------------.     .------------.
-| next slot# | | next slot# | ... | next slot# |
-.------------. .------------.     .------------.
+slab #     free list space
+------     ---------------
+           slot 0         slot 1         ... slot 20,971,519
+           .------------. .------------.     .------------.
+     0     | next slot# | | next slot# | ... | next slot# |
+           .------------. .------------.     .------------.
+     1     | next slot# | | next slot# | ... | next slot# |
+           .------------. .------------.     .------------.
+     2     | next slot# | | next slot# | ... | next slot# |
+           .------------. .------------.     .------------.
 ```
 
 So to pop the head of the free list, for `malloc()`, for slab 0, 1, or
@@ -243,12 +258,21 @@ this to me.
 ```
 Figure 5. Intrusive free lists for slabs 3 through 17
 
-data slots
-----------
-slot 0                    slot 1                    ... slot 20,971,519
-.-----------------------. .-----------------------.     .-----------------------.
-| [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
-.-----------------------. .-----------------------.     .-----------------------.
+slab #     data/free-list slots
+------     --------------------
+
+           slot 0                    slot 1                    ... slot 20,971,519
+           .-----------------------. .-----------------------.     .-----------------------.
+     3     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
+           .-----------------------. .-----------------------.     .-----------------------.
+     4     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
+           .-----------------------. .-----------------------.     .-----------------------.
+     5     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
+           .-----------------------. .-----------------------.     .-----------------------.
+    ...               ...                       ...                           ...
+           .-----------------------. .-----------------------.     .-----------------------.
+    17     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
+           .-----------------------. .-----------------------.     .-----------------------.
 ```
 
 So for slabs 3 through 17, to satisfy a `malloc()` or `realloc()` by
@@ -319,8 +343,8 @@ lists and the ever-allocated-counts to ensure that concurrent updates
 to them are valid. This is sufficient to ensure correctness of
 `smalloc`'s behavior under multiprocessing.
 
-Specifically, we use simple spin-locks with atomic
-compare-and-exchange or fetch-and-add operations.
+Specifically, we use a simple loop with atomic compare-and-exchange or
+fetch-and-add operations.
 
 * To pop an element to the free list:
 
@@ -333,7 +357,7 @@ compare-and-exchange or fetch-and-add operations.
 4. Atomically compare-and-exchange the value from `b` into `flh` if
    `flh` still contains the value in `a`.
 5. If the compare-and-exchange failed (meaning the value of `flh` has
-   changed), jump to step 1. (This is a spin-lock.)
+   changed), jump to step 1.
 
 Now you've safely popped the head of the free list into `a`.
 
@@ -345,7 +369,7 @@ freed:
 3. Atomically compare-and-exchange the index `i` into `flh` if `flh`
    still contains the value in `a`.
 4. If the compare-and-exchange failed (meaning that value of `flh` has
-   changed), jump to step 1. (This is a spin-lock.)
+   changed), jump to step 1.
 
 Now you've safely pushed `i` onto the free list.
 
@@ -353,9 +377,8 @@ Now you've safely pushed `i` onto the free list.
 
 1. Fetch-and-add 1 to the value of `eac`.
 2. If the result is `eac > 20,971,520`, meaning that the slab was
-   already full, then fetch-and-add -1, and then return. (This
-   `malloc()`/`realloc()` will then be satisfied by the next slab
-   instead.)
+   already full, then fetch-and-add -1. (This `malloc()`/`realloc()`
+   will then be satisfied by the next slab instead.)
    
 Now you've safely incremented `eac`.
 
@@ -387,7 +410,7 @@ slab #  slot size
      3       4  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
      4       5  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
-                  .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
+                 .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
      5       6  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
      6       8  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
@@ -448,7 +471,7 @@ slab #        variable
               .-----. .-----.
    ...          ...     ...
               .-----. .-----.
-    27        | eac | | flh |
+    17        | eac | | flh |
               .-----. .-----.
 ```
 
@@ -470,7 +493,7 @@ slab #     free list space
 ```
 
 Whenever choosing a slab for `malloc()` or `realloc()`, if the slab
-number you choose is <= 11, then map the current processor/core/thread
+number you choose is <= 10, then map the current processor/core/thread
 onto one of the 64 areas. Multiple cores might still access the same
 area at the same time, so you stil have to use the thread-safe state
 update methods described above for correctness.
@@ -483,20 +506,22 @@ Now you know the entire data model and algorithms for `smalloc`!
 
 The variables are laid out in memory first. Area number is most
 significant, followed by slab number. This is "column-wise" order when
-looking at Figure 3 above. So in memory, first the `eac` and `flh` for
+looking at Figure 7 above. So in memory, first the `eac` and `flh` for
 area 0 and slab 0 are laid out, and then the `eac` and `flh` for area
-0 and slab 1, and so on.
+0 and slab 1, and so on. Since area 0 is first, all of its variables
+(up to and including slab 17 variables) are laid out in memory before
+the first variables from area 1 are.
 
-Following the variables, the free lists for slabs 0 and 1 are laid
-out, with area number most significant.
+Following the variables, the free lists for slabs 0, 1, and 2 are laid
+out, with area number most significant, then slab number, then slot
+number. This is "column-wise" order when looking at Figure 8.
 
 Following the free lists, the data slots are laid out in memory, with
 area number most significant, then slab number, then slot number. This
-is "column-wise" order when looking at Figure 2 above. So in
-memory, first all the data slots for area 0, slab 0 are laid out, and
-then all the data slots for area 0, slab 1, and so on. Since area 0 is
-laid out first, all of its slabs, including slab 11 and beyond, are
-laid out in memory before any of area 1's slabs are.
+is "column-wise" order when looking at Figure 6 above. Like with the
+variables, this means that all of the slabs for area 0 (up to and
+including slab 17) are laid out in memory before the first slab from
+area 1.
 
 ### Alignment
 
@@ -519,7 +544,7 @@ bytes to optimize cache line usage.
 Okay, now you know everything there is to know about `smalloc`'s data
 model and memory layout. Given this information, you can calculate the
 exact address of every data element in `smalloc`! (Counting from the
-`smalloc` base pointer, which is the address of the first bytes in the
+`smalloc` base pointer, which is the address of the first byte in the
 layout described above.)
 
 ### Mapping Processor/Core Numbers to Areas
@@ -566,8 +591,8 @@ to be added
 * If we could allocate even more virtual memory space, `smalloc` could
   be even *simpler* (eg apply the "areas" structure to all slabs and
   not just the ones whose slots fit into cache lines), more scalable
-  (eg large slot-sizes could be larger than 6.1 million bytes), and
-  more flexible (eg have more than one `smalloc` heap in a single
+  (eg large slot-sizes could be larger than 4 mebibytes), and more
+  flexible (eg have more than one `smalloc` heap in a single
   process). Larger (than 48-bit) virtual memory addresses are already
   supported on some platforms/configurations, especially
   server-oriented ones, but are not widely supported on desktop and
@@ -602,10 +627,11 @@ the mmap'ed region, which is always page-aligned.
 
 
 
-Things `smalloc` does not attempt to do:
+Things `smalloc` does not currently attempt to do:
 
-* Try to prevent exploitation after a memory-usage bug in the user
-  code.
+* Try to mitigate malicious exploitation after a memory-usage bug in
+  the user code.
 
-* Try to minimize allocation of virtual memory.
+* Try to minimize reservation of virtual memory addresses.
 
+xxx move the thread id incrementer to inner_alloc()
