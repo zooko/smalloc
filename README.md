@@ -795,7 +795,7 @@ written here in roughly descending order of importance:
 
 	  Total of 2 or 3 potential-cache-misses.
 	  
-5. Be *consistently* efficient.
+4. Be *consistently* efficient.
 
     I want to avoid intermittent performance degradation, such as when
     your function takes little time to execute usually, but
@@ -839,7 +839,7 @@ written here in roughly descending order of importance:
     described above, I optimistically expect that `smalloc` will show
     excellent and extremely consistent performance.
 
-6. Efficiently support using `realloc()` to extend
+5. Efficiently support using `realloc()` to extend
    vectors. `smalloc`'s initial target user is Rust code, and Rust
    code uses a lot of Vectors, and not uncommonly it grows those
    Vectors dynamically, which results in a call to `realloc()` in the
@@ -862,8 +862,8 @@ written here in roughly descending order of importance:
    (as long as the new size is less than the size of `smalloc`'s large
    slots: 4 MiB).
 
-I am hopeful that `smalloc` may achieve all six of these goals. If so,
-it may be a very useful tool for a lot of codebases!
+I am hopeful that `smalloc` may achieve all five of these goals. If
+so, it may turn out to be a very useful tool!
 
 XXX TODO: see if you can prove whether jumping straight to large slots on the first resize is or isn't a performance regression compared to the current technique of first jumping to the 32-byte slot size and only then jumping to the large slot size. If you can't prove that the current technique is substantially better in some real program, then switch to the "straight to large slots" alternative for simplicity.
 
