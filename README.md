@@ -568,8 +568,8 @@ using it as an index.
 
 "Allocating" virtual memory doesn't prevent any other code (in this
 process or any other process) from being able to allocate or use
-memory [\*]. It also doesn't increase cache pressure or cause any
-other negative effects.
+memory. It also doesn't increase cache pressure or cause any other
+negative effects.
 
 And, allocating one span of virtual memory -- no matter
 how large -- imposes no more than a tiny bit of additional work on the
@@ -862,24 +862,10 @@ written here in roughly descending order of importance:
    (as long as the new size is less than the size of `smalloc`'s large
    slots: 4 MiB).
 
+I am hopeful that `smalloc` may achieve all six of these goals. If so,
+it may be a very useful tool for a lot of codebases!
+
 XXX TODO: see if you can prove whether jumping straight to large slots on the first resize is or isn't a performance regression compared to the current technique of first jumping to the 32-byte slot size and only then jumping to the large slot size. If you can't prove that the current technique is substantially better in some real program, then switch to the "straight to large slots" alternative for simplicity.
-
-[\*] Caveat: the *one* drawback of reserving a huge span of virtual
-address space...
-
-Although everything I wrote above is true, about how reserving huge
-swathes of address space -- even reserving more than half of all of
-the possible address space -- does not interfere with any other code's
-use of memory... there is one thing that it does prevent other code
-from doing: also reserving more than half of all possible address
-space! Normally, no other code in your process wants to do that, so
-it's no problem. One plausible use case that this does prevent,
-though, is one process having multiple instances of `smalloc`, for
-example to have multiple heaps for an execution environment. (Thanks
-to Sam Smith for suggesting this use case to me.) An upcoming
-technology upgrade called "5-level paging" increases the total usable
-address space to 57 bits, which would be more than enough to have
-multiple instances of `smalloc` in a single process.
 
 # Open Issues / Future Work
 
