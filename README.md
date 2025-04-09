@@ -128,15 +128,15 @@ slab #        variable
               .-----. .-----.
 ```
 
-### Free List Spaces (for Slab Numbers 0 and 1)
+### Separate Free List Spaces (for Slab Numbers 0, 1, and 2)
 
-For slabs 0, 1, and 2 there is a "free list space" large enough to
-hold 20,971,520 slot indexes, each slot index being 4 bytes in
-size. (We'll describe to how to manage the free list for the other
+For slabs 0, 1, and 2 there is a "separate free list space" large
+enough to hold 20,971,520 slot indexes, each slot index being 4 bytes
+in size. (We'll describe to how to manage the free list for the other
 slabs later.)
 
 ```
-Figure 3. Organization of free list spaces for slab numbers 0, 1, and 2.
+Figure 3. Organization of separate free list spaces for slab numbers 0, 1, and 2.
 
 slab #     free list space
 ------     ---------------
