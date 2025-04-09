@@ -138,8 +138,8 @@ slabs later.)
 ```
 Figure 3. Organization of separate free list spaces for slab numbers 0, 1, and 2.
 
-slab #     free list space
-------     ---------------
+slab #     separate free list space
+------     ------------------------
            slot 0         slot 1         ... slot 20,971,519
            .------------. .------------.     .------------.
      0     | next slot# | | next slot# | ... | next slot# |
@@ -205,7 +205,7 @@ free list slot contains the index of the *next* free slot (or the
 sentinel value if there is no next free slot).
 
 ```
-Figure 4. Free list slots associated with data slots for slabs 0, 1, and 2
+Figure 4. Separate free list slots associated with data slots for slabs 0, 1, and 2
 
 slab #     data slots
 ------     ----------
@@ -218,8 +218,8 @@ slab #     data slots
      2     | [data]     | | [data]     | ... | [data]     |
            .------------. .------------.     .------------.
 
-slab #     free list space
-------     ---------------
+slab #     separate free list space
+------     ------------------------
            slot 0         slot 1         ... slot 20,971,519
            .------------. .------------.     .------------.
      0     | next slot# | | next slot# | ... | next slot# |
