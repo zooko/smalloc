@@ -729,17 +729,18 @@ written here in roughly descending order of importance:
     only virtually -- without reading or writing any actual memory).
 	
 	Therefore, `smalloc` can calculate the location of a valid slab to
-    serve this call to `malloc()` using only two data inputs: the
-    requested size and alignment (which are on the stack in the
-    function arguments and do not incur a potential-cache-miss) and --
-    in the case of allocations small enough to pack multiple of them
-    into a cache line -- the thread number (which is in thread-local
-    storage: one potential-cache-miss). Having computed the location
-    of the slab, it can access the `flh` and `eac` from that slab (one
-    potential-cache-miss), at which point it has all the data it needs
-    to compute the exact location of the resulting slot and to update
-    the free list. (See below about why we don't typically incur
-    another potential-cache-miss when updating the free list.)
+    serve this call to `malloc()` using only one or two data inputs:
+    One, the requested size and alignment (which are on the stack in
+    the function arguments and do not incur a potential-cache-miss)
+    and two -- only in the case of allocations small enough to pack
+    multiple of them into a cache line -- the thread number (which is
+    in thread-local storage: one potential-cache-miss). Having
+    computed the location of the slab, it can access the `flh` and
+    `eac` from that slab (one potential-cache-miss), at which point it
+    has all the data it needs to compute the exact location of the
+    resulting slot and to update the free list. (See below about why
+    we don't typically incur another potential-cache-miss when
+    updating the free list.)
 
     For the implementation of `free()`, we need to use *only* the
     pointer to be freed (which is on the stack in an argument -- not a
