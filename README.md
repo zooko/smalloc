@@ -719,8 +719,9 @@ written here in roughly descending order of importance:
     the cost of a potential-cache-miss to write into the memory that
     `malloc()` returned.
     
-    `smalloc`'s implementation of `malloc()` incurs, in the common
-    cases, only two, three, or four potential cache misses.
+	To execute `smalloc`'s `malloc()` and then write into the
+    resulting memory incurs, in the common cases, only two or three
+    potential cache misses.
     
     The main reason `smalloc` incurs so few potential-cache-misses in
     these code paths is the sparseness of the data layout. `smalloc`
@@ -761,46 +762,44 @@ written here in roughly descending order of importance:
     incur no additional cache-miss. (Thanks to Sam Smith from Shielded
     Labs for teaching me this.)
     
-    This optimization doesn't apply to allocations too small to hold a
-    next-free-list-pointer, i.e. to allocations of size 1, 2, or 3
+    (This optimization doesn't apply to allocations too small to hold
+    a next-free-list-pointer, i.e. to allocations of size 1, 2, or 3
     bytes. For those, `smalloc` can't store the next-pointer -- which
     is 4 bytes -- in the slot, and so has to store it in a separate
     location, and does incur one additional potential-cache-line miss
-    in both `malloc()` and `free()`.
+    in both `malloc()` and `free()`.)
 
 	Counts of the potential-cache-line misses for the common cases:
 	
-	* `malloc()`:
+	* To `malloc()` and then write into the resulting memory:
 	  * If the allocation size <= 32, then: + 1 to access the `threadnum`
 	  * + 1 to access the `flh` and `eac`
-	  * If the allocation size >= 4, then: + 1 to access the intrusive
-		  free list entry, in which case the user code accessing the
-		  resulting memory doesn't incur an additional cache-miss (as
-		  long as the user code accesses it before it falls out of
-		  cache)
-      * Else: + 1 to access the separate free list entry, and + 1 for
-          the user code to access the resulting memory
+	  * + 1 to access the intrusive free list entry
+      * no additional cache-miss for the user code to access the data
 	  
-	  Total of 2, 3, or 4 potential-cache-misses.
-	  
-	* `free()`:
-	  * + 1 to access the `flh`
-	  * If the allocation size >= 4, then: + 1 to access the intrusive
-		  free list entry, in which the user code accessing the
-		  resulting memory doesn't incur an additional cache-miss (as
-		  long as the user code accesses it before it falls out of
-		  cache)
-      * Else: + 1 to access the separate free, and + 1 for the user
-          code to access the resulting memory
-
 	  Total of 2 or 3 potential-cache-misses.
 	  
+	* To read from some memory and then `free()` it:
+  	  * + 1 for the user code to read from the memory
+	  * + 1 to access the `flh`
+  	  * no additional cache-miss for `free()` to access the intrusive
+          free list entry
+
+	  Total of 2 potential-cache-misses.
+	  
+	* To `free()` some memory without first reading it:
+  	  * no cache-miss for user code since it doesn't read the memory
+	  * + 1 to access the `flh`
+  	  * + 1 to access the intrusive free list entry
+
+	  Total of 2 potential-cache-misses.
+
 4. Be *consistently* efficient.
 
     I want to avoid intermittent performance degradation, such as when
     your function takes little time to execute usually, but
-    occasionally there is a latency spike when the same function takes
-    much longer to execute.
+    occasionally there is a latency spike when the function takes much
+    longer to execute.
 	
     I also want to minimize the number of scenarios in which
     `smalloc`'s performance degrades due to the user code's behavior
@@ -825,15 +824,15 @@ written here in roughly descending order of importance:
     managers do, which nicely eliminates some sources of intermittent
     performance degradation.
     
-    Additionally, there are no locks in `smalloc`, so it will
-    hopefully handle heavy multi-processing contention (i.e. many
-    separate cores allocating and freeing memory simultaneously) with
-    consistent performance. (There *are* concurrency-resolution loops
-    in `malloc` and `free` -- see the pseudo-code in "Thread-Safe
-    State Changes" above -- but these are not locks. Any thread that
-    runs that code will make progress in only a few CPU cycles, so
-    this cannot trigger priority inversion or a "pile-up" of threads
-    waiting for a lock.)
+    There are no locks in `smalloc`, so it will hopefully handle heavy
+    multi-processing contention (i.e. many separate cores allocating
+    and freeing memory simultaneously) with consistent
+    performance. (There *are* concurrency-resolution loops in `malloc`
+    and `free` -- see the pseudo-code in "Thread-Safe State Changes"
+    above -- but these are not locks. Any thread that runs that code
+    will make progress after only a few CPU cycles, regardless of the
+    state of any other thread, so this cannot trigger priority
+    inversion or a "pile-up" of threads waiting for a lock.)
     
     So with the possible exception of the two "worst-case scenarios"
     described above, I optimistically expect that `smalloc` will show
@@ -859,8 +858,8 @@ written here in roughly descending order of importance:
    results indicate that this technique would indeed eliminate at
    least 90% of the unnecessary memory-copying when extending Vectors,
    making it almost costless to extend a Vector any number of times
-   (as long as the new size is less than the size of `smalloc`'s large
-   slots: 4 MiB).
+   (as long as the new size doesn't exceed the size of `smalloc`'s
+   large slots: 4 MiB).
 
 I am hopeful that `smalloc` may achieve all five of these goals. If
 so, it may turn out to be a very useful tool!
