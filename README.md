@@ -132,7 +132,7 @@ slab #        variable
 
 For slabs 0, 1, and 2 there is a "separate free list space" large
 enough to hold 20,971,520 slot indexes, each slot index being 4 bytes
-in size. (We'll describe to how to manage the free list for the other
+in size. (We'll describe to how to manage the free lists for the other
 slabs later.)
 
 ```
@@ -183,7 +183,7 @@ like in `free()`, above) and return the pointer to the new slot.
 That's it! You could stop reading here and you'd have a basic
 knowledge of the design of `smalloc`.
 
-## Algorithms, More Detail -- the Free Lists
+## Algorithms in More Detail -- the Free Lists
 
 The `flh` for a given slab is either a sentinel value meaning that the
 free list is empty, or else it is the index of the slot most recently
@@ -244,8 +244,8 @@ whatever was formerly the head of the free list. Now set the `flh` to
 be the slot number of this item. Now this item is the new head of the
 free list.
 
-What about for slabs numbered 3 through 17? There is no associated
-free list space to hold the next-pointers. The answer is we store the
+What about for slabs numbered 3 through 17? There is no separate free
+list space to hold their next-pointers. The answer is we store the
 next-pointers in the same space where the data goes when the slot is
 in use! Each data slot is either currently freed, meaning we can use
 its space to hold the next-pointer, or currently allocated, meaning it
@@ -284,110 +284,24 @@ that next item and you're done popping the head of the free list.
 To push an item onto the free list (in order to implement `free()`),
 you are given the slot number of the item to be freed. Take the
 current `flh` and copy its value into the data slot of the item to be
-freed. Now set the `flh` to be the index of the item to be
-freed. That item is now the new head of the free list.
+freed. Now set the `flh` to be the index of the item to be freed. That
+item is now the new head of the free list.
 
 If there are no items on the free list when you are satisfying a
 `malloc()` or `realloc()`, then you increment the
 ever-allocated-count, `eac`, and return a pointer into the next,
 never-before-allocated, slot.
 
-## Algorithms, More Detail -- Growers
+## Algorithms in More Detail -- Multiprocessing
 
-Suppose the user calls `realloc()` and the new requested size is
-larger than the original size. Allocations that ever get reallocated
-to larger sizes often, in practice, get reallocated over and over
-again to larger and larger sizes. We call any allocation that has
-gotten reallocated to a larger size a "grower".
-
-If the user calls `realloc()` asking for a new larger size, and the
-new size still fits within the current slot that the data is already
-occupying, then just be lazy and consider this `realloc()` a success
-and return the current pointer as the return value.
-
-If the new requested size doesn't fit into the current slot, and if it
-is less than or equal to 64 bytes, allocate from the slab with 64 byte
-slots (slab number 11).
-
-If the new requested size doesn't fit into 64 bytes, then allocate
-from the slab with 4 MiB slots (slab number 17).
-
-(As always, if the requested size doesn't fit into 4 MiB, then fall
-back to `mmap()`.)
-
-## Algorithms, More Detail -- Overflowers
-
-Suppose the user calls `malloc()` or `realloc()` and the slab we
-choose to allocate from is full. That means the free list is empty,
-and the ever-allocated-count is equal to 20,971,520 -- the total
-number of slots in this slab. This could happen if there were
-20,971,520 allocations from this slab alive simultaneously. In that
-case, allocate from the next bigger slab, i.e. incremenent the slab
-number and try again. (Thanks to Nate Wilcox, also my colleague at
-Shielded Labs, for suggesting this technique.)
-
-What if the slab you were trying to allocate from was the biggest slab
--- slab 17 -- and it was full? Then fall back to using `mmap()` to
-request more memory from the operating system and just return the
-pointer to that.
-
-## Algorithms, *Even* More Detail -- Multiprocessing
-
-To make `smalloc` perform well with multiple processors/cores
-operating in parallel, we need to make two changes to the above.
-
-### Thread-Safe State Changes
-
-First, add thread-safe locks around the modifications of the free
-lists and the ever-allocated-counts to ensure that concurrent updates
-to them are valid. This is sufficient to ensure correctness of
-`smalloc`'s behavior under multiprocessing.
-
-Specifically, we use a simple loop with atomic compare-and-exchange or
-fetch-and-add operations.
-
-* To pop an element to the free list:
-
-1. Load the value from `flh` into a local variable/register, `a`.
-2. If it is the sentinel value, meaning that the free list is empty,
-   return. (This `malloc()`/`realloc()` will then be satisfied from
-   the never-yet-allocated slots instead.)
-3. Load the value from the free list slot indexed by `a` into a local
-   variable/register `b`.
-4. Atomically compare-and-exchange the value from `b` into `flh` if
-   `flh` still contains the value in `a`.
-5. If the compare-and-exchange failed (meaning the value of `flh` has
-   changed), jump to step 1.
-
-Now you've safely popped the head of the free list into `a`.
-
-* To push an element onto the free list, where `i` is the index to be
-freed:
-
-1. Load the value from `flh` into a local variable/register, `a`.
-2. Store the value from `a` into the free list element with index `i`.
-3. Atomically compare-and-exchange the index `i` into `flh` if `flh`
-   still contains the value in `a`.
-4. If the compare-and-exchange failed (meaning that value of `flh` has
-   changed), jump to step 1.
-
-Now you've safely pushed `i` onto the free list.
-
-* To increment `eac`:
-
-1. Fetch-and-add 1 to the value of `eac`.
-2. If the result is `eac > 20,971,520`, meaning that the slab was
-   already full, then fetch-and-add -1. (This `malloc()`/`realloc()`
-   will then be satisfied by the next slab instead.)
-   
-Now you've safely incremented `eac`.
+To make `smalloc` perform well with multiple cores operating in
+parallel, we need to make do two things.
 
 ### Separate Areas For Multiprocessing
 
-The second thing to do for multiprocessing is replicate the data
-structures for slabs 0 through 10 (inclusive) into 64 identical
-"areas", so that separate cores will (typically) use separate areas
-from one another. This is not necessary for correctness, it is just a
+Replicate the data structures for slabs 0 through 10 (inclusive) into
+64 identical "areas" that'll each be (typically) accessed by a
+different thread. This is not necessary for correctness, it is just a
 performance optimization.
 
 ```
@@ -423,6 +337,10 @@ slab #  slot size
                   .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
     10      32  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
+     ^-- slots that we can fit multiple of them into a 64-byte cache line
+			 
+     v-- slots that we can't
+                  .---------. .---------.     .---------.
     11      64  B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
     12     128  B | [data]  | | [data]  | ... | [data]  |
@@ -465,6 +383,10 @@ slab #        variable
               .-----. .-----.  .-----. .-----.     .-----. .-----.
     10        | eac | | flh |  | eac | | flh | ... | eac | | flh |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
+     ^-- slots that we can fit multiple of them into a 64-byte cache line
+			 
+     v-- slots that we can't
+              .-----. .-----.
     11        | eac | | flh |
               .-----. .-----.
     12        | eac | | flh |
@@ -476,7 +398,7 @@ slab #        variable
 ```
 
 ```
-Figure 8. Organization of free list spaces for slab numbers 0, 1, and 2 including areas.
+Figure 8. Organization of separate free list spaces for slab numbers 0, 1, and 2 including areas.
                                                                                                         ... (areas 2-62) ... 
 area # ->  area 0                                             area 1                                              |   area 63
            ------                                             ------                                              v   -------
@@ -492,13 +414,118 @@ slab #     free list space
            .------------. .------------.     .------------.   .------------. .------------.     .------------.        .------------. .------------.     .------------.
 ```
 
-Whenever choosing a slab for `malloc()` or `realloc()`, if the slab
-number you choose is <= 10, then map the current processor/core/thread
-onto one of the 64 areas. Multiple cores might still access the same
-area at the same time, so you stil have to use the thread-safe state
-update methods described above for correctness.
+There is a global static variable named `nextareanum`, initialized to
+0.
+
+Each thread has a thread-local variable named `areanum` which
+determines which area this thread uses for slabs 0 through 10
+inclusive.
+
+Whenever you choose a slab for `malloc()` or `realloc()`, if the slab
+number is <= 10, then use this thread's `areanum` to determine which
+area to use. If this thread's `areanum` isn't initialized, add 1 to
+`nextareanum` and set this thread's `areanum` to the result. If the
+resulting `areanum` > 63, then scan all the areas, inspecting the
+`eac` of this slab in each area and choose the area with the lowest
+`eac` for this slab and set this thread's `areanum` equal to that.
+
+### Thread-Safe State Update
+
+Use thread-safe algorithms to update the free lists and the
+ever-allocated-counts. This is sufficient to ensure correctness of
+`smalloc`'s behavior under multiprocessing.
+
+Specifically, we use a simple loop with atomic compare-and-exchange or
+fetch-and-add operations.
+
+* To pop an element to the free list:
+
+1. Load the value from `flh` into a local variable/register, `a`.
+2. If it is the sentinel value, meaning that the free list is empty,
+   return. (This `malloc()`/`realloc()` will then be satisfied from
+   the never-yet-allocated slots instead.)
+3. Load the value from the free list slot indexed by `a` into a local
+   variable/register `b`.
+4. Atomically compare-and-exchange the value from `b` into `flh` if
+   `flh` still contains the value in `a`.
+5. If the compare-and-exchange failed (meaning the value of `flh` has
+   changed), jump to step 1.
+
+Now you've thread-safely popped the head of the free list into `a`.
+
+* To push an element onto the free list, where `i` is the index to be
+freed:
+
+1. Load the value from `flh` into a local variable/register, `a`.
+2. Store the value from `a` into the free list element with index `i`.
+3. Atomically compare-and-exchange the index `i` into `flh` if `flh`
+   still contains the value in `a`.
+4. If the compare-and-exchange failed (meaning that value of `flh` has
+   changed), jump to step 1.
+
+Now you've thread-safely pushed `i` onto the free list.
+
+* To increment `eac`:
+
+1. Fetch-and-add 1 to the value of `eac`.
+2. If the result is `eac > 20,971,520`, meaning that the slab was
+   already full, then fetch-and-add -1. (This `malloc()`/`realloc()`
+   will then be satisfied by overflowing to a different slab instead.)
+   
+Now you've thread-safely incremented `eac`.
+
+Finally, whenever incrementing the global `nextareanum`, use the
+atomic `fetch_add(1)` instead of a non-atomic add.
 
 Now you know the entire data model and algorithms for `smalloc`!
+
+## Algorithms, More Detail -- Growers
+
+Suppose the user calls `realloc()` and the new requested size is
+larger than the original size. Allocations that ever get reallocated
+to larger sizes often, in practice, get reallocated over and over
+again to larger and larger sizes. We call any allocation that has
+gotten reallocated to a larger size a "grower".
+
+If the user calls `realloc()` asking for a new larger size, and the
+new size still fits within the current slot that the data is already
+occupying, then just be lazy and consider this `realloc()` a success
+and return the current pointer as the return value.
+
+If the new requested size doesn't fit into the current slot, and if it
+is less than or equal to 64 bytes, allocate from the slab with 64 byte
+slots (slab number 11).
+
+If the new requested size doesn't fit into 64 bytes, then allocate
+from the slab with 4 MiB slots (slab number 17).
+
+(As always, if the requested size doesn't fit into 4 MiB, then fall
+back to `mmap()`.)
+
+## Algorithms, More Detail -- Overflowers
+
+Suppose the user calls `malloc()` or `realloc()` and the slab we
+choose to allocate from is full. That means the free list is empty,
+and the ever-allocated-count is greater than or equal to 20,971,520 --
+the total number of slots in this slab. This could happen if there
+were 20,971,520 allocations from this slab alive simultaneously.
+
+If the slot size is <= 32 bytes, spill over to the next unused area in
+the same way as described above -- by `fetch_add(1)` on the global
+`nextareanum` and store the result in your thread's `areanum`. If your
+thread's `areanum` is then > 63, then examine the `eac` of this slab
+for each area and set your thread's `areanum` to the area that has the
+lowest `eac`.
+
+If the slot size is > 32 bytes, then allocate from the next bigger
+slab, i.e. increment the slab number and try again. (Thanks to Nate
+Wilcox, also my colleague at Shielded Labs, for suggesting this
+technique.)
+
+What if the slab you were trying to allocate from was the biggest slab
+-- slab 17 -- and it was full? Then fall back to using `mmap()` to
+request more memory from the operating system and just return the
+pointer to that.
 
 ## The Nitty-Gritty
 
@@ -864,15 +891,33 @@ written here in roughly descending order of importance:
 I am hopeful that `smalloc` may achieve all five of these goals. If
 so, it may turn out to be a very useful tool!
 
-XXX TODO: see if you can prove whether jumping straight to large slots on the first resize is or isn't a performance regression compared to the current technique of first jumping to the 32-byte slot size and only then jumping to the large slot size. If you can't prove that the current technique is substantially better in some real program, then switch to the "straight to large slots" alternative for simplicity.
-
 # Open Issues / Future Work
 
-* TODO: see if the "tiny" slots (1-, 2-, and 3-byte slots) give a
-  substantial performance improvement in any real program. If not,
-  remove them, for simplicity. I guess another way to say the same
-  thing is: remove them, see if that causes a substantial performance
-  regression in any real program, and if so put them back. >:-D
+* Port to Cheri, add capability-safety
+
+* See if you can prove whether jumping straight to large slots on the
+  first resize is or isn't a performance regression compared to the
+  current technique of first jumping to the 32-byte slot size and only
+  then jumping to the large slot size. If you can't prove that the
+  current technique is substantially better in some real program, then
+  switch to the "straight to large slots" alternative for simplicity.
+
+* Try adding a dose of quint, VeriFast, *and* Miri! :-D
+
+* See if the "tiny" slots (1-, 2-, and 3-byte slots) give a
+  substantial performance improvement in any real program and measure
+  their benefits and drawbacks in micro-benchmarks. Consider removing
+  them for simplicity. Maybe remove them, see if that causes a
+  substantial performance regression in any real programs, and if so
+  put them back? >:-D
+
+* Check if it is worth the added complexity to skip the atomic
+  fetch-and-add on the eac's in the packable slabs.
+
+* See if the "pack multiple into a cache line" slots that aren't
+  powers of two (sizes 5, 6, 9, and 10) are worth the complexity, in
+  the same was as the previous TODO... (Without them we can use
+  bittwiddling instead of a lookup to map size to slabnumber. :-))
 
 * The current design and implementation of `smalloc` is "tuned" to
   64-byte cache lines and 4096-bit virtal memory pages.
