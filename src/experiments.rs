@@ -4,7 +4,7 @@ use lib::{MAX_SLABNUM_TO_PACK_INTO_CACHELINE, NUM_AREAS, LARGE_SLOTS_SLABNUM, NU
 // On MacOS on Apple M4, I could allocate more than 105 trillion bytes.
 // On a linux machine (AMD EPYC 3151) with 32,711,276 bytes RAM, with overcommit=1, the amount I was able to mmap() varied. :-( One time I could mmap() only 95,175,252,639,744 bytes.
 // According to https://learn.microsoft.com/en-us/windows/win32/memory/memory-limits-for-windows-releases a 64-bit process can access 128 TiB.
-TOT_VM_ALLOCATABLE = 90_000_000_000_000;
+const TOT_VM_ALLOCATABLE: usize = 90_000_000_000_000;
 
 use bytesize::ByteSize;
 
@@ -173,35 +173,6 @@ fn virtual_bytes_map() -> usize {
 
     vbu
 }
-
-const fn sum_array<const N: usize>(arr: &[u8; N]) -> u8 {
-    let mut sum = 0;
-    let mut i = 0;
-    while i < N {
-        sum += arr[i];
-        i += 1;
-    }
-    sum
-}
-
-const ARRAY: [u8; 4] = [1, 2, 3, 4];
-
-const fn generate_array2<const N: usize>(arr: &[u8; N]) -> [u8; N] {
-    let mut result = [0; N];
-    let mut i = 0;
-    while i < N {
-        result[i] = i as u8 * arr[i];
-        i += 1;
-    }
-    result
-}
-
-const ARRAY2: [u8; 4] = generate_array2(&ARRAY);
-
-const SUM: u8 = sum_array(&ARRAY2);
-
-const OFFSET_OF_DATA_SLABS_ARE_0 = xxx
-
     
 fn main() {
     virtual_bytes_map();

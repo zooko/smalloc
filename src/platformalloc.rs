@@ -10,7 +10,7 @@ pub mod vendor {
 	
 	unsafe {
 	    mmap_anonymous(
-		ptr::null_mut(),
+		p::null_mut(),
 		reqsize,
 		ProtFlags::READ | ProtFlags::WRITE,
 		MapFlags::PRIVATE | MapFlags::NO_RESERVE
@@ -18,15 +18,15 @@ pub mod vendor {
 	};
     }
 
-    pub fn sys_dealloc(ptr: *mut u8, size: usize) -> () {
+    pub fn sys_dealloc(p: *mut u8, size: usize) -> () {
 	unsafe {
-	    munmap(ptr, size).ok()
+	    munmap(p, size).ok()
 	}
     }
 
-    pub fn sys_realloc(ptr: *mut u8, oldsize: usize, newsize: usize) {
+    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) {
 	unsafe {
-	    mremap(ptr, oldsize, newsize, MremapFlags::MAYMOVE).ok()
+	    mremap(p, oldsize, newsize, MremapFlags::MAYMOVE).ok()
 	}
     }
 
@@ -49,7 +49,6 @@ pub mod vendor {
 
 #[cfg(target_vendor = "apple")]
 pub mod vendor {
-    use std::mem::transmute;
     use std::mem::size_of;
     use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
@@ -73,17 +72,17 @@ pub mod vendor {
 	address as *mut u8
     }
 
-    pub fn sys_dealloc(ptr: *mut u8, size: usize) {
+    pub fn sys_dealloc(p: *mut u8, size: usize) {
 	assert!(size_of::<usize>() == size_of::<u64>());
 	assert!(size_of::<*mut u8>() == size_of::<u64>());
 	
 	unsafe {
-	    let retval = mach_vm_deallocate(mach_task_self(), transmute::<*mut u8, u64>(ptr), size as u64);
+	    let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
 	    assert!(retval == KERN_SUCCESS);
 	}
     }
 
-    pub fn sys_realloc(ptr: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
+    pub fn sys_realloc(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
 	assert!(size_of::<*mut u8>() == size_of::<u64>());
 
 	let mut newaddress: mach_vm_address_t = 0;
@@ -97,7 +96,7 @@ pub mod vendor {
 		   0, // mask
 		   VM_FLAGS_ANYWHERE,
 		   task,
-		   transmute::<*mut u8, u64>(ptr),
+		   p.addr() as u64,
 		   0, // copy = False
 		   &mut cur_prot, &mut max_prot, 
 		   VM_INHERIT_NONE);
