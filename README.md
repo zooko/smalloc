@@ -800,26 +800,28 @@ written here in roughly descending order of importance:
     Counts of the potential-cache-line misses for the common cases:
 
     1. To `malloc()` and then write into the resulting memory:
-       * If the allocation size <= 32, then: one to access the
+       * If the allocation size <= 32, then: 🟠 one to access the
          `threadnum`
-       * one to access the `flh` and `eac`
-       * one to access the intrusive free list entry
-       * no additional cache-miss for the user code to access the data
+       * 🟠 one to access the `flh` and `eac`
+       * 🟠 one to access the intrusive free list entry
+       * 🟢 no additional cache-miss for the user code to access the
+         data
 
     Total of 2 or 3 potential-cache-misses.
 
     2. To read from some memory and then `free()` it:
-       * one for the user code to read from the memory
-       * one to access the `flh`
-       * no additional cache-miss for `free()` to access the intrusive
-        free list entry
+       * 🟠 one for the user code to read from the memory
+       * 🟠 one to access the `flh`
+       * 🟢 no additional cache-miss for `free()` to access the
+         intrusive free list entry
 
     Total of 2 potential-cache-misses.
 
     3. To `free()` some memory without first reading it:
-       * no cache-miss for user code since it doesn't read the memory
-       * one to access the `flh`
-       * one to access the intrusive free list entry
+       * 🟢 no cache-miss for user code since it doesn't read the
+         memory
+       * 🟠 one to access the `flh`
+       * 🟠 one to access the intrusive free list entry
 
     Total of 2 potential-cache-misses.
 
