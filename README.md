@@ -307,9 +307,9 @@ performance optimization.
 ```
 Figure 6. Organization of data slots including areas.
 
-                              area 0                                        area 1                      ... (areas 2-63) ...         area 63
+                              area 0                                        area 1                      ... (areas 2-62) ...         area 63
                              ------                                        ------                                |                   -------
-						                                                                                         v
+                                                                                                                 v
         slot # -> slot 0      slot 1      ... slot 20,971,519   slot 0      slot 1      ... slot 20,971,519              slot 0      slot 1      ... slot 20,971,519
                   ------      ------          ---------------   ------      ------          ---------------              ------      ------          ---------------
 slab #  slot size
@@ -338,7 +338,7 @@ slab #  slot size
     10      32  B | [data]  | | [data]  | ... | [data]  |       | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.       .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
      ^-- slots that we can fit multiple of them into a 64-byte cache line
-			 
+          
      v-- slots that we can't
                   .---------. .---------.     .---------.
     11      64  B | [data]  | | [data]  | ... | [data]  |
@@ -384,7 +384,7 @@ slab #        variable
     10        | eac | | flh |  | eac | | flh | ... | eac | | flh |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
      ^-- slots that we can fit multiple of them into a 64-byte cache line
-			 
+          
      v-- slots that we can't
               .-----. .-----.
     11        | eac | | flh |
@@ -438,7 +438,7 @@ ever-allocated-counts. This is sufficient to ensure correctness of
 Specifically, we use a simple loop with atomic compare-and-exchange or
 fetch-and-add operations.
 
-* To pop an element to the free list:
+#### To pop an element to the free list:
 
 1. Load the value from `flh` into a local variable/register, `a`.
 2. If it is the sentinel value, meaning that the free list is empty,
@@ -453,7 +453,7 @@ fetch-and-add operations.
 
 Now you've thread-safely popped the head of the free list into `a`.
 
-* To push an element onto the free list, where `i` is the index to be
+#### To push an element onto the free list, where `i` is the index to be
 freed:
 
 1. Load the value from `flh` into a local variable/register, `a`.
@@ -465,19 +465,20 @@ freed:
 
 Now you've thread-safely pushed `i` onto the free list.
 
-* To increment `eac`:
+#### To increment `eac`:
 
 1. Fetch-and-add 1 to the value of `eac`.
 2. If the result is `eac > 20,971,520`, meaning that the slab was
    already full, then fetch-and-add -1. (This `malloc()`/`realloc()`
    will then be satisfied by overflowing to a different slab instead.)
-   
+
 Now you've thread-safely incremented `eac`.
 
 Finally, whenever incrementing the global `nextareanum`, use the
 atomic `fetch_add(1)` instead of a non-atomic add.
 
-Now you know the entire data model and algorithms for `smalloc`!
+Now you know the entire data model and almost all of the algorithms
+for `smalloc`!
 
 ## Algorithms, More Detail -- Growers
 
@@ -598,22 +599,22 @@ process or any other process) from being able to allocate or use
 memory. It also doesn't increase cache pressure or cause any other
 negative effects.
 
-And, allocating one span of virtual memory -- no matter
-how large -- imposes no more than a tiny bit of additional work on the
-kernel's virtual-memory accounting logic. It's best to think of
-"allocating" virtual memory as simply *reserving address space*. The
-kernel simply ensures that no other code (in this process) that
-requests address space will receive address space that overlaps with
-this span that you just reserved. (The kernel needs to do this only
-for other code running in *this* process -- other processes already
-have completely separate address spaces which aren't affected by
-allocations in this process.)
+And, allocating one span of virtual memory -- no matter how large --
+imposes no more than a tiny bit of additional work on the kernel's
+virtual-memory accounting logic. It's best to think of "allocating"
+virtual memory as simply *reserving address space*. The kernel simply
+ensures that no other code (in this process) that requests address
+space will receive address space that overlaps with this span that you
+just reserved. (The kernel needs to do this only for other code
+running in *this* process -- other processes already have completely
+separate address spaces which aren't affected by allocations in this
+process.)
 
-Therefore, it can be useful to reserve one huge span of address space and
-then use only a small part of it. This technique is used occasionally
-in scientific computing, such as to compute over large sparse
-matrices, but I'm not aware of it being exploited to the hilt in a
-memory manager before.
+Therefore, it can be useful to reserve one huge span of address space
+and then use only a small part of it. This technique is used
+occasionally in scientific computing, such as to compute over large
+sparse matrices, but I'm not aware of it being exploited to the hilt
+in a memory manager before.
 
 So, if you accept that "avoiding reserving too much virtual address
 space" is not an important goal for a memory manager, what *are* the
@@ -624,54 +625,54 @@ written here in roughly descending order of importance:
 `smalloc`'s design, but I haven't actually tested it yet!)
 
 1. Be simple, in both design and implementation. This helps greatly to
-	ensure correctness -- always a critical issue in modern
-	computing. "Simplicity is the inevitable price that we must pay
-	for correctness."--Tony Hoare (paraphrased)
+   ensure correctness -- always a critical issue in modern
+   computing. "Simplicity is the inevitable price that we must pay for
+   correctness."--Tony Hoare (paraphrased)
 
-	Simplicity also eases making improvements to the codebase and
-    learning from the codebase.
+   Simplicity also eases making improvements to the codebase and
+   learning from the codebase.
 
-	I've tried to pay the price of keeping `smalloc` simple while
-    designing and implementing it.
+   I've tried to pay the price of keeping `smalloc` simple while
+   designing and implementing it.
 
 2. Place user data in locations that gain the benefits of
-	caching. This comes into play when the user code actually reads
-	from and writes to addresses that the memory manager returned to
-	it.
-   
-   a. If a single CPU core accesses different allocations in quick
-	   succession, and those allocations are packed into a single
-	   cache line, then it can execute much faster due to having the
-	   memory already in cache and not having to load it from main
-	   memory. This can make the difference between a few cycles when
-	   the data is already in cache versus tens or even hundreds of
-	   cycles when it has to load it from main memory.
-   
-   b. On the downside, if multiple different CPU cores access
-	   different allocations in parallel, and the allocations are
-	   packed into the same cache line as each other, then this causes
-	   a substantial performance *degradation*, as the CPU has to
-	   stall the cores while propagating their accesses of the shared
-	   memory. This is called "false sharing" or "destructive cache
-	   interference". The magnitude of the performance impact is the
-	   similar to that in point (a.) above -- false sharing can impose
-	   as much as hundreds of cycles of penalty on a single
-	   access. Worse is that--depending on the data access patterns
-	   across cores--that penalty might recur over and over on
-	   subsequent accesses.
-	
-   c. Suppose the program accesses multiple allocations in quick
-	   succession. If they are packed into the same memory page, this
-	   avoids a potentially costly page fault. Page faults can cost
-	   only a few CPU cycles in the best case, but in case of a TLB
-	   cache miss they could incur hundreds of CPU cycles of
-	   penalty. In the worst case, the kernel has to load the data
-	   from swap, which could incur a performance penalty of hundreds
-	   of *thousands* of CPU cycles or even more! Additionally,
-	   faulting in a page of memory increases the pressure on the TLB
-	   cache and the swap subsystem, thus potentially causing a
-	   performance degradation for other processes running on the same
-	   system.
+   caching. This comes into play when the user code actually reads
+   from and writes to addresses that the memory manager returned to
+   it.
+
+    1. If a single CPU core accesses different allocations in quick
+       succession, and those allocations are packed into a single
+       cache line, then it can execute much faster due to having the
+       memory already in cache and not having to load it from main
+       memory. This can make the difference between a few cycles when
+       the data is already in cache versus tens or even hundreds of
+       cycles when it has to load it from main memory.
+
+    2. On the downside, if multiple different CPU cores access
+       different allocations in parallel, and the allocations are
+       packed into the same cache line as each other, then this causes
+       a substantial performance *degradation*, as the CPU has to
+       stall the cores while propagating their accesses of the shared
+       memory. This is called "false sharing" or "destructive cache
+       interference". The magnitude of the performance impact is the
+       similar to that in point (a.) above -- false sharing can impose
+       as much as hundreds of cycles of penalty on a single
+       access. Worse is that--depending on the data access patterns
+       across cores--that penalty might recur over and over on
+       subsequent accesses.
+
+    3. Suppose the program accesses multiple allocations in quick
+       succession. If they are packed into the same memory page, this
+       avoids a potentially costly page fault. Page faults can cost
+       only a few CPU cycles in the best case, but in case of a TLB
+       cache miss they could incur hundreds of CPU cycles of
+       penalty. In the worst case, the kernel has to load the data
+       from swap, which could incur a performance penalty of hundreds
+       of *thousands* of CPU cycles or even more! Additionally,
+       faulting in a page of memory increases the pressure on the TLB
+       cache and the swap subsystem, thus potentially causing a
+       performance degradation for other processes running on the same
+       system.
 
    Note that these three goals cannot be fully optimized by the memory
    manager, because they depend on how the user code accesses the
@@ -679,84 +680,84 @@ written here in roughly descending order of importance:
    to optimize the above goals under some assumptions about the
    behavior of the user code:
 
-   i.  Pack as many separate allocations from a single thread into
-		each cache line as possible to optimize for point (a.) --
-		cache line sharing.
+    1. Pack as many separate allocations from a single thread into
+       each cache line as possible to optimize for (constructive)
+       cache-line sharing.
 
-   ii. Place allocations requested by separate threads in separate
-		areas, to minimize the risk of point (b.) -- false
-		sharing. This is heuristically assuming that successive
-		allocations requested by a single thread are less likely to
-		later be accessed simultaneously by multiple different
-		threads. You can imagine user code which violates this
-		assumption -- having one thread allocate many small
-		allocations and then handing them out to other threads/cores
-		which then access them in parallel with one another. Under
-		`smalloc`'s current design, this behavior could result in a
-		lot of false-sharing. However, I can't think of a simple way
-		to avoid this bad case without sacrificing the benefits of
-		true sharing that we get by packing together allocations that
-		then get accessed by the same core.
-   
-   iii. When allocations are freed by the user code, `smalloc` appends
-		their slot to a free list. When allocations are subsequently
-		requested, the most recently free'd slots are returned
-		first. This is a LIFO (stack) pattern, which means user code
-		that tends to access its allocations in a stack-like pattern
-		will enjoy improved caching. (Thanks to Andrew Reece from
-		Shielded Labs for teaching me this.)
-   
-   iv. For allocations too large to pack multiple into a single cache
-		line, but small enough to pack multiple into a single memory
-		page, `smalloc` attempts to pack multiple into a single memory
-		page. It doesn't separate allocations of these sizes by
-		thread, the way it does for small allocations, because there's
-		no performance penalty when multiple cores access the same
-		memory page (but not the same cache line) in parallel.
-   
-   Note that all four of these techniques are limited by the fact that
-   all allocations in `smalloc` are in fixed-size slots in a
-   contiguous slab of equal-sized slots. Therefore, only allocations
-   of (almost) the same size as each other will get packed into a
-   single cache line. So, for example, if the user code allocates one
-   10-byte allocation and then one 32-byte allocation, those two will
-   not share a cache line. On the other hand, if the user code does
-   that over and over many times, then each batch of six of its
-   10-byte allocations will share one (64-byte) cache line, and each
-   batch of two of its 32-byte allocations will share one (64-byte)
-   cache line. So maybe the user code will enjoy good caching benefits
-   anyway--that remains to be tested. In any case, the way `smalloc`
-   currently does this keeps things simple.
+    2. Place allocations requested by separate threads in separate
+       areas, to minimize the risk of destructive ("false") cache-line
+       sharing. This is heuristically assuming that successive
+       allocations requested by a single thread are less likely to
+       later be accessed simultaneously by multiple different
+       threads. You can imagine user code which violates this
+       assumption -- having one thread allocate many small allocations
+       and then handing them out to other threads/cores which then
+       access them in parallel with one another. Under `smalloc`'s
+       current design, this behavior could result in a lot of
+       false-sharing. However, I can't think of a simple way to avoid
+       this bad case without sacrificing the benefits of true sharing
+       that we get by packing together allocations that then get
+       accessed by the same core.
+
+    3. When allocations are freed by the user code, `smalloc` appends
+       their slot to a free list. When allocations are subsequently
+       requested, the most recently free'd slots are returned
+       first. This is a LIFO (stack) pattern, which means user code
+       that tends to access its allocations in a stack-like pattern
+       will enjoy improved caching. (Thanks to Andrew Reece from
+       Shielded Labs for teaching me this.)
+
+    4. For allocations too large to pack multiple into a single cache
+       line, but small enough to pack multiple into a single memory
+       page, `smalloc` attempts to pack multiple into a single memory
+       page. It doesn't separate allocations of these sizes by thread,
+       the way it does for small allocations, because there's no
+       performance penalty when multiple cores access the same memory
+       page (but not the same cache line) in parallel.
+
+  Note that all four of these techniques are limited by the fact that
+  all allocations in `smalloc` are in fixed-size slots in a contiguous
+  slab of equal-sized slots. Therefore, only allocations of (almost)
+  the same size as each other will get packed into a single cache
+  line. So, for example, if the user code allocates one 10-byte
+  allocation and then one 32-byte allocation, those two will not share
+  a cache line. On the other hand, if the user code does that over and
+  over many times, then each batch of six of its 10-byte allocations
+  will share one (64-byte) cache line, and each batch of two of its
+  32-byte allocations will share one (64-byte) cache line. So maybe
+  the user code will enjoy good caching benefits anyway--that remains
+  to be tested. In any case, the way `smalloc` currently does this
+  keeps things simple.
 
 3. Be efficient when executing `malloc()`, `free()`, and
-	`realloc()`. I want calls to those functions to execute in as few
-	CPU cycles as possible. I optimistically think `smalloc` is going
-	to be great at this goal! The obvious reason for that is that the
-	code implementing those three functions is *very simple* -- it
-	needs to execute only a few CPU instructions to implement each of
-	those functions.
+   `realloc()`. I want calls to those functions to execute in as few
+   CPU cycles as possible. I optimistically think `smalloc` is going
+   to be great at this goal! The obvious reason for that is that the
+   code implementing those three functions is *very simple* -- it
+   needs to execute only a few CPU instructions to implement each of
+   those functions.
 
-	A perhaps less-obvious reason is that there is *minimal
+    A perhaps less-obvious reason is that there is *minimal
     data-dependency* in those code paths.
-    
-	Think about how many loads of memory from different locations, and
+
+    Think about how many loads of memory from different locations, and
     therefore potential-cache-misses, your process incurs to execute
     `malloc()` and then to write into the memory that `malloc()`
     returned. It has to be at least one, because you are going to pay
     the cost of a potential-cache-miss to write into the memory that
     `malloc()` returned.
-    
-	To execute `smalloc`'s `malloc()` and then write into the
+
+    To execute `smalloc`'s `malloc()` and then write into the
     resulting memory incurs, in the common cases, only two or three
     potential cache misses.
-    
+
     The main reason `smalloc` incurs so few potential-cache-misses in
     these code paths is the sparseness of the data layout. `smalloc`
     has pre-reserved a vast swathe of address space and "laid out"
     unique locations for all of its slabs, slots, and variables (but
     only virtually -- without reading or writing any actual memory).
-	
-	Therefore, `smalloc` can calculate the location of a valid slab to
+    
+    Therefore, `smalloc` can calculate the location of a valid slab to
     serve this call to `malloc()` using only one or two data inputs:
     One, the requested size and alignment (which are on the stack in
     the function arguments and do not incur a potential-cache-miss)
@@ -776,7 +777,7 @@ written here in roughly descending order of importance:
     of the slot and the slab to be freed. From there, it needs to
     access the `flh` for that slab (one potential-cache-miss).
 
-	Why don't we have to pay the cost of one more potential-cache-miss
+    Why don't we have to pay the cost of one more potential-cache-miss
     to update the free list (in both `malloc()` and in `free()`)?
     There is a sweet optimization here that the next free-list-pointer
     and the memory allocation occupy the same memory! (Although not at
@@ -788,7 +789,7 @@ written here in roughly descending order of importance:
     access of the same space to store the next free-list pointer will
     incur no additional cache-miss. (Thanks to Sam Smith from Shielded
     Labs for teaching me this.)
-    
+
     (This optimization doesn't apply to allocations too small to hold
     a next-free-list-pointer, i.e. to allocations of size 1, 2, or 3
     bytes. For those, `smalloc` can't store the next-pointer -- which
@@ -796,30 +797,31 @@ written here in roughly descending order of importance:
     location, and does incur one additional potential-cache-line miss
     in both `malloc()` and `free()`.)
 
-	Counts of the potential-cache-line misses for the common cases:
-	
-	* To `malloc()` and then write into the resulting memory:
-	  * If the allocation size <= 32, then: one to access the `threadnum`
-	  * one to access the `flh` and `eac`
-	  * one to access the intrusive free list entry
-      * no additional cache-miss for the user code to access the data
-	  
-	  Total of 2 or 3 potential-cache-misses.
-	  
-	* To read from some memory and then `free()` it:
-  	  * one for the user code to read from the memory
-	  * one to access the `flh`
-  	  * no additional cache-miss for `free()` to access the intrusive
-          free list entry
+    Counts of the potential-cache-line misses for the common cases:
 
-	  Total of 2 potential-cache-misses.
-	  
-	* To `free()` some memory without first reading it:
-  	  * no cache-miss for user code since it doesn't read the memory
-	  * one to access the `flh`
-  	  * one to access the intrusive free list entry
+    1. To `malloc()` and then write into the resulting memory:
+       * If the allocation size <= 32, then: one to access the
+         `threadnum`
+       * one to access the `flh` and `eac`
+       * one to access the intrusive free list entry
+       * no additional cache-miss for the user code to access the data
 
-	  Total of 2 potential-cache-misses.
+    Total of 2 or 3 potential-cache-misses.
+
+    2. To read from some memory and then `free()` it:
+       * one for the user code to read from the memory
+       * one to access the `flh`
+       * no additional cache-miss for `free()` to access the intrusive
+        free list entry
+
+    Total of 2 potential-cache-misses.
+
+    3. To `free()` some memory without first reading it:
+       * no cache-miss for user code since it doesn't read the memory
+       * one to access the `flh`
+       * one to access the intrusive free list entry
+
+    Total of 2 potential-cache-misses.
 
 4. Be *consistently* efficient.
 
@@ -827,13 +829,13 @@ written here in roughly descending order of importance:
     your function takes little time to execute usually, but
     occasionally there is a latency spike when the function takes much
     longer to execute.
-	
+
     I also want to minimize the number of scenarios in which
     `smalloc`'s performance degrades due to the user code's behavior
     triggering an "edge case" or a "worst case scenario" in
     `smalloc`'s design.
-	
-	The story sketched out above about user code allocating small
+    
+    The story sketched out above about user code allocating small
     allocations on one thread and then handing them out to other
     threads to access is an example of how user code behavior could
     trigger a performance degradation in `smalloc`. There is one other
@@ -844,7 +846,7 @@ written here in roughly descending order of importance:
     small allocations simultaneously, those allocations would then
     share cache lines. This could lead, again, to false-sharing.
     
-	On the bright side, I can't think of any *other* "worst case
+    On the bright side, I can't think of any *other* "worst case
     scenarios" for `smalloc` beyond these two. In particular,
     `smalloc` never has to "rebalance" or re-arrange its data
     structures, or do any "deferred accounting" like some other memory
@@ -888,82 +890,82 @@ written here in roughly descending order of importance:
    (as long as the new size doesn't exceed the size of `smalloc`'s
    large slots: 4 MiB).
 
-I am hopeful that `smalloc` may achieve all five of these goals. If
-so, it may turn out to be a very useful tool!
+    I am hopeful that `smalloc` may achieve all five of these
+    goals. If so, it may turn out to be a very useful tool!
 
 # Open Issues / Future Work
 
 * Port to Cheri, add capability-safety
 
 * See if you can prove whether jumping straight to large slots on the
-  first resize is or isn't a performance regression compared to the
-  current technique of first jumping to the 32-byte slot size and only
-  then jumping to the large slot size. If you can't prove that the
-  current technique is substantially better in some real program, then
-  switch to the "straight to large slots" alternative for simplicity.
+first resize is or isn't a performance regression compared to the
+current technique of first jumping to the 32-byte slot size and only
+then jumping to the large slot size. If you can't prove that the
+current technique is substantially better in some real program, then
+switch to the "straight to large slots" alternative for simplicity.
 
 * Try adding a dose of quint, VeriFast, *and* Miri! :-D
 
 * See if the "tiny" slots (1-, 2-, and 3-byte slots) give a
-  substantial performance improvement in any real program and measure
-  their benefits and drawbacks in micro-benchmarks. Consider removing
-  them for simplicity. Maybe remove them, see if that causes a
-  substantial performance regression in any real programs, and if so
-  put them back? >:-D
+substantial performance improvement in any real program and measure
+their benefits and drawbacks in micro-benchmarks. Consider removing
+them for simplicity. Maybe remove them, see if that causes a
+substantial performance regression in any real programs, and if so
+put them back? >:-D
 
 * Check if it is worth the added complexity to skip the atomic
-  fetch-and-add on the eac's in the packable slabs.
+fetch-and-add on the eac's in the packable slabs.
 
 * See if the "pack multiple into a cache line" slots that aren't
-  powers of two (sizes 5, 6, 9, and 10) are worth the complexity, in
-  the same was as the previous TODO... (Without them we can use
-  bittwiddling instead of a lookup to map size to slabnumber. :-))
+powers of two (sizes 5, 6, 9, and 10) are worth the complexity, in
+the same was as the previous TODO... (Without them we can use
+bittwiddling instead of a lookup to map size to slabnumber. :-))
 
 * The current design and implementation of `smalloc` is "tuned" to
-  64-byte cache lines and 4096-bit virtal memory pages.
-  
-  The current version of `smalloc` works correctly with larger cache
-  lines but there might be a performance improvement from a variant of
-  `smalloc` tuned for 128-bit cache lines. Notably the new Apple ARM64
-  chips have 128-bit cache lines in some cases, and modern Intel chips
-  have a hardware cache prefetcher that sometimes fetches the next
-  64-bit cache line.
- 
-  It works correctly with larger page tables but there might be
-  performance problems with extremely large ones -- I'm not sure.
-  Notably "huge pages" of 2 MiB or 1 GiB are sometimes configured in
-  Linux especially in "server"-flavored configurations.
- 
-  There might also be a performance improvement from a variant of
-  `smalloc` tuned to larger virtual memory pages. Notably virtual
-  memory pages on modern MacOS and iOS are 16 KiB.
+64-byte cache lines and 4096-bit virtal memory pages.
+
+The current version of `smalloc` works correctly with larger cache
+lines but there might be a performance improvement from a variant of
+`smalloc` tuned for 128-bit cache lines. Notably the new Apple ARM64
+chips have 128-bit cache lines in some cases, and modern Intel chips
+have a hardware cache prefetcher that sometimes fetches the next
+64-bit cache line.
+
+It works correctly with larger page tables but there might be
+performance problems with extremely large ones -- I'm not sure.
+Notably "huge pages" of 2 MiB or 1 GiB are sometimes configured in
+Linux especially in "server"-flavored configurations.
+
+There might also be a performance improvement from a variant of
+`smalloc` tuned to larger virtual memory pages. Notably virtual
+memory pages on modern MacOS and iOS are 16 KiB.
 
 * If we could allocate even more virtual memory space, `smalloc` could
-  more scalable (eg large slot-sizes could be larger than 4 mebibytes,
-  the number of per-thread areas could be greater than 64), and you
-  could have more than one `smalloc` heap in a single process. Larger
-  (than 48-bit) virtual memory addresses are already supported on some
-  platforms/configurations, especially server-oriented ones, but are
-  not widely supported on desktop and smartphone platforms. We could
-  consider creating a variant of `smalloc` that works only platforms
-  with larger (than 48-bit) virtual memory addresses and offers these
-  advantages.
+more scalable (eg large slot-sizes could be larger than 4 mebibytes,
+the number of per-thread areas could be greater than 64), and you
+could have more than one `smalloc` heap in a single process. Larger
+(than 48-bit) virtual memory addresses are already supported on some
+platforms/configurations, especially server-oriented ones, but are
+not widely supported on desktop and smartphone platforms. We could
+consider creating a variant of `smalloc` that works only platforms
+with larger (than 48-bit) virtual memory addresses and offers these
+advantages.
 
 * I looked into the `RDPID` instruction on x86 and the `MPIDR`
-  instruction on ARM as a way to get a differentiating number/ID for
-  the current core without the overhead of an operating system call
-  and without having to load the current thread number from memory,
-  but using `MPIDR` resulted in an illegal instruction exception on
-  MacOS on Apple M4, so I gave up on that approach. The current
-  implementation assigns a unique integer "thread number" to each
-  thread the first time it calls `malloc()`, which is stored in
-  thread-local storage. It might be nice if we could figure out a way
-  to get any kind of differentiating number/ID for different cores
-  with a CPU instruction instead of by reading it from thread-local
-  memory, which incurs a potential-cache-miss. Also, of course, we
-  ought to benchmark whether it is actually more efficient to use one
-  of these CPU instructions or to just load the thread number from
-  thread-local storage. :-)
+instruction on ARM as a way to get a differentiating number/ID for
+the current core without the overhead of an operating system call
+and without having to load the current thread number from memory,
+but using `MPIDR` resulted in an illegal instruction exception on
+MacOS on Apple M4, so I gave up on that approach. The current
+implementation assigns a unique integer "thread number" to each
+thread the first time it calls `malloc()`, which is stored in
+thread-local storage. It might be nice if we could figure out a way
+to get any kind of differentiating number/ID for different cores
+with a CPU instruction instead of by reading it from thread-local
+memory, which incurs a potential-cache-miss. Also, of course, we
+ought to benchmark whether it is actually more efficient to use one
+of these CPU instructions or to just load the thread number from
+thread-local storage. :-)
 
 Notes:
 
@@ -977,4 +979,4 @@ the mmap'ed region, which is always page-aligned.
 Things `smalloc` does not currently attempt to do:
 
 * Try to mitigate malicious exploitation after a memory-usage bug in
-  the user code.
+the user code.
