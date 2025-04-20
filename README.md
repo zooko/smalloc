@@ -440,26 +440,31 @@ fetch-and-add operations.
 
 #### To pop an element to the free list:
 
-1. Load the value from `flh` into a local variable/register, `a`.
+1. Load the value from `flh` into a local variable/register,
+   `firstindex`. This is the index of the first entry in the free
+   list.
 2. If it is the sentinel value, meaning that the free list is empty,
    return. (This `malloc()`/`realloc()` will then be satisfied from
    the never-yet-allocated slots instead.)
-3. Load the value from the free list slot indexed by `a` into a local
-   variable/register `b`.
-4. Atomically compare-and-exchange the value from `b` into `flh` if
-   `flh` still contains the value in `a`.
+3. Load the value from the free list slot indexed by `firstindex` into
+   a local variable/register `nextindex`. This is the index of the
+   next entry in the free list (i.e. the second entry), if any.
+4. Atomically compare-and-exchange the value from `nextindex` into
+   `flh` if `flh` still contains the value in `firstindex`.
 5. If the compare-and-exchange failed (meaning the value of `flh` has
    changed), jump to step 1.
 
-Now you've thread-safely popped the head of the free list into `a`.
+Now you've thread-safely popped the head of the free list into
+`firstindex`.
 
-#### To push an element onto the free list, where `i` is the index to be
-freed:
+#### To push an element onto the free list, where `newindex` is the index to be added:
 
-1. Load the value from `flh` into a local variable/register, `a`.
-2. Store the value from `a` into the free list element with index `i`.
-3. Atomically compare-and-exchange the index `i` into `flh` if `flh`
-   still contains the value in `a`.
+1. Load the value from `flh` into a local variable/register,
+   `firstindex`.
+2. Store the value from `firstindex` into the free list element with
+   index `newindex`.
+3. Atomically compare-and-exchange the index `newindex` into `flh` if
+   `flh` still contains the value in `firstindex`.
 4. If the compare-and-exchange failed (meaning that value of `flh` has
    changed), jump to step 1.
 
@@ -566,8 +571,8 @@ second-least-significant part, this mean that slabs with slots of
 power-of-2 sizes have to begin at a virtual memory address which is an
 integer multiple of the slot size.
 
-Additionally, we want each slab to begin at an even multiple of 64
-bytes to optimize cache line usage.
+Additionally, we want each of the small slabs to begin at an even
+multiple of 64 bytes to optimize cache line usage.
 
 Okay, now you know everything there is to know about `smalloc`'s data
 model and memory layout. Given this information, you can calculate the
@@ -852,7 +857,7 @@ written here in roughly descending order of importance:
    nicely eliminates some sources of intermittent performance
    degradation.
     
-   There are no locks in `smalloc`, so it will hopefully handle heavy
+   There are no locks in `smalloc`[^1], so it will hopefully handle heavy
    multi-processing contention (i.e. many separate cores allocating
    and freeing memory simultaneously) with consistent
    performance. (There *are* concurrency-resolution loops in `malloc`
@@ -861,6 +866,9 @@ written here in roughly descending order of importance:
    will make progress after only a few CPU cycles, regardless of the
    state of any other thread, so this cannot trigger priority
    inversion or a "pile-up" of threads waiting for a lock.)
+
+    [^1] ... except in the initialization function that acquires the
+    lock only one time -- the first time `alloc()` is called.
     
    So with the possible exception of the two "worst-case scenarios"
    described above, I optimistically expect that `smalloc` will show
@@ -905,6 +913,18 @@ written here in roughly descending order of importance:
 
 * Try adding a dose of quint, VeriFast, *and* Miri! :-D
 
+* And Loom! |-D
+
+* The whole overflow algorithm turned out to be complicated to
+  implement in source code. Or, to put it another way the simpler
+  algorithm that just overflows straight to the system allocator was
+  *substantially* simpler to implement. So... XXX come back to this
+  and see if we can enlarge the NUM_SLOTS a more to further reduce the
+  chances of that overflow ever happening in practice? Or see if after
+  having implemented the simpler algorithm, we can see a nice way to
+  implement the original overflow algorithm. XXX enlarge small slabs
+  to NUM_SLOTS = 2^31 or so
+
 * See if the "tiny" slots (1-, 2-, and 3-byte slots) give a
   substantial performance improvement in any real program and measure
   their benefits and drawbacks in micro-benchmarks. Consider removing
@@ -918,7 +938,8 @@ written here in roughly descending order of importance:
 * See if the "pack multiple into a cache line" slots that aren't
   powers of two (sizes 5, 6, 9, and 10) are worth the complexity, in
   the same was as the previous TODO... (Without them we can use
-  bittwiddling instead of a lookup to map size to slabnumber. :-))
+  bittwiddling instead of a loop or a lookup to map size to
+  slabnumber. :-))
 
 * The current design and implementation of `smalloc` is "tuned" to
   64-byte cache lines and 4096-bit virtal memory pages.
@@ -979,3 +1000,12 @@ Things `smalloc` does not currently attempt to do:
 
 * Try to mitigate malicious exploitation after a memory-usage bug in
   the user code.
+
+# Acknowledgments
+
+* Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner
+  for advice and encouragement.
+
+* Thanks to my lovely girlfriend, Kelcie, for housewifing for me while
+  I wrote this program. ♥️
+

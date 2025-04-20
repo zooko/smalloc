@@ -1,33 +1,82 @@
 
 // Abstract over system virtual memory functions
 
+use std::alloc::Layout;
+
+pub fn sys_alloc(layout: Layout) -> *mut u8 {
+    // xxx add tests?
+    let reqsize = layout.size();
+    assert!(reqsize > 0);
+    let alignment = layout.align();
+    assert!(alignment > 0);
+    assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
+    
+    // Now we have to pad out the size with an extra alignment bytes so that we're guaranteed to be able to (a) return a pointer that is aligned to alignmnet, and (b) be able to subtract back to the original system-provided pointer in `sys_dealloc()` and `sys_realloc()`.
+
+    let size = reqsize + alignment;
+
+    // XXX fix this to support alignments larger than 4096, up to SIZE_OF_LARGEST_SLOTS
+    let sys_ptr = vendor::sys_alloc(size);
+    let ptr = unsafe { sys_ptr.add(alignment) };
+    assert!(ptr.is_aligned_to(alignment));
+    
+    ptr
+}
+
+pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
+    // xxx add tests?
+    let size = layout.size();
+    assert!(size > 0);
+    let alignment = layout.align();
+    assert!(alignment > 0);
+    assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
+
+    let sys_ptr = ptr.wrapping_sub(alignment);
+    vendor::sys_dealloc(sys_ptr, size)
+}
+
+pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
+    // xxx add tests?
+    assert!(newsize > 0);
+    let oldsize = oldlayout.size();
+    assert!(oldsize > 0);
+    let oldalignment = oldlayout.align();
+    assert!(oldalignment > 0);
+    assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
+
+    let sys_oldsize = oldsize + oldalignment;
+    let sys_newsize = newsize + oldalignment;
+    let sys_ptr = ptr.wrapping_sub(oldalignment);
+    let new_sys_ptr = vendor::sys_realloc(sys_ptr, sys_oldsize, sys_newsize);
+    let new_ptr = unsafe { new_sys_ptr.add(oldalignment) };
+    assert!(new_ptr.is_aligned_to(oldalignment));
+    
+    new_ptr
+}
+
 #[cfg(target_os = "linux")]
 pub mod vendor {
     use rustix::mm::{mmap_anonymous, madvise, mremap, munmap, ProtFlags, MapFlags, MremapFlags, Advice};
 
     pub fn sys_alloc(reqsize: usize) -> *mut u8 {
-	assert!(reqsize > 0);
-	
-	unsafe {
+        unsafe {
 	    mmap_anonymous(
 		p::null_mut(),
 		reqsize,
 		ProtFlags::READ | ProtFlags::WRITE,
 		MapFlags::PRIVATE | MapFlags::NO_RESERVE
 	    )
-	};
+	}
     }
 
-    pub fn sys_dealloc(p: *mut u8, size: usize) -> () {
+    pub fn sys_dealloc(p: *mut u8, size: usize) {
 	unsafe {
 	    munmap(p, size).ok()
 	}
     }
 
     pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) {
-	unsafe {
-	    mremap(p, oldsize, newsize, MremapFlags::MAYMOVE).ok()
-	}
+	mremap(p, oldsize, newsize, MremapFlags::MAYMOVE).ok()
     }
 
     // Investigating the effects of MADV_RANDOM:

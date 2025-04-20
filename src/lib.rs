@@ -1,219 +1,331 @@
-//#![doc=include_str!("../README.md")]
 #![feature(pointer_is_aligned_to)]
-#![allow(clippy::needless_range_loop)] // I like using needless range loops more than I like using enumerate.
-
-//XXX consider refactoring it so the bigger-than-cacheliney slabs are not "in" "area 0".
+#![feature(assert_matches)]
+// #![allow(clippy::needless_range_loop)] // I like using needless range loops more than I like using enumerate.
 
 // These slot sizes were chosen by calculating how many objects of this size would fit into the least-well-packed 64-byte cache line when we lay out objects of these size end-to-end over many successive 64-byte cache lines. If that makes sense. The worst-case number of objects that can be packed into a cache line can be up 2 fewer than the best-case, since the first object in this cache line might cross the cache line boundary and only the last part of the object is in this cache line, and the last object in this cache line might similarly be unable to fit entirely in and only the first part of it might be in this cache line. So this "how many fit" number below counts only the ones that entirely fit in, even when we are laying out objects of this size one after another (with no padding) across many cache lines. So it can be 0, 1, or 2 fewer than you might think. (Excluding any sizes which are smaller and can't fit more -- in the worst case -- than a larger size.)
 
-// slabnum:      size:    number:
-//        0          1         64
-//        1          2         32
-//        2          3         20
-//        3          4         16
-//        4          5         12
-//        5          6         10
-//        6          8          8
-//        7          9          6
-//        8         10          5
-//        9         16          4
-//       10         32          2
+// small slots:
+//              worst-case number
+//              that fit into one
+//                      cacheline
+// slabnum:      size:     (64B):
+// --------   --------   --------
+//        0       1  B         64
+//        1       2  B         32
+//        2       3  B         20
+//        3       4  B         16
+//        4       5  B         12
+//        5       6  B         10
+//        6       8  B          8
+//        7       9  B          6
+//        8      10  B          5
+//        9      16  B          4
+//       10      32  B          2
 
-pub const NUM_SLABS: usize = 18;
-// How many slabs have slots that we can pack more than one into a 64-byte cache line?
-pub const NUM_SLABS_CACHELINEY: usize = 11;
-pub const SLABNUM_TO_SLOTSIZE: [usize; NUM_SLABS] = [ 1, 2, 3, 4, 5, 6, 8, 9, 10, 16, 32, 64, 128, 256, 512, 1024, 2048, SIZE_OF_LARGE_SLOTS];
+// large slots:
+//                number that fit
+//                       into one
+//            virtual memory page
+// slabnum:      size:    (4KiB):
+// --------   --------   --------
+//        0     64   B         64
+//        1    128   B         32
+//        2    256   B         16
+//        3    512   B          8
+//        4   1024   B          4
+//        5   2048   B          2
+//        6      4 MiB          0
 
-const SIZE_OF_LARGE_SLOTS: usize = 4_194_304; // 4 mebibytes
+// This is the largest alignment we can conveniently guarantee, based on Linux mmap() returning pointers aligned to at least this.
+pub const MAX_ALIGNMENT: usize = 4096;
+
+pub const NUM_SMALL_SLABS: usize = 11;
+pub const NUM_LARGE_SLABS: usize = 7;
+const SIZE_OF_BIGGEST_SMALL_SLOT: usize = 32;
+const SIZE_OF_LARGEST_SLOTS: usize = 4194304; // 4 * 2^20
+pub const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, SIZE_OF_BIGGEST_SMALL_SLOT];
+pub const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, SIZE_OF_LARGEST_SLOTS];
 
 pub const NUM_SLOTS: usize = 20_971_520; // 20 * 2^20
-
-const CACHELINE_SIZE: usize = 64;
 
 // The per-slab variables and the free list entries have this size in bytes.
 const WORDSIZE: usize = 4;
 
-const NUM_SEPARATE_FREELISTS: usize = 3; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte word (slab numbers 0, 1, and 2)
-// The next_multiple_of() is to start the *next* thing on a cacheline boundary.
+// There are 64 areas each with a full complements of small slabs.
+// (Large slabs live in a separate region that is not one of those 64 areas.)
+pub const NUM_SMALL_SLAB_AREAS: usize = 64;
+
+// intentionally not aligning the beginning of this to a cacheline
+const LARGE_SLABS_VARS_BASE_OFFSET: usize = NUM_SMALL_SLAB_AREAS * NUM_SMALL_SLABS * 2 * WORDSIZE;
+
+const VARIABLES_SPACE: usize = LARGE_SLABS_VARS_BASE_OFFSET + NUM_LARGE_SLABS * 2 * WORDSIZE;
+
+fn offset_of_small_eac(areanum: usize, smallslabnum: usize) -> usize {
+    ( areanum * NUM_SMALL_SLABS * 2 + smallslabnum * 2 ) * WORDSIZE
+}
+    
+fn offset_of_large_eac(largeslabnum: usize) -> usize {
+    LARGE_SLABS_VARS_BASE_OFFSET + largeslabnum * 2 * WORDSIZE
+}
+    
+fn offset_of_small_flh(areanum: usize, smallslabnum: usize) -> usize {
+    ( areanum * NUM_SMALL_SLABS * 2 + smallslabnum * 2 + 1) * WORDSIZE
+}
+    
+fn offset_of_large_flh(largeslabnum: usize) -> usize {
+    LARGE_SLABS_VARS_BASE_OFFSET + (largeslabnum * 2 + 1) * WORDSIZE
+}
+
+const CACHELINE_SIZE: usize = 64;
+
+const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(CACHELINE_SIZE);
+
+// The calls to next_multiple_of() on a space are to start the *next* thing on a cacheline boundary.
 const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS * WORDSIZE).next_multiple_of(CACHELINE_SIZE); // Size of each of the separate free lists
+const NUM_SEPARATE_FREELISTS: usize = 3; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte word (slab numbers 0, 1, and 2)
 
-pub const NUM_AREAS: usize = 64;
+const SEPARATE_FREELISTS_SPACE: usize = NUM_SEPARATE_FREELISTS * SEPARATE_FREELIST_SPACE * NUM_SMALL_SLAB_AREAS;
 
-// Total number of slabs in all areas.
-const TOTAL_SLABS: usize = NUM_SLABS + (NUM_AREAS - 1) * NUM_SLABS_CACHELINEY;
+pub const DATA_SLABS_BASE_OFFSET: usize = (SEPARATE_FREELISTS_BASE_OFFSET + SEPARATE_FREELISTS_SPACE).next_multiple_of(CACHELINE_SIZE);
 
-// The next_multiple_of() is to start the *next* thing on a cacheline boundary.
-const VARIABLES_SPACE: usize = (TOTAL_SLABS * WORDSIZE * 2).next_multiple_of(CACHELINE_SIZE);
+//XXX add benchmarking of the lookup-table version of this:
+/// The sum of the sizes of the small slabs for one area up to numslabs (exclusive).
+pub const fn sum_small_slab_sizes(numslabs: usize) -> usize {
+    assert!(numslabs <= NUM_SMALL_SLABS);
+    let mut slabnum = 0;
+    let mut sum: usize = 0;
+    while slabnum < numslabs {
+        // Padding to make the beginning of this slab start on a cache line boundary.
+        sum = sum.next_multiple_of(CACHELINE_SIZE);
+        sum += SMALL_SLABNUM_TO_SLOTSIZE[slabnum] * NUM_SLOTS;
+	slabnum += 1;
+    }
+    sum
+}
 
-// XXX Make sure each of the separate free lists starts at 64-byte alignment.
-const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE;
+const SMALL_SLAB_AREA_SPACE: usize = sum_small_slab_sizes(NUM_SMALL_SLABS).next_multiple_of(CACHELINE_SIZE);
+const SMALL_SLAB_AREAS_REGION_SPACE: usize = SMALL_SLAB_AREA_SPACE * NUM_SMALL_SLAB_AREAS;
 
-// The next_multiple_of() is to start the *next* thing on a cacheline boundary.
-const SEPARATE_FREELISTS_SPACE: usize = (NUM_SEPARATE_FREELISTS * SEPARATE_FREELIST_SPACE * NUM_AREAS).next_multiple_of(CACHELINE_SIZE);
+const LARGE_SLAB_REGION_BASE_OFFSET: usize = (DATA_SLABS_BASE_OFFSET + SMALL_SLAB_AREAS_REGION_SPACE).next_multiple_of(LARGE_SLABNUM_TO_SLOTSIZE[NUM_LARGE_SLABS-1]);
 
-pub const DATA_SLABS_BASE_OFFSET: usize = VARIABLES_SPACE + SEPARATE_FREELISTS_SPACE;
-
-// The next_multiple_of() is to start the *next* thing on a cacheline boundary.
-const DATA_SLABS_AREA_0_SIZE: usize = (sum_column_sizes(NUM_SLABS) * NUM_SLOTS).next_multiple_of(CACHELINE_SIZE);
-// The next_multiple_of() is to start the *next* thing on a cacheline boundary.
-const DATA_SLABS_AREA_NOT0_SIZE: usize = (sum_column_sizes(NUM_SLABS_CACHELINEY) * NUM_SLOTS).next_multiple_of(CACHELINE_SIZE);
-
-/// The sum of the sizes of the first `uptoslabnum` rows of a column.
-const fn sum_column_sizes(uptoslabnum: usize) -> usize {
+//XXX add benchmarking of the lookup-table version of this:
+/// The sum of the sizes of the large slabs.
+const fn sum_large_slab_sizes(numslabs: usize) -> usize {
+    assert!(numslabs <= NUM_LARGE_SLABS);
     let mut index = 0;
-    let mut sum = 0;
-    while index < uptoslabnum {
-	sum += SLABNUM_TO_SLOTSIZE[index];
+    let mut sum: usize = 0;
+    while index < numslabs {
+        let slotsize = LARGE_SLABNUM_TO_SLOTSIZE[index];
+        // Padding to make the beginning of this slab start on a multiple of this slot size.
+        sum = sum.next_multiple_of(slotsize);
+        sum += slotsize * NUM_SLOTS;
 	index += 1;
     }
     sum
 }
 
-const DATA_SLABS_SPACE: usize = DATA_SLABS_AREA_0_SIZE + DATA_SLABS_AREA_NOT0_SIZE * (NUM_AREAS-1);
+const LARGE_SLAB_REGION_SPACE: usize = sum_large_slab_sizes(NUM_LARGE_SLABS);
 
-pub const TOTAL_VIRTUAL_MEMORY: usize = VARIABLES_SPACE + SEPARATE_FREELISTS_SPACE + DATA_SLABS_SPACE;
+pub const TOTAL_VIRTUAL_MEMORY: usize = LARGE_SLAB_REGION_BASE_OFFSET + LARGE_SLAB_REGION_SPACE;
 
-const fn generate_offset_of_var() -> [[usize; NUM_SLABS]; NUM_AREAS] {
-    let mut locallut = [[0; NUM_SLABS]; NUM_AREAS];
 
-    let mut offset_of_vars = 0;
-    let mut areanum = 0;
+use std::cmp::PartialEq;
 
-    // First generate the offsets of vars for area 0
-    let mut slabnum = 0;
-    while slabnum < NUM_SLABS {
-	locallut[areanum][slabnum] = offset_of_vars;
-	offset_of_vars += 2 * WORDSIZE;
-	slabnum += 1;
-    }
-
-    // Then areas 1 through 63 (inclusive)
-    areanum = 1;
-    while areanum < NUM_AREAS {
-	let mut slabnum = 0;
-	while slabnum < NUM_SLABS_CACHELINEY {
-	    locallut[areanum][slabnum] = offset_of_vars;
-	    offset_of_vars += 2 * WORDSIZE;
-	    slabnum += 1;
-	}
-	areanum += 1;
-    }
-
-    locallut
-}
-
-/// The offset from the base pointer, not from the beginning of the data region.
-pub const OFFSET_OF_VAR: [[usize; NUM_SLABS]; NUM_AREAS] = generate_offset_of_var();
-
-#[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
-pub struct SlotLocation {
-    pub areanum: usize,
-    pub slabnum: usize,
-    pub slotnum: usize
-}
-
-/// Return the offset (in units of a byte) from the base pointer (self.baseptr), not from the beginning of the data region.
-// Free list entries can live at non-aligned locations, such as when we re-use a 5-byte-wide slot to hold a free list entry in its first 4 bytes, and then likewise with next next 5-byte-wide slot and so forth. Therefore, we count the offset to find a free list entry (from the base ptr) in bytes, not in 4-byte words (even though each free list entry is itself 4 bytes).
-const fn offset_of_free_list_entry(sl: SlotLocation) -> usize {
-    let SlotLocation { areanum, slabnum, slotnum } = sl;
-    
-    assert!(areanum == 0 || slabnum < NUM_SLABS_CACHELINEY);
-
-    if slabnum < NUM_SEPARATE_FREELISTS {
-	// Separate free list spaces.
-
-	// area-first then slab then slot...
-	let pastslots = areanum * NUM_SEPARATE_FREELISTS * NUM_SLOTS + slabnum * NUM_SLOTS + slotnum;
-
-	// The separate free lists are laid out after the variables...
-	SEPARATE_FREELISTS_BASE_OFFSET + pastslots * WORDSIZE
-    } else {
-	// Intrusive free list -- the location of the next-slot space is also the location of the data slot.
-	sl.offset_of_slot()
-    }
-}
-
-/// Return the number of the smallest slab that can hold items with `layout`.
-pub const fn layout_to_slabnum(layout: Layout) -> usize {
-    let size = layout.size();
-    let alignment = layout.align();
-
-    assert!(alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
-
-    // Round up size to the nearest multiple of alignment:
-    let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
-
-    let mut slabnum = 0;
-    while slabnum < NUM_SLABS {
-	if alignedsize <= SLABNUM_TO_SLOTSIZE[slabnum] {
-	    return slabnum;
-	}
-	slabnum += 1;
-    }
-
-    NUM_SLABS
+#[derive(PartialEq)]
+#[derive(Debug)]
+enum SlotLocation {
+    SmallSlot { areanum: usize, smallslabnum: usize, slotnum: usize },
+    LargeSlot { largeslabnum: usize, slotnum: usize }
 }
 
 impl SlotLocation {
-    /// Return the offset (in units of a byte) from the base pointer (self.baseptr), not from the beginning of the data slabs region.
-    // Data slots can live at locations that aren't nice multiples of a certain number of bytes, since data slots are of various sizes and are packed in next to each other. Therefore, we count the offset to find a data slot (from the data slabs base ptr) in bytes.
-    pub const fn offset_of_slot(&self) -> usize {
-        assert!(self.areanum < NUM_AREAS);
-        assert!(self.slabnum < NUM_SLABS);
-        assert!(self.slotnum < NUM_SLOTS);
-
-        assert!(self.areanum == 0 || self.slabnum < NUM_SLABS_CACHELINEY);
-
-        let mut offset = DATA_SLABS_BASE_OFFSET;
-
-        let slotsize = SLABNUM_TO_SLOTSIZE[self.slabnum];
-
-        if self.areanum == 0 {
-	    // Count past any preceding slabs in area 0
-	    let past_slabs_area_0_size = sum_column_sizes(self.slabnum) * NUM_SLOTS;
-
-	    offset += past_slabs_area_0_size;
-
-	    // Count past any preceding slots in our slab in area 0
-	    let past_slab_size = self.slotnum * slotsize;
-
-	    offset += past_slab_size;
-        } else {
-	    // Count past area 0
-	    let past_area_0_size = DATA_SLABS_AREA_0_SIZE;
-
-	    offset += past_area_0_size;
-
-	    // Count past other areas
-	    let num_other_areas = self.areanum - 1;
-	    let past_other_areas_size = num_other_areas * DATA_SLABS_AREA_NOT0_SIZE;
-
-	    offset += past_other_areas_size;
-
-	    // Count past other slabs in this area
-	    let past_slabs_size = sum_column_sizes(self.slabnum) * NUM_SLOTS;
-	    
-	    offset += past_slabs_size;
-
-	    // Count past other slots in this slab.
-	    let past_slots_size = self.slotnum * slotsize;
-
-	    offset += past_slots_size;
+    fn slotsize(&self) -> usize {
+        match self {
+            SlotLocation::SmallSlot { smallslabnum, .. } => {
+                SMALL_SLABNUM_TO_SLOTSIZE[*smallslabnum]
+            }
+            SlotLocation::LargeSlot { largeslabnum, .. } => {
+                LARGE_SLABNUM_TO_SLOTSIZE[*largeslabnum]
+            }
         }
+    }
 
-        offset
+    fn offset(&self) -> usize {
+        match self {
+            SlotLocation::SmallSlot { areanum, smallslabnum, slotnum } => {
+                offset_of_small_slot(*areanum, *smallslabnum, *slotnum)
+            }
+            SlotLocation::LargeSlot { largeslabnum, slotnum } => {
+                offset_of_large_slot(*largeslabnum, *slotnum)
+            }
+        }
+    }
+    
+    /// Returns Some(SlotLocation) if the ptr pointed to a slot, else None (meaning that the pointer must have been allocated with `sys_alloc()` instead.
+    fn new_from_ptr(baseptr: *mut u8, ptr: *mut u8) -> Option<SlotLocation> {
+        // If the pointer is before our base pointer or after the end of our allocated space, then it must have come from an oversized alloc where we fell back to `sys_alloc()`. (Assuming that the user code never passes anything other a pointer that it previous got from our `alloc()`, to our `dealloc().)
+        
+        // Now there is no well-specified way to compare two pointers if they aren't part of the same allocation, which this p and our baseptr might not be.
+        // .addr() is our way of promising the Rust compiler that we won't round-trip these values back into pointers from usizes and use them, below. See https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance
+        
+        let p_as_usize = ptr.addr();
+        let baseptr_as_usize = baseptr.addr();
+        if p_as_usize < baseptr_as_usize {
+            // xxx add unit test of this case
+	    return None;
+        }
+        if p_as_usize >= baseptr_as_usize + TOTAL_VIRTUAL_MEMORY {
+            // xxx add unit test of this case
+	    return None;
+        }
+        
+        // If it wasn't a pointer from a system allocation, then it must be a pointer into one of our slots.
+        assert!(p_as_usize >= baseptr_as_usize + DATA_SLABS_BASE_OFFSET);
+
+        // Okay now we know that it is pointer into our allocation, so it is safe to subtract baseptr from it.
+        let ioffset = unsafe { ptr.offset_from(baseptr) };
+        assert!(ioffset >= 0);
+        let offset = ioffset as usize;
+        assert!(offset < isize::MAX as usize);
+        assert!(offset >= DATA_SLABS_BASE_OFFSET);
+
+        if offset < LARGE_SLAB_REGION_BASE_OFFSET {
+            // This points into the "small-slabs-areas-region".
+            let withinregionoffset = offset - DATA_SLABS_BASE_OFFSET;
+            let areanum = withinregionoffset / SMALL_SLAB_AREA_SPACE;
+            let pastareas = areanum * SMALL_SLAB_AREA_SPACE;
+            let withinareaoffset = withinregionoffset - pastareas;
+            assert!(withinareaoffset < sum_small_slab_sizes(NUM_SMALL_SLABS));
+
+            let mut smallslabnum = NUM_SMALL_SLABS-1;
+            while withinareaoffset < sum_small_slab_sizes(smallslabnum) {
+                smallslabnum -= 1;
+            }
+
+            // This ptr is within this slab.
+            let withinslaboffset = withinareaoffset - sum_small_slab_sizes(smallslabnum);
+            assert!(withinslaboffset % SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum] == 0); // ptr must point to the beginning of a slot.
+            assert!(if SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum].is_power_of_two() { ptr.is_aligned_to(SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum]) } else { true });
+            let slotnum = withinslaboffset / SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum];
+            assert!(if slotnum == 0 { ptr.is_aligned_to(CACHELINE_SIZE) } else { true });
+            assert!(if SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum].is_power_of_two() { ptr.is_aligned_to(SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum]) } else { true });
+
+            Some(Self::SmallSlot { areanum, smallslabnum, slotnum })
+        } else {
+            // This points into the "large-slabs-region".
+            assert!(LARGE_SLAB_REGION_BASE_OFFSET.is_multiple_of(CACHELINE_SIZE));
+            assert!(LARGE_SLAB_REGION_BASE_OFFSET.is_multiple_of(SIZE_OF_LARGEST_SLOTS));
+
+            let withinregionoffset = offset - LARGE_SLAB_REGION_BASE_OFFSET;
+
+            let mut largeslabnum = 0;
+            while largeslabnum < NUM_LARGE_SLABS-1 && withinregionoffset >= within_region_offset_of_large_slot_slab(largeslabnum+1) {
+                largeslabnum += 1;
+            }
+            assert!(largeslabnum < NUM_LARGE_SLABS);
+            assert!(if LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum].is_power_of_two() { ptr.is_aligned_to(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum]) } else { true });
+
+            // This ptr is within this slab.
+            // XXX replace without using offset_of_large_slot () ? Table from largeslabnum to offset!
+            let withinslaboffset = withinregionoffset - within_region_offset_of_large_slot_slab(largeslabnum);
+            assert!(withinslaboffset.is_multiple_of(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum])); // ptr must point to the beginning of a slot.
+            let slotnum = withinslaboffset / LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum];
+            assert!(if slotnum == 0 { ptr.is_aligned_to(CACHELINE_SIZE) } else { true });
+
+            Some(Self::LargeSlot { largeslabnum, slotnum })
+        }
+    }
+}
+
+fn offset_of_small_slot(areanum: usize, slabnum: usize, slotnum: usize) -> usize {
+    assert!(areanum < NUM_SMALL_SLAB_AREAS);
+    assert!(slabnum < NUM_SMALL_SLABS);
+    assert!(slotnum < NUM_SLOTS);
+
+    // This is in the small-slot slabs region.
+    let mut offset = DATA_SLABS_BASE_OFFSET;
+
+    // Count past the bytes of any earlier areas before this area:
+    offset += areanum * SMALL_SLAB_AREA_SPACE;
+                
+    // Count past the bytes of any earlier slabs before this slab:
+    offset += sum_small_slab_sizes(slabnum);
+
+    let slotsize = SMALL_SLABNUM_TO_SLOTSIZE[slabnum];
+
+    // Count past the bytes of any earlier slots in this slab:
+    offset += slotnum * slotsize;
+
+    offset
+}
+
+fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
+//XXX replace with table
+    assert!(largeslabnum < NUM_LARGE_SLABS, "{largeslabnum}");
+
+    let mut offset = 0;
+
+    // Count past the bytes of any earlier slabs before this slab:
+    offset += sum_large_slab_sizes(largeslabnum);
+
+    let slotsize = LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum];
+
+    // The beginning of each large slab is aligned with its slotsize.
+    assert!(offset.is_multiple_of(slotsize));
+
+    // Align the beginning of this slab to be a multiple of the slot size
+    offset = offset.next_multiple_of(slotsize);
+        
+    offset
+}
+
+fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
+//xxx replace part of this with table from largeslabnum to offset
+    assert!(largeslabnum < NUM_LARGE_SLABS);
+    assert!(slotnum < NUM_SLOTS);
+
+    let slotsize = LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum];
+
+    let mut offset = LARGE_SLAB_REGION_BASE_OFFSET;
+    // All large-slot slabs begin aligned with the cache-line size
+    assert!(offset.is_multiple_of(CACHELINE_SIZE));
+    assert!(offset.is_multiple_of(slotsize));
+
+    // The beginning of this slab within the large slabs region:
+    offset += within_region_offset_of_large_slot_slab(largeslabnum);
+    // All large-slot slabs begin aligned with the cache-line size
+    assert!(offset.is_multiple_of(CACHELINE_SIZE));
+    // And with their slot size.
+    assert!(offset.is_multiple_of(slotsize));
+
+    // Count past the bytes of any earlier slots in this slab:
+    offset += slotnum * slotsize;
+    assert!(offset.is_multiple_of(slotsize));
+
+    offset
+}
+
+fn offset_of_small_free_list_entry(areanum: usize, smallslabnum: usize, slotnum: usize) -> usize {
+    if smallslabnum < NUM_SEPARATE_FREELISTS {
+	// count past previous separate-free-list slots, area-first then slab then slot...
+	let pastslots = areanum * NUM_SEPARATE_FREELISTS * NUM_SLOTS + smallslabnum * NUM_SLOTS + slotnum;
+	// The separate free lists are laid out after the variables...
+	SEPARATE_FREELISTS_BASE_OFFSET + pastslots * WORDSIZE
+    } else {
+        // Intrusive free list -- the location of the next-slot space is also the location of the data slot.
+        offset_of_small_slot(areanum, smallslabnum, slotnum)
     }
 }
 
 use core::alloc::{GlobalAlloc, Layout};
 
-use std::sync::atomic::{AtomicU32, AtomicU8, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicPtr, AtomicBool, Ordering};
 mod platformalloc;
-use platformalloc::vendor::{sys_alloc, sys_dealloc, sys_realloc};
+use platformalloc::{sys_alloc, sys_dealloc, sys_realloc};
 use std::ptr::{null_mut, copy_nonoverlapping};
 
 pub struct Smalloc {
-    initlock: spin::Mutex<()>,
+    initlock: AtomicBool,
     baseptr: AtomicPtr<u8>,
 }
 
@@ -223,74 +335,10 @@ impl Default for Smalloc {
     }
 }
 
-/// Returns Some(SlotLocation) if the ptr pointed to a slot, else None (meaning that the pointer must have been allocated with sys_alloc() instead.
-pub fn slotlocation_of_ptr(baseptr: *mut u8, p: *mut u8) -> Option<SlotLocation> {
-    // If the pointer is before our base pointer or after the end of our allocated space, then it must have come from an oversized alloc where we fell back to `sys_alloc()`. (Assuming that the user code never passes anything other a pointer that it previous got from our `alloc()`, to `dealloc().)
-
-    // Now there is no well-specified way to compare two pointers if they aren't part of the same allocation, which this p and our baseptr might not be.
-    // .addr() is our way of promising the Rust compiler that we won't round-trip these values back into pointers from usizes and use them, below. See https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance
-    
-    let p_as_usize = p.addr();
-    let baseptr_as_usize = baseptr.addr();
-    if p_as_usize < baseptr_as_usize {
-	return None;
-    }
-    if p_as_usize >= baseptr_as_usize + TOTAL_VIRTUAL_MEMORY {
-	return None;
-    }
-
-    // If it wasn't a pointer from a system allocation, then it must be a pointer into one of our slots.
-    assert!(p_as_usize >= baseptr_as_usize + DATA_SLABS_BASE_OFFSET);
-
-    // Okay now we know that it is pointer into our allocation, so it is safe to subtract baseptr from it.
-    let offset = unsafe { p.offset_from(baseptr) };
-    assert!(offset >= DATA_SLABS_BASE_OFFSET as isize);
-    let data_offset = offset as usize - DATA_SLABS_BASE_OFFSET;
-
-    let (areanum, within_area_offset) = if data_offset < DATA_SLABS_AREA_0_SIZE {
-	(0, data_offset)
-    } else {
-	let residual_offset = data_offset - DATA_SLABS_AREA_0_SIZE;
-	let num_other_areas = residual_offset / DATA_SLABS_AREA_NOT0_SIZE;
-	let within_area_offset = residual_offset - num_other_areas * DATA_SLABS_AREA_NOT0_SIZE;
-
-	(num_other_areas+1, within_area_offset)
-    };
-
-    let mut slabnum = 0;
-    let mut within_slab_offset = within_area_offset;
-    let mut slotnum = 0;
-
-    while slabnum < NUM_SLABS {
-	let slotsize = SLABNUM_TO_SLOTSIZE[slabnum];
-	let slabsize = slotsize * NUM_SLOTS;
-
-	if within_slab_offset < slabsize {
-	    // This offset is within this slab.
-	    assert!(!slotsize.is_power_of_two() || p.is_aligned_to(slotsize), "slotsize: {}, p: {:?}", slotsize, p);
-	    slotnum = within_slab_offset / slotsize;
-	    assert!(slotnum * slotsize == within_slab_offset);
-            assert!(p.is_aligned_to(CACHELINE_SIZE) || slotnum > 0, "p: {:?}, areanum: {}, slabnum: {}, slotnum: {}", p, areanum, slabnum, slotnum);
-
-	    break;
-	}
-
-	slabnum += 1;
-	assert!(within_slab_offset >= slabsize);
-	within_slab_offset -= slabsize;
-    }
-
-    Some(SlotLocation {
-	areanum,
-	slabnum,
-	slotnum
-    })
-}
-
 impl Smalloc {
     pub const fn new() -> Self {
 	Self {
-	    initlock: spin::Mutex::new(()),
+	    initlock: AtomicBool::new(false),
 	    baseptr: AtomicPtr::<u8>::new(null_mut()),
 	}
     }
@@ -303,17 +351,26 @@ impl Smalloc {
 	    return p;
 	}
 
+	let layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, SIZE_OF_LARGEST_SLOTS).unwrap();
+
 	// acquire spin lock
-	let _guard = self.initlock.lock();
+        loop {
+            if self.initlock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                break;
+            }
+        }
 
 	p = self.baseptr.load(Ordering::Acquire);
 	if p.is_null() { // XXX come back and figure out if Relaxed is okay. :-)
-	    p = sys_alloc(TOTAL_VIRTUAL_MEMORY);
+	    p = sys_alloc(layout);
 	    assert!(!p.is_null());
-            assert!(p.is_aligned_to(4096), "p: {:?}", p); // This is just testing my understanding that mmap() always returns page-aligned pointers (and that page-alignment is always a multiple of 4096.)
+            assert!(p.is_aligned_to(MAX_ALIGNMENT)); // This is just testing my understanding that mmap() always returns page-aligned pointers (and that page-alignment is always a multiple of 4096.)
 	    self.baseptr.store(p, Ordering::Release); // XXX come back and figure out if Relaxed would be okay. :-)  Jack says never. :-)
 	}
+        self.initlock.store(false, Ordering::Release);
 
+        // Release the spin lock
+        
 	p
     }
 
@@ -321,430 +378,595 @@ impl Smalloc {
 	// It is not okay to call this in alloc()/idempotent_init()
 	let p = self.baseptr.load(Ordering::Relaxed);
 	assert!(!p.is_null());
+
 	p
     }
 
-    /// Returns 0 if the free list is empty or one greater than the index of the former head of the free list.
-    /// See "Thread-Safe State Changes" in README.md
-    fn pop_flh(&self, areanum: usize, slabnum: usize) -> usize {
-	assert!(areanum == 0 || slabnum < NUM_SLABS_CACHELINEY);
-
+    /// Pop the head of the free list and return it. Returns 0 if the
+    /// free list is empty, or returns the one greater than the index
+    /// of the former head of the free list. See "Thread-Safe State
+    /// Changes" in README.md
+    fn pop_small_flh(&self, areanum: usize, smallslabnum: usize) -> u32 {
 	let baseptr = self.get_baseptr();
 	
-	let offset_of_flh = OFFSET_OF_VAR[areanum][slabnum] + 1; // units of 1 byte
+	let offset_of_flh = offset_of_small_flh(areanum, smallslabnum);
+
 	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
 	assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
 	let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
 
 	let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
 	loop {
-	    let a: u32 = flh.load(Ordering::Relaxed);
-	    assert!(a as usize <= NUM_SLOTS);
-	    //xxx2 add assertionsbb everywhere about value of flh
+	    let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+	    assert!(firstindexplus1 <= NUM_SLOTS as u32);
 
-	    if a == 0 {
-		return 0;
-	    }
+	    if firstindexplus1 == 0 {
+                // 0 is the sentinel value meaning no next entry, meaning the free list is empty
+		return 0
+	    };
 
-	    let offset_of_next = offset_of_free_list_entry(SlotLocation { areanum, slabnum, slotnum: (a-1) as usize }); // units of 1 byte
+	    let offset_of_next = offset_of_small_free_list_entry(areanum, smallslabnum, (firstindexplus1-1) as usize);
 	    let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
 	    let u32_ptr_to_var = u8_ptr_to_next.cast::<u32>();
-	    let b: u32 = unsafe { u32_ptr_to_var.read_unaligned() };
-	    assert!(b as usize <= NUM_SLOTS);
-
-	    if flh.compare_exchange_weak(a, b, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-		return a as usize;
+	    let nextindexplus1: u32 = unsafe { u32_ptr_to_var.read_unaligned() };
+	    assert!(nextindexplus1 <= NUM_SLOTS as u32);
+            
+	    if flh.compare_exchange_weak(firstindexplus1, nextindexplus1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+		return firstindexplus1
 	    }
 	}
     }
 
-    fn push_flh(&self, sl: SlotLocation) {
-	let SlotLocation { areanum, slabnum, slotnum } = sl;
-	assert!(areanum == 0 || slabnum < NUM_SLABS_CACHELINEY);
-	assert!(slabnum < NUM_SLABS);
-	assert!(slotnum < NUM_SLOTS);
-
+    /// Pop the head of the free list and return it. Returns 0 if the
+    /// free list is empty, or returns the one greater than the index
+    /// of the former head of the free list. See "Thread-Safe State
+    /// Changes" in README.md
+    fn pop_large_flh(&self, largeslabnum: usize) -> u32 {
 	let baseptr = self.get_baseptr();
 	
-	let i = slotnum as u32;
+	let offset_of_flh = offset_of_large_flh(largeslabnum);
 
-	let offset_of_flh = OFFSET_OF_VAR[areanum][slabnum] + 1; // units of 1 byte
+	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
+	assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+	let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
+
+	let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+	loop {
+	    let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+	    assert!(firstindexplus1 <= NUM_SLOTS as u32);
+
+	    if firstindexplus1 == 0 {
+                // 0 is the sentinel value meaning no next entry, meaning the free list is empty
+		return 0
+	    }
+
+            // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
+	    let offset_of_next = offset_of_large_slot(largeslabnum, (firstindexplus1-1) as usize);
+	    let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+	    let u32_ptr_to_var = u8_ptr_to_next.cast::<u32>();
+	    let nextindexplus1: u32 = unsafe { u32_ptr_to_var.read_unaligned() };
+	    assert!(nextindexplus1 <= NUM_SLOTS as u32);
+            
+	    if flh.compare_exchange_weak(firstindexplus1, nextindexplus1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+		return firstindexplus1
+	    }
+	}
+    }
+
+    fn inner_push_flh(&self, offset_of_flh: usize, offset_of_new: usize, new_index: u32) {
+	let baseptr = self.get_baseptr();
+
 	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
 	assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
 	let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
 	let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
 
-	let offset_of_next = offset_of_free_list_entry(sl); // units of 1 byte
-	let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-	let u32_ptr_to_next: *mut u32 = u8_ptr_to_next.cast::<u32>();
+	let u8_ptr_to_new = unsafe { baseptr.add(offset_of_new) }; // note this isn't necessarily aligned
+	let u32_ptr_to_new: *mut u32 = u8_ptr_to_new.cast::<u32>();
 
-	loop {
-	    let a: u32 = flh.load(Ordering::Relaxed);
-	    assert!(a as usize <= NUM_SLOTS);
-	    unsafe { u32_ptr_to_next.write_unaligned(a) };
-	    if flh.compare_exchange_weak(a, i, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-		return;
-	    }
+        loop {
+	    let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+	    assert!(firstindexplus1 <= NUM_SLOTS as u32);
+	    unsafe { u32_ptr_to_new.write_unaligned(firstindexplus1) };
+            if flh.compare_exchange_weak(firstindexplus1, new_index+1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                break
+            }
 	}
+    }
+
+    fn push_flh(&self, newsl: SlotLocation) {
+        match newsl {
+            SlotLocation::SmallSlot { areanum, smallslabnum, slotnum } => {
+                assert!(slotnum < NUM_SLOTS);
+                self.inner_push_flh(
+                    offset_of_small_flh(areanum, smallslabnum),
+                    offset_of_small_free_list_entry(areanum, smallslabnum, slotnum),
+                    slotnum as u32
+                )
+            }
+            SlotLocation::LargeSlot { largeslabnum, slotnum } => {
+                assert!(slotnum < NUM_SLOTS);
+                // Intrusive free list -- the free list entry is stored in the data slot.
+                self.inner_push_flh(
+                    offset_of_large_flh(largeslabnum),
+                    offset_of_large_slot(largeslabnum, slotnum),
+                    slotnum as u32
+                )
+            }
+        }
+    }
+
+    fn get_small_eac(&self, areanum: usize, smallslabnum: usize) -> &AtomicU32 {
+	assert!(areanum < NUM_SMALL_SLAB_AREAS);
+	assert!(smallslabnum < NUM_SMALL_SLABS);
+
+	let baseptr = self.get_baseptr();
+        let offset_of_eac = offset_of_small_eac(areanum, smallslabnum);
+        let u8_ptr_to_eac = unsafe { baseptr.add(offset_of_eac) };
+	assert!(u8_ptr_to_eac.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+	let u32_ptr_to_eac = u8_ptr_to_eac.cast::<u32>();
+	unsafe { AtomicU32::from_ptr(u32_ptr_to_eac) }
+    }
+
+    fn get_large_eac(&self, largeslabnum: usize) -> &AtomicU32 {
+	assert!(largeslabnum < NUM_LARGE_SLABS);
+
+	let baseptr = self.get_baseptr();
+        let offset_of_eac = offset_of_large_eac(largeslabnum);
+        let u8_ptr_to_eac = unsafe { baseptr.add(offset_of_eac) };
+	assert!(u8_ptr_to_eac.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+	let u32_ptr_to_eac = u8_ptr_to_eac.cast::<u32>();
+	unsafe { AtomicU32::from_ptr(u32_ptr_to_eac) }
     }
 
     /// Returns the index of the next never-before-allocated slot. Returns NUM_SLOTS in the case that all slots have been allocated.
-    fn increment_eac(&self, areanum: usize, slabnum: usize) -> usize {
-	assert!(areanum == 0 || slabnum < NUM_SLABS_CACHELINEY);
-	assert!(slabnum < NUM_SLABS);
-
-	let baseptr = self.get_baseptr();
-	
-	let offset_of_eac = OFFSET_OF_VAR[areanum][slabnum]; // units of 1 byte
-	let u8_ptr_to_eac = unsafe { baseptr.add(offset_of_eac) };
-	assert!(u8_ptr_to_eac.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-	let u32_ptr_to_eac = u8_ptr_to_eac.cast::<u32>();
-	let eac = unsafe { AtomicU32::from_ptr(u32_ptr_to_eac) };
-
-	// If eac is maxed out -- at NUM_SLOTS -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed NUM_SLOTS. However, if this has happened more than a few times simultaneously, such that eac is more than a small number higher than NUM_SLOTS, then something is very wrong and we should panic to prevent some kind of failure case or exploitation. If eac reached 2^32 then it would wrap, and we want to panic long before that.
-	assert!((eac.load(Ordering::Relaxed) as usize) < NUM_SLOTS + 64); // keep this assert for runtime!
-
+    fn increment_eac(&self, eac: &AtomicU32) -> usize {
 	let nexteac = eac.fetch_add(1, Ordering::Acquire); // reconsider whether this can be Relaxed (meaning it would be okay if some other memory access got reordered to happen before this fetch_add??
-	if nexteac as usize > NUM_SLOTS {
-	    eac.fetch_sub(1, Ordering::Acquire); // reconsider whether this can be Relaxed (meaning it would be okay if some other memory access got reordered to happen before this fetch_add??
-	}
+	if nexteac as usize <= NUM_SLOTS {
+	    nexteac as usize
+	} else {
+            if nexteac as usize > NUM_SLOTS + 100 {
+	        // If eac is maxed out -- at NUM_SLOTS -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed NUM_SLOTS. However, if this has happened more than a few times simultaneously, such that eac is more than a small number higher than NUM_SLOTS, then something is very wrong and we should panic to prevent some kind of failure case or exploitation. If eac reached 2^32 then it would wrap, and we want to panic long before that.
+                panic!("the Ever-Allocated-Counter exceeded NUM_SLOTS + 100");
+            }
 
-	eac.load(Ordering::Relaxed) as usize
+	    eac.fetch_sub(1, Ordering::Acquire); // reconsider whether this can be Relaxed (meaning it would be okay if some other memory access got reordered to happen before this fetch_add??
+
+            NUM_SLOTS
+	}
     }
 
-    /// Returns Some(SlotLocation) if it was able to allocate a slot, else returns None (in which case alloc/realloc needs to satisfy the request by falling back to sys_alloc()
-    fn inner_alloc(&self, initslabnum: usize) -> Option<SlotLocation> {
-	assert!(initslabnum < NUM_SLABS);
-
-	let mut slabnum = initslabnum;
-
-	loop {
-	    let areanum = if slabnum < NUM_SLABS_CACHELINEY { thread_area_num() } else { 0 };
-
-	    let flh = self.pop_flh(areanum, slabnum);
-	    if flh != 0 {
-		// xxx add unit test of this case
-		return Some(SlotLocation { areanum, slabnum, slotnum: flh-1 });
-	    }
-	    
-	    let eac: usize = self.increment_eac(areanum, slabnum);
-	    assert!(eac <= NUM_SLOTS);
+    fn inner_small_alloc(&self, areanum: usize, smallslabnum: usize) -> Option<SlotLocation> {
+	let flhplus1 = self.pop_small_flh(areanum, smallslabnum);
+	if flhplus1 != 0 {
+	    // xxx add unit test of this case
+	    Some(SlotLocation::SmallSlot { areanum, smallslabnum, slotnum: (flhplus1-1) as usize })
+	} else {
+	    let eac: usize = self.increment_eac(self.get_small_eac(areanum, smallslabnum));
 	    if eac < NUM_SLOTS {
 		// xxx add unit test of this case
-		return Some(SlotLocation { areanum, slabnum, slotnum: eac });
-	    }
-
-	    // xxx add unit test of this case
-	    
-	    // This slab is exhausted!
-	    // xxx4 very unlikely. Investigate adding unlikely/cold annotations for Rust/LLVM...
-	    slabnum += 1;
-
-	    if slabnum >= NUM_SLOTS {
-		// xxx add unit test of this case
-		// xxx4 very very unlikely. Investigate adding unlikely/cold annotations for Rust/LLVM...
-		return None;
-	    }
-	}
+		Some(SlotLocation::SmallSlot { areanum, smallslabnum, slotnum: eac })
+	    } else {
+	        // xxx add unit test of this case
+                // The slab is full!
+		None
+            }
+        }
     }
 
+    fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
+	let flhplus1 = self.pop_large_flh(largeslabnum);
+	if flhplus1 != 0 {
+	    // xxx add unit test of this case
+	    Some(SlotLocation::LargeSlot { largeslabnum, slotnum: (flhplus1-1) as usize })
+	} else {
+	    let eac: usize = self.increment_eac(self.get_large_eac(largeslabnum));
+	    if eac < NUM_SLOTS {
+		// xxx add unit test of this case
+		Some(SlotLocation::LargeSlot { largeslabnum, slotnum: eac })
+	    } else {
+		// xxx add unit test of this case
+                // The slab is full!
+		None
+            }
+        }
+    }
+    
+    /// Returns the newly allocated SlotLocation. if it was able to allocate a slot, else returns None (in which case alloc/realloc needs to satisfy the request by falling back to sys_alloc())
+    fn inner_alloc(&self, layout: Layout) -> Option<SlotLocation> {
+        let size = layout.size();
+        let alignment = layout.align();
+        assert!(alignment > 0);
+        assert!((alignment & (alignment - 1)) == 0, "alignment must be a power of two");
+
+        // Round up size to the nearest multiple of alignment in order to get a slot that is aligned on that size.
+        let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
+
+        // XXX benchmark various ways to do this switch+loop...
+        // This way of doing this branch+loop was informed by:
+        // 1. Let's branch on small-slot vs large-slot just once and then have two (similar) code paths instead of branching on small-slot vs large-slot multiple times in one code path, and
+        // 2. I profiled zebra, which showed that 32B was the most common slot size, and that < 32B was more common than > 32B, and that among > 32B slot sizes, 64B was the most common one...
+        if alignedsize <= SIZE_OF_BIGGEST_SMALL_SLOT {
+            let mut smallslabnum = NUM_SMALL_SLABS-1;
+            while smallslabnum > 0 && SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum-1] >= alignedsize {
+                smallslabnum -= 1;
+            }
+            assert!(smallslabnum < NUM_SMALL_SLABS);
+            assert!(SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum] >= alignedsize);
+            assert!(smallslabnum == 0|| SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum-1] < alignedsize, "smallslabnum: {}, alignedsize: {}", smallslabnum, alignedsize);
+
+            self.inner_small_alloc(get_thread_areanum() as usize, smallslabnum)
+        } else if alignedsize <= SIZE_OF_LARGEST_SLOTS {
+            let mut largeslabnum = 0;
+            while LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum] < alignedsize {
+                largeslabnum += 1;
+            }
+            assert!(largeslabnum < NUM_LARGE_SLABS);
+
+            self.inner_large_alloc(largeslabnum)
+        } else {
+            // This is too large for even the largest smalloc slots, so fall back to the system allocator.
+            None
+        }
+    }
 }
 
-static GLOBAL_THREAD_ID: AtomicU8 = AtomicU8::new(0);
+use std::cell::Cell;
 
-thread_local!(static THREAD_AREA_NUM: usize = GLOBAL_THREAD_ID.fetch_add(1, Ordering::Relaxed).into());
+static GLOBAL_THREAD_AREANUM: AtomicU32 = AtomicU32::new(0);
+thread_local! {
+    static THREAD_AREANUM: Cell<Option<u32>> = const { Cell::new(None) };
+}
 
-fn thread_area_num() -> usize {
-    THREAD_AREA_NUM.with(|&id| id)
+/// Get this thread's areanum, or initialize it to the first unused
+/// areanum if this is the first time `get_thread_areanum()` has been called.
+fn get_thread_areanum() -> u32 {
+    THREAD_AREANUM.with(|cell| {
+        cell.get().map_or_else(
+            || {
+                let new_value = GLOBAL_THREAD_AREANUM.fetch_add(1, Ordering::Relaxed);
+                THREAD_AREANUM.with(|cell| cell.set(Some(new_value)));
+                new_value
+            },
+            |value| value,
+        )
+    })
 }
 
 // xxx can i get the Rust typechecker to tell me if I'm accidentally adding a slot number to an offset ithout multiplying it by a slot size first?
+//XXX learn about Constant Parameters and consider using them in here
+
 
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
 	let baseptr = self.idempotent_init();
 
 	// Allocate a slot
-	match self.inner_alloc(layout_to_slabnum(layout)) {
+	match self.inner_alloc(layout) {
 	    Some(sl) => {
-		unsafe { baseptr.add(sl.offset_of_slot()) }
+                // xxx consider unwrapping this in order to avoid redundantly branching ?? 
+                let offset = sl.offset();
+		let p = unsafe { baseptr.add(offset) };
+                assert!(if sl.slotsize().is_power_of_two() {
+                    p.is_aligned_to(sl.slotsize())
+                } else {
+                    true
+                });
+
+                p
 	    }
 	    None => {
 		// Couldn't allocate a slot -- fall back to `sys_alloc()`.
-		sys_alloc(layout.size())
+		sys_alloc(layout)
 	    }
-	    
 	}
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-	match slotlocation_of_ptr(self.get_baseptr(), ptr) {
+	match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
 	    Some(sl) => {
-		// Push the freed slot onto its free list.
-		self.push_flh(sl);
+                self.push_flh(sl)
 	    }
 	    None => {
 		// No slot -- this allocation must have come from falling back to `sys_alloc()`.
-		fallback_to_sys_dealloc(ptr, layout);
+		sys_dealloc(ptr, layout);
 	    }
 	}
     }
 
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, newsize: usize) -> *mut u8 {
+        let oldsize = layout.size();
+        assert!(oldsize > 0);
+        let oldalignment = layout.align();
+        assert!(oldalignment > 0);
+        assert!((oldalignment & (oldalignment - 1)) == 0, "alignment must be a power of two");
+        assert!(newsize > 0);
+
 	let baseptr = self.get_baseptr();
 
-	let newlayout = Layout::from_size_align(new_size, layout.align()).unwrap();
+        match SlotLocation::new_from_ptr(baseptr, ptr) {
+            Some(cursl) => {
+                if newsize <= cursl.slotsize() {
+                    // If the new size fits into the current slot, just return the current pointer and we're done.
+                    ptr
+                } else {
+                    // Round up size to the nearest multiple of alignment in order to get a slot that is aligned on that size.
+                    let alignednewsize: usize = ((newsize - 1) | (oldalignment - 1)) + 1;
 
-	let cursl_or_sysa = slotlocation_of_ptr(self.get_baseptr(), ptr);
-	if cursl_or_sysa.is_none() {
-	    // This must have been allocated by falling back to sys_alloc().
-	    return fallback_to_sys_realloc(ptr, layout, newlayout);
-	}
+                    // The "growers" rule: if the new size would fit into one 64-byte cache line, use a 64-byte slot...
+                    let largeslabnum = if alignednewsize <= CACHELINE_SIZE {
+                        assert_eq!(LARGE_SLABNUM_TO_SLOTSIZE[0], CACHELINE_SIZE); // The first (0-indexed) slab in the large slots region has slots just big enough to hold one 64-byte cacheline.
+                        0
+                    } else {
+                        // ... else use the LARGEST slots.
+                        NUM_LARGE_SLABS - 1
+                    };
 
-	let cursl = cursl_or_sysa.unwrap();
-	let mut newslabnum = layout_to_slabnum(newlayout);
+	            // Allocate a new slot...
+                    let optnewsl = self.inner_large_alloc(largeslabnum);
+                    let newptr: *mut u8 = match optnewsl {
+                        Some(newsl) => {
+                            let offset = newsl.offset();
+		            let p = unsafe { baseptr.add(offset) };
+                            assert!(if newsl.slotsize().is_power_of_two() {
+                                p.is_aligned_to(newsl.slotsize())
+                            } else {
+                                true
+                            });
+                            p
+                        }
+                        None => {
+                            // Slab was full. Fallback to system allocator.
+	                    let layout = Layout::from_size_align(newsize, oldalignment).unwrap();
+                            sys_alloc(layout)
+                        }
+                    };
+		    assert!(newptr.is_aligned_to(oldalignment));
+                    
+	            // Copy the contents from the old ptr.
+	            unsafe {
+	                copy_nonoverlapping(ptr, newptr, oldsize);
+	            }
 
-	// If the new size fits into the current slot (or would fit into any smaller one), then leave the ptr in place and we're done.
-	if newslabnum <= cursl.slabnum {
-	    return ptr;
-	}
+	            // Free the old slot
+	            self.push_flh(cursl);
 
-	// The "growers" rule: if the new size would fit into one 64-byte cache line, use a 64-byte slot, else use one of the largest slots.
-	if newslabnum <= NUM_SLABS_CACHELINEY { // xxx check for off by one
-	    newslabnum = NUM_SLABS_CACHELINEY;
-	} else {
-	    newslabnum = NUM_SLABS-1;
-	}
-
-	// Allocate a new slot...
-	let newptr: *mut u8 = match self.inner_alloc(newslabnum) {
-	    Some(newsl) => {
-		let newslotnum = newsl.slotnum;
-		let addr_of_new_slot = unsafe { baseptr.add(newsl.offset_of_slot()) };
-		assert!(addr_of_new_slot.is_aligned_to(CACHELINE_SIZE) || newslotnum > 0);
-		assert!(addr_of_new_slot.is_aligned_to(layout.align()));
-		addr_of_new_slot
-	    }
-	    None => {
-		// Couldn't allocate a slot -- fall back to `sys_alloc()`.
-		fallback_to_sys_alloc(layout)
-	    }
-	};
-
-	// Copy the contents from the old ptr.
-	unsafe {
-	    copy_nonoverlapping(ptr, newptr, layout.size());
-	}
-
-	// Free the old slot
-	self.push_flh(cursl);
-
-	newptr
+	            newptr
+                }
+            }
+            None => {
+	        // This pointer must have been originally allocated by falling back to sys_alloc(), so we handle it now by falling back to sys_realloc().
+	        sys_realloc(ptr, layout, newsize)
+            }
+        }
     }
 }
 
-// XXX make the first thread have num 0
-
-
 // I read in the "The Linux Programming Interface" book that glibc's malloc's default size to fall back to system allocation (mmap) -- MMAP_THRESHOLD -- is 128 KiB. But according to https://sourceware.org/glibc/wiki/MallocInternals the threshold is dynamic unless overridden.
-
-/// For allocations that won't fit into even our largest slots, we fall back to a system memory allocation call (such as `mmap()` on Linux, `mach_vm_allocate()` on iOS and Macos, and `VirtualAlloc()` on Windows.
-fn fallback_to_sys_alloc(layout: Layout) -> *mut u8 {
-    // xxx add tests
-    let size = layout.size();
-    assert!(size > 0);
-    let alignment = layout.align();
-    assert!(alignment > 0);
-
-    assert!(alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
-
-    // Round up size to the nearest multiple of alignment:
-    let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
-
-    sys_alloc(alignedsize)
-}
-
-/// For allocations created by the system allocation fallback (above), we need to use the system deallocator.
-fn fallback_to_sys_dealloc(ptr: *mut u8, layout: Layout) {
-    // xxx add tests
-    let size = layout.size();
-    assert!(size > 0);
-    let alignment = layout.align();
-    assert!(alignment > 0);
-
-    assert!(alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
-
-    // Round up size to the nearest multiple of alignment:
-    let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
-
-    sys_dealloc(ptr, alignedsize)
-}
-
-/// For allocations created by the system allocation fallback (above), to realloc them to a different size we need to use the system reallocator.
-fn fallback_to_sys_realloc(ptr: *mut u8, oldlayout: Layout, newlayout: Layout) -> *mut u8 {
-    // xxx add tests
-    let oldalignment = oldlayout.align();
-    let newalignment = newlayout.align();
-    assert_eq!(oldalignment, newalignment);
-
-    assert!(oldalignment > 0 && (oldalignment & (oldalignment - 1)) == 0, "alignment must be a power of two"); // benchmarks show this bittwiddling expression is a teeeny bit more efficient than the builtin power-of-two function (on some x86-64 systems but not others, and on Apple M4 Max).
-
-    // Round up size to the nearest multiple of alignment:
-    let alignednewsize = ((newlayout.size() - 1) | (newalignment - 1)) + 1;
-    let alignedoldsize = ((oldlayout.size() - 1) | (oldalignment - 1)) + 1;
-    
-    sys_realloc(ptr, alignedoldsize, alignednewsize)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn offset_of_vars_by_calculation(areanum: usize, slabnum: usize) -> usize {
-        if (areanum != 0) && (slabnum >= NUM_SLABS_CACHELINEY) { return 0 };
+    use thousands::Separable;
 
-	// benchmark whether it is more efficient by lookuptable or by calc
-	if areanum == 0 {
-	    slabnum * 2 * WORDSIZE
-	} else {
-	    let mut offset = 0;
+    #[test]
+    fn test_offset_of_vars() {
+        assert_eq!(offset_of_small_eac(0, 0), 0);
+        assert_eq!(offset_of_small_flh(0, 0), 4);
+        assert_eq!(offset_of_small_eac(0, 1), 8);
+        assert_eq!(offset_of_small_flh(0, 1), 12);
 
-	    // First count past the first column...
-	    offset += NUM_SLABS * 2 * WORDSIZE;
+        // There are 11 slabs in an small-slab-area, 2 variables for each slab, and 4 bytes for each variable, so the first variable in the second slab (slab index 1) should be at offset 88.
+        assert_eq!(offset_of_small_eac(1, 0), 88);
+        assert_eq!(offset_of_small_flh(1, 0), 92);
+        assert_eq!(offset_of_small_eac(1, 1), 96);
+        assert_eq!(offset_of_small_flh(1, 1), 100);
 
-	    // Then count past any whole columns between that first column and ours...
-	    offset += (areanum - 1) * NUM_SLABS_CACHELINEY * 2 * WORDSIZE;
+        // The large-slab vars start after all the small-slab vars
+        let all_small_slab_vars = 11 * 2 * 4 * NUM_SMALL_SLAB_AREAS;
+        assert_eq!(offset_of_large_eac(0), all_small_slab_vars);
+        assert_eq!(offset_of_large_flh(0), all_small_slab_vars+4);
+        assert_eq!(offset_of_large_eac(1), all_small_slab_vars+8);
+        assert_eq!(offset_of_large_flh(1), all_small_slab_vars+12);
 
-	    // Then count past any other variables in our column...
-	    offset += slabnum * 2 * WORDSIZE;
-
-	    offset
-	}
+        // There are 7 large slabs, 2 variables for each slab, and 4 bytes for each variable.
+        assert_eq!(offset_of_large_eac(0), all_small_slab_vars);
+        assert_eq!(offset_of_large_flh(0), all_small_slab_vars+4);
+        assert_eq!(offset_of_large_eac(1), all_small_slab_vars+8);
+        assert_eq!(offset_of_large_flh(1), all_small_slab_vars+12);
     }
 
-    pub const SLABNUM_TO_NUMAREAS: [usize; NUM_SLABS] = [NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, NUM_AREAS, 1, 1, 1, 1, 1, 1, 1];
+    fn help_test_inner_alloc(size: usize, alignment: usize) -> SlotLocation {
+	let layout = Layout::from_size_align(size, alignment).unwrap();
+        SM.inner_alloc(layout).unwrap()
+    }
 
-    #[cfg(test)]
-    const fn data_slabs_space_for_testing() -> usize {
-	let mut slabnum = 0;
-	let mut sizeof_data_slabs = 0;
+    use lazy_static::lazy_static;
 
-	while slabnum < NUM_SLABS {
-	    let slotsize = SLABNUM_TO_SLOTSIZE[slabnum];
+    lazy_static! {
+        static ref SM: Smalloc = Smalloc::new();
+    }
 
-	    // Okay the total space needed for this slab is
-	    let spaceperslab = slotsize * NUM_SLOTS;
 
-	    // There are this many slots of this size:
-	    let numslabs_for_this_sizeclass = SLABNUM_TO_NUMAREAS[slabnum];
-	    
-	    let totslabareaspace = spaceperslab * numslabs_for_this_sizeclass;
+    #[test]
+    fn test_a_few_allocs_and_a_dealloc_small() {
+        SM.idempotent_init();
 
-	    sizeof_data_slabs += totslabareaspace;
-
-	    slabnum += 1;
-	}
-
-	sizeof_data_slabs
+        for smallslabnum in 0..NUM_SMALL_SLABS {
+            help_test_inner_alloc_small(smallslabnum);
+        }
     }
 
     #[test]
-    fn test_roundtrip_slot_to_ptr_to_slot() {
-        let baseptr_for_testing: *mut u8 = 1024 as *mut u8;
-	// pick "boundary" ish values to test
-        // First test area 0
-        let areanum = 0;
-	for slabnum in [0, 1, 2, 3, 4, 9, 10, 11, 12, NUM_SLABS-2, NUM_SLABS-1] {
-	    for slotnum in [0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16)-1, 2usize.pow(16), 2usize.pow(16)+1, NUM_SLOTS-2, NUM_SLOTS-1] {
-                //eprintln!("areanum: {}, slabnum: {}, slotnum: {}", areanum, slabnum, slotnum);
-		let sl1 = SlotLocation { areanum, slabnum, slotnum };
-                //eprintln!("sl1: {:?}", sl1);
-		let offset = sl1.offset_of_slot();
-		assert!(offset >= DATA_SLABS_BASE_OFFSET);
-		assert!(offset < DATA_SLABS_BASE_OFFSET + DATA_SLABS_SPACE);
-		let p = unsafe { baseptr_for_testing.add(offset) };
-		let sl2 = slotlocation_of_ptr(baseptr_for_testing, p).unwrap();
-		assert_eq!(sl1, sl2);
-	    }
-	}
-        
-	for areanum in [1, 2, NUM_AREAS-3, NUM_AREAS-2, NUM_AREAS-1] {
-	    for slabnum in [0, 1, 2, 3, 4] {
+    fn test_a_few_allocs_and_a_dealloc_large() {
+        SM.idempotent_init();
+
+        for largeslabnum in 0..NUM_LARGE_SLABS {
+            help_test_inner_alloc_large(largeslabnum);
+        }
+    }
+
+    fn help_test_inner_alloc_large(largeslabnum: usize) {
+        // Generate requested sizes that fit into this slab:
+        let slotsize = LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum];
+        let smallest = if largeslabnum == 0 {
+            SMALL_SLABNUM_TO_SLOTSIZE[NUM_SMALL_SLABS-1]+1
+        } else {
+            LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum-1]+1
+        };
+        let largest = slotsize;
+        for reqsize in [smallest, smallest+1, smallest+2, largest-3, largest-1, largest] {
+            // Generate alignments
+            let mut reqalign = 1;
+            loop {
+                // Test this size/align combo
+                help_test_inner_alloc_large_size_align(largeslabnum, reqsize, reqalign);
+                reqalign *= 2;
+                let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
+                if alignedsize > slotsize { break };
+            }
+        }
+    }
+    
+    fn help_test_inner_alloc_small(smallslabnum: usize) {
+        // Generate requested sizes that fit into this slab:
+        let slotsize = SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum];
+        let smallest = if smallslabnum == 0 {
+            1
+        } else {
+            SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum-1]+1
+        };
+        let largest = slotsize;
+        for reqsize in smallest..=largest {
+            // Generate alignments
+            let mut reqalign = 1;
+            loop {
+                // Test this size/align combo
+                help_test_inner_alloc_small_size_align(smallslabnum, reqsize, reqalign);
+                reqalign *= 2;
+                let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
+                if alignedsize > slotsize { break };
+            }
+        }
+    }
+
+    fn help_test_inner_alloc_large_size_align(largeslabnum: usize, reqsize: usize, reqalign: usize) {
+        let origea: u32 = SM.get_large_eac(largeslabnum).load(Ordering::Relaxed);
+
+        let sl1 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _ } = sl1 else {
+            panic!("should have returned a large slot");
+        };
+        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+1);
+
+        let sl2 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum } = sl2 else {
+            panic!("should have returned a large slot");
+        };
+        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+2);
+        let sl2s_slot = slotnum;
+
+        let sl3 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _ } = sl3 else {
+            panic!("should have returned a large slot");
+        };
+        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+3);
+
+        // Now free the middle one.
+        SM.push_flh(sl2);
+
+        // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
+        let sl4 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum } = sl4 else {
+            panic!("should have returned a large slot");
+        };
+        assert_eq!(slotnum, sl2s_slot);
+        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+3);
+
+    }
+
+    fn help_test_inner_alloc_small_size_align(smallslabnum: usize, reqsize: usize, reqalign: usize) {
+        let origea: u32 = SM.get_small_eac(0, smallslabnum).load(Ordering::Relaxed);
+
+        let sl1 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _ } = sl1 else {
+            panic!("should have returned a small slot");
+        };
+        assert_eq!(SM.get_small_eac(0, smallslabnum).load(Ordering::Relaxed), origea+1);
+
+        let sl2 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum } = sl2 else {
+            panic!("should have returned a small slot");
+        };
+        assert_eq!(SM.get_small_eac(0, smallslabnum).load(Ordering::Relaxed), origea+2);
+        let sl2s_slot = slotnum;
+
+        let sl3 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _ } = sl3 else {
+            panic!("should have returned a small slot");
+        };
+        assert_eq!(SM.get_small_eac(0, smallslabnum).load(Ordering::Relaxed), origea+3);
+
+        // Now free the middle one.
+        SM.push_flh(sl2);
+
+        // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
+        let sl4 = help_test_inner_alloc(reqsize, reqalign);
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum } = sl4 else {
+            panic!("should have returned a small slot");
+        };
+        assert_eq!(slotnum, sl2s_slot);
+        assert_eq!(SM.get_small_eac(0, smallslabnum).load(Ordering::Relaxed), origea+3);
+
+    }
+
+//XXX    #[test]
+    fn _test_alloc_1_byte_then_dealloc() {
+        let sm = Smalloc::new();
+	let layout = Layout::from_size_align(1, 1).unwrap();
+        let p = unsafe { sm.alloc(layout) };
+        unsafe { sm.dealloc(p, layout) };
+    }
+
+//XXX    #[test]
+    fn _test_roundtrip_slot_to_ptr_to_slot() {
+        let baseptr_for_testing: *mut u8 = SIZE_OF_LARGEST_SLOTS as *mut u8;
+
+        // First the small-slabs region:
+	for areanum in [1, 2, 30, 31, 32, 33, NUM_SMALL_SLAB_AREAS-3, NUM_SMALL_SLAB_AREAS-2, NUM_SMALL_SLAB_AREAS-1] {
+	    for smallslabnum in 0..NUM_SMALL_SLABS {
 		for slotnum in [0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16)-1, 2usize.pow(16), 2usize.pow(16)+1, NUM_SLOTS-2, NUM_SLOTS-1] {
-		    let sl1 = SlotLocation { areanum, slabnum, slotnum };
-		    let offset = sl1.offset_of_slot();
+		    let sl1 = SlotLocation::SmallSlot { areanum, smallslabnum, slotnum };
+		    let offset = sl1.offset();
 		    assert!(offset >= DATA_SLABS_BASE_OFFSET);
-		    assert!(offset < DATA_SLABS_BASE_OFFSET + DATA_SLABS_SPACE);
+		    assert!(offset < DATA_SLABS_BASE_OFFSET + SMALL_SLAB_AREAS_REGION_SPACE,
+                            "sl1: {:?}, {} {} {} {}",
+                            sl1,
+                            offset.separate_with_commas(),
+                            DATA_SLABS_BASE_OFFSET.separate_with_commas(),
+                            SMALL_SLAB_AREAS_REGION_SPACE.separate_with_commas(),
+                            (DATA_SLABS_BASE_OFFSET + SMALL_SLAB_AREAS_REGION_SPACE).separate_with_commas()
+                    );
+		    assert!(offset < LARGE_SLAB_REGION_BASE_OFFSET);
 		    let p = unsafe { baseptr_for_testing.add(offset) };
-		    let sl2 = slotlocation_of_ptr(baseptr_for_testing, p).unwrap();
+		    let sl2 = SlotLocation::new_from_ptr(baseptr_for_testing, p).unwrap();
 		    assert_eq!(sl1, sl2);
 		}
 	    }
 	}
 
-    }
-
-    #[test]
-    fn test_data_slabs_space() {
-	assert_eq!(DATA_SLABS_SPACE, data_slabs_space_for_testing());
-    }
-
-    #[test]
-    fn test_offset_of_vars() {
-	assert_eq!(OFFSET_OF_VAR[0][0], 0);
-	assert_eq!(offset_of_vars_by_calculation(0, 0), 0);
-	assert_eq!(OFFSET_OF_VAR[1][0], 144);
-	assert_eq!(OFFSET_OF_VAR[2][0], 232);
-
-	for slabnum in 0..NUM_SLABS {
-	    assert_eq!(OFFSET_OF_VAR[0][slabnum], offset_of_vars_by_calculation(0, slabnum));
-	}
-
-	for areanum in 1..NUM_AREAS {
-	    for slabnum in 0..NUM_SLABS {
-		assert_eq!(OFFSET_OF_VAR[areanum][slabnum], offset_of_vars_by_calculation(areanum, slabnum), "areanum: {}, slabnum: {}", areanum, slabnum);
+        // Then the large-slabs region:
+	for largeslabnum in 0..NUM_LARGE_SLABS {
+	    for slotnum in [0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16)-1, 2usize.pow(16), 2usize.pow(16)+1, NUM_SLOTS-2, NUM_SLOTS-1] {
+		let sl1 = SlotLocation::LargeSlot { largeslabnum, slotnum };
+		let offset = sl1.offset();
+		assert!(offset >= DATA_SLABS_BASE_OFFSET);
+		let p = unsafe { baseptr_for_testing.add(offset) };
+		let sl2 = SlotLocation::new_from_ptr(baseptr_for_testing, p).unwrap();
+		assert_eq!(sl1, sl2);
 	    }
 	}
-    }
-
-    #[test]
-    fn test_roundtrip_slabnum2ss2slabnum() {
-	for slabnum in 0..NUM_SLABS {
-	    let ss = SLABNUM_TO_SLOTSIZE[slabnum];
-	    let rtslabnum = layout_to_slabnum(Layout::from_size_align(ss, 1).unwrap());
-	    assert_eq!(slabnum, rtslabnum, "{}", ss);
-	}
-    }
-
-    #[test]
-    fn test_many_args() {
-        for reqalign in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
-            for reqsiz in 1..10000 {
-                let slabnum = layout_to_slabnum(Layout::from_size_align(reqsiz, reqalign).unwrap());
-                let ss: usize = SLABNUM_TO_SLOTSIZE[slabnum];
-                assert!(ss >= reqsiz, "{} >= {}", ss, reqsiz);
-
-                // Is there any *smaller* slab which still could have
-                // held the requested size *and* whose slotsize is a
-                // multiple of the requested alignment?  If so then we
-                // failed to find a valid optimization.
-                if slabnum > 0 {
-                    let mut tryslabnum = slabnum-1;
-                    loop {
-                        let tryss: usize = SLABNUM_TO_SLOTSIZE[tryslabnum];
-                        if tryss < reqsiz {
-                            break;
-                        }
-                        assert!(tryss % reqalign != 0, "If tryss % reqalign == 0, then there was a smaller slab whose slot size was a multiple of the requested alignment. Therefore, we failed to find a valid optimization. reqsiz: {}, slabnum: {}, ss: {}, tryslabnum: {}, tryss: {}", reqsiz, slabnum, ss, tryslabnum, tryss);
-                        
-                        if tryslabnum == 0 {
-                            break;
-                        }
-                        tryslabnum -= 1;
-                    }
-                }
-            }
-        }
     }
 }
 
