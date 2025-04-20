@@ -351,7 +351,7 @@ impl Smalloc {
 	    return p;
 	}
 
-	let layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, SIZE_OF_LARGEST_SLOTS).unwrap();
+	let layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, MAX_ALIGNMENT).unwrap();
 
 	// acquire spin lock
         loop {
@@ -824,7 +824,7 @@ mod tests {
                 help_test_inner_alloc_large_size_align(largeslabnum, reqsize, reqalign);
                 reqalign *= 2;
                 let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
-                if alignedsize > slotsize { break };
+                if alignedsize > slotsize || alignedsize > MAX_ALIGNMENT { break };
             }
         }
     }
