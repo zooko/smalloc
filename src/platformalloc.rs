@@ -5,8 +5,8 @@ use std::alloc::Layout;
 
 pub fn sys_alloc(layout: Layout) -> *mut u8 {
     // xxx add tests?
-    let reqsize = layout.size();
-    assert!(reqsize > 0);
+    let size = layout.size();
+    assert!(size > 0);
     let alignment = layout.align();
     assert!(alignment > 0);
     assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
@@ -38,7 +38,7 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
     assert!(oldalignment > 0);
     assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
 
-    let new_ptr = vendor::sys_realloc(ptr, sys_oldsize, sys_newsize);
+    let new_ptr = vendor::sys_realloc(ptr, oldsize, newsize);
     assert!(new_ptr.is_aligned_to(oldalignment));
     
     new_ptr
