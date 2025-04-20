@@ -10,14 +10,9 @@ pub fn sys_alloc(layout: Layout) -> *mut u8 {
     let alignment = layout.align();
     assert!(alignment > 0);
     assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
+    assert!(alignment <= 4096); // We can't guarantee larger alignments than 4096
     
-    // Now we have to pad out the size with an extra alignment bytes so that we're guaranteed to be able to (a) return a pointer that is aligned to alignmnet, and (b) be able to subtract back to the original system-provided pointer in `sys_dealloc()` and `sys_realloc()`.
-
-    let size = reqsize + alignment;
-
-    // XXX fix this to support alignments larger than 4096, up to SIZE_OF_LARGEST_SLOTS
-    let sys_ptr = vendor::sys_alloc(size);
-    let ptr = unsafe { sys_ptr.add(alignment) };
+    let ptr = vendor::sys_alloc(size);
     assert!(ptr.is_aligned_to(alignment));
     
     ptr
@@ -31,8 +26,7 @@ pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
     assert!(alignment > 0);
     assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
 
-    let sys_ptr = ptr.wrapping_sub(alignment);
-    vendor::sys_dealloc(sys_ptr, size)
+    vendor::sys_dealloc(ptr, size)
 }
 
 pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
@@ -44,11 +38,7 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
     assert!(oldalignment > 0);
     assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
 
-    let sys_oldsize = oldsize + oldalignment;
-    let sys_newsize = newsize + oldalignment;
-    let sys_ptr = ptr.wrapping_sub(oldalignment);
-    let new_sys_ptr = vendor::sys_realloc(sys_ptr, sys_oldsize, sys_newsize);
-    let new_ptr = unsafe { new_sys_ptr.add(oldalignment) };
+    let new_ptr = vendor::sys_realloc(ptr, sys_oldsize, sys_newsize);
     assert!(new_ptr.is_aligned_to(oldalignment));
     
     new_ptr
