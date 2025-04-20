@@ -46,6 +46,16 @@ const SIZE_OF_LARGEST_SLOTS: usize = 4194304; // 4 * 2^20
 pub const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, SIZE_OF_BIGGEST_SMALL_SLOT];
 pub const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, SIZE_OF_LARGEST_SLOTS];
 
+/// Just for the use of smalloclog, which summarizes statistics about both kinds of slabs.
+pub const fn slabnum_to_slotsize(allslabnum: usize) -> usize {
+    assert!(allslabnum < NUM_SMALL_SLABS + NUM_LARGE_SLABS);
+    if allslabnum < NUM_SMALL_SLABS {
+        SMALL_SLABNUM_TO_SLOTSIZE[allslabnum]
+    } else {
+        LARGE_SLABNUM_TO_SLOTSIZE[allslabnum-NUM_SMALL_SLABS]
+    }
+}
+
 pub const NUM_SLOTS: usize = 20_971_520; // 20 * 2^20
 
 // The per-slab variables and the free list entries have this size in bytes.
@@ -351,7 +361,7 @@ impl Smalloc {
 	    return p;
 	}
 
-	let layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, MAX_ALIGNMENT).unwrap();
+	let layout = unsafe { Layout::from_size_align_unchecked(TOTAL_VIRTUAL_MEMORY, MAX_ALIGNMENT) };
 
 	// acquire spin lock
         loop {
@@ -638,8 +648,16 @@ fn get_thread_areanum() -> u32 {
 
 
 unsafe impl GlobalAlloc for Smalloc {
+    /// I require `layout`'s `align` to be <= 4096.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
 	let baseptr = self.idempotent_init();
+
+        let size = layout.size();
+        assert!(size > 0);
+        let alignment = layout.align();
+        assert!(alignment > 0);
+        assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
+        assert!(alignment <= 4096); // We don't guarantee larger alignments than 4096
 
 	// Allocate a slot
 	match self.inner_alloc(layout) {
@@ -681,6 +699,7 @@ unsafe impl GlobalAlloc for Smalloc {
         assert!(oldalignment > 0);
         assert!((oldalignment & (oldalignment - 1)) == 0, "alignment must be a power of two");
         assert!(newsize > 0);
+        assert!(oldalignment <= 4096); // We don't guarantee larger alignments than 4096
 
 	let baseptr = self.get_baseptr();
 
@@ -717,7 +736,7 @@ unsafe impl GlobalAlloc for Smalloc {
                         }
                         None => {
                             // Slab was full. Fallback to system allocator.
-	                    let layout = Layout::from_size_align(newsize, oldalignment).unwrap();
+	                    let layout = unsafe { Layout::from_size_align_unchecked(newsize, oldalignment) };
                             sys_alloc(layout)
                         }
                     };
