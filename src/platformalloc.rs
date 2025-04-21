@@ -115,13 +115,13 @@ pub mod vendor {
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use mach_sys::port::mach_port_t;
     use mach_sys::kern_return::KERN_SUCCESS;
-    use mach_sys::kern_return::kern_return_t;
     use mach_sys::traps::mach_task_self;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_inherit::VM_INHERIT_NONE;
     use mach_sys::vm_prot::vm_prot_t;
+    use crate::platformalloc::AllocFailed;
 
-    pub fn sys_alloc(size: usize) -> Result<*mut u8, ()> {
+    pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
 	let task: mach_port_t = unsafe { mach_task_self() };
 	let mut address: mach_vm_address_t = 0;
 	let size: mach_vm_size_t = size as mach_vm_size_t;
@@ -133,7 +133,7 @@ pub mod vendor {
         if retval == KERN_SUCCESS {
 	    Ok(address as *mut u8)
         } else {
-	    Err()
+	    Err(AllocFailed)
         }
     }
 
