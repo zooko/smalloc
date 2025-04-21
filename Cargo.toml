@@ -26,8 +26,3 @@ rustflags = ["-C", "target-cpu=native"]
 [lib]
 name = "smalloc"
 crate-type = ["rlib"]
-
-[[bin]]
-name = "testsmalloc"
-path = "src/testsmalloc.rs"
-

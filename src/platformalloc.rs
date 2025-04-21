@@ -3,7 +3,7 @@
 
 use std::alloc::Layout;
 
-pub fn sys_alloc(layout: Layout) -> *mut u8 {
+pub fn sys_alloc(layout: Layout) -> Result<*mut u8, i32> {
     // xxx add tests?
     let size = layout.size();
     assert!(size > 0);
@@ -12,10 +12,10 @@ pub fn sys_alloc(layout: Layout) -> *mut u8 {
     assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
     assert!(alignment <= 4096); // We can't guarantee larger alignments than 4096
     
-    let ptr = vendor::sys_alloc(size);
+    let ptr = vendor::sys_alloc(size)?;
     assert!(ptr.is_aligned_to(alignment));
     
-    ptr
+    Ok(ptr)
 }
 
 pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
@@ -93,22 +93,26 @@ pub mod vendor {
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use mach_sys::port::mach_port_t;
     use mach_sys::kern_return::KERN_SUCCESS;
+    use mach_sys::kern_return::kern_return_t;
     use mach_sys::traps::mach_task_self;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_inherit::VM_INHERIT_NONE;
     use mach_sys::vm_prot::vm_prot_t;
 
-    pub fn sys_alloc(size: usize) -> *mut u8 {
+    pub fn sys_alloc(size: usize) -> Result<*mut u8, kern_return_t> {
 	let task: mach_port_t = unsafe { mach_task_self() };
 	let mut address: mach_vm_address_t = 0;
 	let size: mach_vm_size_t = size as mach_vm_size_t;
 
+        let retval;
 	unsafe {
-	    let retval = mach_vm_allocate(task, &mut address, size, VM_FLAGS_ANYWHERE);
-	    assert!(retval == KERN_SUCCESS);
+	    retval = mach_vm_allocate(task, &mut address, size, VM_FLAGS_ANYWHERE);
 	}
-
-	address as *mut u8
+        if retval == KERN_SUCCESS {
+	    Ok(address as *mut u8)
+        } else {
+	    Err(retval)
+        }
     }
 
     pub fn sys_dealloc(p: *mut u8, size: usize) {

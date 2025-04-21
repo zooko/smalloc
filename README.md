@@ -915,6 +915,8 @@ written here in roughly descending order of importance:
 
 * And Loom! |-D
 
+* And llvm-cov's Modified Condition/Decision Coverage analysis. :-)
+
 * The whole overflow algorithm turned out to be complicated to
   implement in source code. Or, to put it another way the simpler
   algorithm that just overflows straight to the system allocator was
@@ -931,9 +933,6 @@ written here in roughly descending order of importance:
   them for simplicity. Maybe remove them, see if that causes a
   substantial performance regression in any real programs, and if so
   put them back? >:-D
-
-* Check if it is worth the added complexity to skip the atomic
-  fetch-and-add on the eac's in the packable slabs.
 
 * See if the "pack multiple into a cache line" slots that aren't
   powers of two (sizes 5, 6, 9, and 10) are worth the complexity, in
@@ -1001,6 +1000,7 @@ Things `smalloc` does not currently attempt to do:
 * Try to mitigate malicious exploitation after a memory-usage bug in
   the user code.
 
+
 # Acknowledgments
 
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner
@@ -1008,4 +1008,5 @@ Things `smalloc` does not currently attempt to do:
 
 * Thanks to my lovely girlfriend, Kelcie, for housewifing for me while
   I wrote this program. ♥️
+
 
