@@ -1,9 +1,21 @@
-
 // Abstract over system virtual memory functions
 
 use std::alloc::Layout;
 
-pub fn sys_alloc(layout: Layout) -> Result<*mut u8, i32> {
+
+#[derive(Debug)]
+pub struct AllocFailed;
+
+impl std::error::Error for AllocFailed { }
+
+use std::fmt;
+impl fmt::Display for AllocFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Alloc failed")
+    }
+}
+
+pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
     // xxx add tests?
     let size = layout.size();
     assert!(size > 0);
@@ -46,27 +58,37 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
 
 #[cfg(target_os = "linux")]
 pub mod vendor {
-    use rustix::mm::{mmap_anonymous, madvise, mremap, munmap, ProtFlags, MapFlags, MremapFlags, Advice};
+    use rustix::mm::{mmap_anonymous, mremap, munmap, ProtFlags, MapFlags, MremapFlags};
+    use std::ffi::c_void;
+    use std::ptr;
+    use crate::platformalloc::AllocFailed;
 
-    pub fn sys_alloc(reqsize: usize) -> *mut u8 {
-        unsafe {
+    pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
+	match unsafe {
 	    mmap_anonymous(
-		p::null_mut(),
+		ptr::null_mut(),
 		reqsize,
 		ProtFlags::READ | ProtFlags::WRITE,
-		MapFlags::PRIVATE | MapFlags::NO_RESERVE
+		MapFlags::PRIVATE | MapFlags::NORESERVE
 	    )
+	} {
+	    Ok(p) => {
+		Ok(p as *mut u8)
+	    }
+	    Err(_) => {
+		Err(AllocFailed)
+	    }
 	}
     }
 
     pub fn sys_dealloc(p: *mut u8, size: usize) {
 	unsafe {
-	    munmap(p, size).ok()
+	    munmap(p as *mut c_void, size).ok();
 	}
     }
 
-    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) {
-	mremap(p, oldsize, newsize, MremapFlags::MAYMOVE).ok()
+    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
+	unsafe { mremap(p as *mut c_void, oldsize, newsize, MremapFlags::MAYMOVE).ok().unwrap() as *mut u8 }
     }
 
     // Investigating the effects of MADV_RANDOM:
@@ -99,7 +121,7 @@ pub mod vendor {
     use mach_sys::vm_inherit::VM_INHERIT_NONE;
     use mach_sys::vm_prot::vm_prot_t;
 
-    pub fn sys_alloc(size: usize) -> Result<*mut u8, kern_return_t> {
+    pub fn sys_alloc(size: usize) -> Result<*mut u8, ()> {
 	let task: mach_port_t = unsafe { mach_task_self() };
 	let mut address: mach_vm_address_t = 0;
 	let size: mach_vm_size_t = size as mach_vm_size_t;
@@ -111,7 +133,7 @@ pub mod vendor {
         if retval == KERN_SUCCESS {
 	    Ok(address as *mut u8)
         } else {
-	    Err(retval)
+	    Err()
         }
     }
 
