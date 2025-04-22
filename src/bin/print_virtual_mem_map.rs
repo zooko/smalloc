@@ -1,4 +1,4 @@
-use smalloc::{NUM_SMALL_SLABS, NUM_SMALL_SLAB_AREAS, NUM_LARGE_SLABS, VARIABLES_SPACE, SEPARATE_FREELISTS_SPACE_REGION, small_slabnum_to_slotsize, large_slabnum_to_slotsize, TOTAL_VIRTUAL_MEMORY, NUM_SLOTS, SMALL_SLAB_AREAS_REGION_SPACE, LARGE_SLAB_REGION_SPACE, MAX_ALIGNMENT};
+use smalloc::{NUM_SMALL_SLABS, NUM_SMALL_SLAB_AREAS, NUM_LARGE_SLABS, VARIABLES_SPACE, SEPARATE_FREELISTS_SPACE_REGION, small_slabnum_to_slotsize, large_slabnum_to_slotsize, TOTAL_VIRTUAL_MEMORY, NUM_SLOTS_O, NUM_SLOTS_HUGE, SMALL_SLAB_AREAS_REGION_SPACE, LARGE_SLAB_REGION_SPACE, MAX_ALIGNMENT, HUGE_SLABNUM};
 
 use bytesize::ByteSize;
 use std::alloc::Layout;
@@ -29,23 +29,27 @@ fn print_virtual_bytes_map() -> usize {
     println!("The virtual memory space for the free lists is {} ({})", SEPARATE_FREELISTS_SPACE_REGION.separate_with_commas(), convsum(SEPARATE_FREELISTS_SPACE_REGION));
 
     println!("small slabs space");
-    println!("{:>5} {:>8} {:>16} {:>15}", "slab#", "size", "space", "areaspace");
-    println!("{:>5} {:>8} {:>16} {:>15}", "-----", "----", "-----", "---------");
+    println!("{:>5} {:>8} {:>13} {:>16} {:>17}", "slab#", "size", "slots", "space", "areaspace");
+    println!("{:>5} {:>8} {:>13} {:>16} {:>17}", "-----", "----", "-----", "-----", "---------");
     // Then the space needed for the data slabs.
     for smallslabnum in 0..NUM_SMALL_SLABS {
         let slotsize = small_slabnum_to_slotsize(smallslabnum);
-        println!("{:>5} {:>8} {:>16} {:>15}", smallslabnum, slotsize, (slotsize*NUM_SLOTS).separate_with_commas(), (slotsize*NUM_SLOTS*NUM_SMALL_SLAB_AREAS).separate_with_commas());
+        println!("{:>5} {:>8} {:>13} {:>16} {:>17}", smallslabnum, slotsize, NUM_SLOTS_O.separate_with_commas(), (slotsize*NUM_SLOTS_O).separate_with_commas(), (slotsize*NUM_SLOTS_O*NUM_SMALL_SLAB_AREAS).separate_with_commas());
     }
     println!("small slabs space: {} ({})", SMALL_SLAB_AREAS_REGION_SPACE.separate_with_commas(), convsum(SMALL_SLAB_AREAS_REGION_SPACE));
     
     println!("large slabs space");
-    println!("{:>5} {:>8} {:>20}", "slab#", "size", "space");
-    println!("{:>5} {:>8} {:>20}", "-----", "----", "-----");
+    println!("{:>5} {:>8} {:>13} {:>20}", "slab#", "size", "slots", "space");
+    println!("{:>5} {:>8} {:>13} {:>20}", "-----", "----", "-----", "-----");
     // Then the space needed for the data slabs.
-    for largeslabnum in 0..NUM_LARGE_SLABS {
+    for largeslabnum in 0..HUGE_SLABNUM {
         let slotsize = large_slabnum_to_slotsize(largeslabnum);
-        println!("{:>5} {:>8} {:>20}", largeslabnum, slotsize, (slotsize*NUM_SLOTS).separate_with_commas());
+        println!("{:>5} {:>8} {:>13} {:>20}", largeslabnum, slotsize, NUM_SLOTS_O.separate_with_commas(), (slotsize*NUM_SLOTS_O).separate_with_commas());
     }
+    let largeslabnum = HUGE_SLABNUM;
+    let slotsize = large_slabnum_to_slotsize(largeslabnum);
+    println!("{:>5} {:>8} {:>13} {:>20}", largeslabnum, slotsize, NUM_SLOTS_HUGE.separate_with_commas(), (slotsize*NUM_SLOTS_HUGE).separate_with_commas());
+    
     println!("large slabs space: {} ({})", LARGE_SLAB_REGION_SPACE.separate_with_commas(), convsum(LARGE_SLAB_REGION_SPACE));
 
     println!("About to try to allocate {} ({}) ({}) bytes...", TOTAL_VIRTUAL_MEMORY, TOTAL_VIRTUAL_MEMORY.separate_with_commas(), convsum(TOTAL_VIRTUAL_MEMORY));
