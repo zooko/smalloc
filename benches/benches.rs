@@ -2,6 +2,9 @@
 extern crate test;
 
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+
 use test::Bencher;
 
 use smalloc::{
@@ -22,7 +25,7 @@ const NUM_ARGS: usize = 128;
 
 #[bench]
 fn bench_sum_small_slab_sizes(b: &mut Bencher) {
-    let mut r = rand::rng();
+    let mut r = StdRng::seed_from_u64(0);
     let reqslabnums: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..=NUM_SMALL_SLABS)).collect();
     let mut i = 0;
 
@@ -35,7 +38,7 @@ fn bench_sum_small_slab_sizes(b: &mut Bencher) {
 
 // #[bench]
 // fn bench_layout_to_slabnum_align(b: &mut Bencher) {
-//     let mut r = rand::rng();
+//     let mut r = StdRng::seed_from_u64(0);
 //     let reqsizs: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
 //     let reqalignments: Vec<usize> = (0..NUM_ARGS)
 //         .map(|_| 2usize.pow(r.random_range(0..7)))
@@ -57,7 +60,7 @@ fn bench_sum_small_slab_sizes(b: &mut Bencher) {
 
 // #[bench]
 // fn bench_slabnum_to_slotsize(b: &mut Bencher) {
-//     let mut r = rand::rng();
+//     let mut r = StdRng::seed_from_u64(0);
 //     let reqscs: Vec<usize> = (0..NUM_ARGS)
 //         .map(|_| r.random_range(0..NUM_SLABS))
 //         .collect();
@@ -83,7 +86,7 @@ fn pot_bittwiddle(x: usize) -> bool {
 
 #[bench]
 fn bench_pot_builtin_randoms(b: &mut Bencher) {
-    let mut r = rand::rng();
+    let mut r = StdRng::seed_from_u64(0);
     let reqalignments: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
     let mut i = 0;
 
@@ -97,7 +100,7 @@ fn bench_pot_builtin_randoms(b: &mut Bencher) {
 
 #[bench]
 fn bench_pot_builtin_powtwos(b: &mut Bencher) {
-    let mut r = rand::rng();
+    let mut r = StdRng::seed_from_u64(0);
     let reqalignments: Vec<usize> = (0..NUM_ARGS)
         .map(|_| 2usize.pow(r.random_range(0..35)))
         .collect();
@@ -113,7 +116,7 @@ fn bench_pot_builtin_powtwos(b: &mut Bencher) {
 
 #[bench]
 fn bench_pot_bittwiddle_randoms(b: &mut Bencher) {
-    let mut r = rand::rng();
+    let mut r = StdRng::seed_from_u64(0);
     let reqalignments: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
     let mut i = 0;
 
@@ -127,7 +130,7 @@ fn bench_pot_bittwiddle_randoms(b: &mut Bencher) {
 
 #[bench]
 fn bench_pot_bittwiddle_powtwos(b: &mut Bencher) {
-    let mut r = rand::rng();
+    let mut r = StdRng::seed_from_u64(0);
     let reqalignments: Vec<usize> = (0..NUM_ARGS)
         .map(|_| 2usize.pow(r.random_range(0..35)))
         .collect();
@@ -145,7 +148,7 @@ fn bench_pot_bittwiddle_powtwos(b: &mut Bencher) {
 
 // #[bench]
 // fn bench_slotlocation_of_ptr(b: &mut Bencher) {
-//     let mut r = rand::rng();
+//     let mut r = StdRng::seed_from_u64(0);
 //     let baseptr_for_testing: *mut u8 = null_mut();
 //     let mut reqptrs = [null_mut(); NUM_ARGS];
 //     let mut i = 0;
