@@ -43,8 +43,8 @@ pub const NUM_SMALL_SLABS: usize = 11;
 pub const NUM_LARGE_SLABS: usize = 7;
 pub const HUGE_SLABNUM: usize = 6;
 
-const SIZE_OF_BIGGEST_SMALL_SLOT: usize = 32;
-const SIZE_OF_HUGE_SLOTS: usize = 4194304; // 4 * 2^20
+pub const SIZE_OF_BIGGEST_SMALL_SLOT: usize = 32;
+pub const SIZE_OF_HUGE_SLOTS: usize = 4194304; // 4 * 2^20
 pub const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, SIZE_OF_BIGGEST_SMALL_SLOT];
 pub const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, SIZE_OF_HUGE_SLOTS];
 
@@ -631,7 +631,7 @@ impl Smalloc {
             }
             assert!(smallslabnum < NUM_SMALL_SLABS);
             assert!(small_slabnum_to_slotsize(smallslabnum) >= alignedsize);
-            assert!(smallslabnum == 0|| small_slabnum_to_slotsize(smallslabnum-1) < alignedsize, "smallslabnum: {}, alignedsize: {}", smallslabnum, alignedsize);
+            assert!(if smallslabnum > 0 { small_slabnum_to_slotsize(smallslabnum-1) < alignedsize } else { true });
 
             self.inner_small_alloc(get_thread_areanum() as usize, smallslabnum)
         } else if alignedsize <= SIZE_OF_HUGE_SLOTS {

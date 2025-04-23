@@ -960,15 +960,16 @@ written here in roughly descending order of importance:
   memory pages on modern MacOS and iOS are 16 KiB.
 
 * If we could allocate even more virtual memory space, `smalloc` could
-  more scalable (eg large slot-sizes could be larger than 4 mebibytes,
-  the number of per-thread areas could be greater than 64), and you
-  could have more than one `smalloc` heap in a single process. Larger
-  (than 48-bit) virtual memory addresses are already supported on some
-  platforms/configurations, especially server-oriented ones, but are
-  not widely supported on desktop and smartphone platforms. We could
-  consider creating a variant of `smalloc` that works only platforms
-  with larger (than 48-bit) virtual memory addresses and offers these
-  advantages.
+  more scalable (eg huge slots could be larger than 4 mebibytes, the
+  number of per-thread areas could be greater than 64), it could be
+  even simpler (eg remove the special-casing of the number of slots
+  for the huge slots slab), and you could have more than one `smalloc`
+  heap in a single process. Larger (than 48-bit) virtual memory
+  addresses are already supported on some platforms/configurations,
+  especially server-oriented ones, but are not widely supported on
+  desktop and smartphone platforms. We could consider creating a
+  variant of `smalloc` that works only platforms with larger (than
+  48-bit) virtual memory addresses and offers these advantages.
 
 * I looked into the `RDPID` instruction on x86 and the `MPIDR`
   instruction on ARM as a way to get a differentiating number/ID for
@@ -985,6 +986,8 @@ written here in roughly descending order of importance:
   ought to benchmark whether it is actually more efficient to use one
   of these CPU instructions or to just load the thread number from
   thread-local storage. :-)
+
+* Rewrite it in Zig. :-)
 
 Notes:
 
@@ -1003,10 +1006,26 @@ Things `smalloc` does not currently attempt to do:
 
 # Acknowledgments
 
+* Thanks to Andrew Reece and Sam Smith for some specific suggestions
+  that I implemented (see notes in documentation above).
+
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner
   for advice and encouragement.
+
+* Thanks to Kris Nuttycombe for suggesting the name "smalloc". :-)
+
+* Thanks to Jason McGee--my boss at Shielded Labs--for being patient
+  with me obsessively working on this when I could have been doing
+  even more work for Shielded Labs instead.
 
 * Thanks to my lovely girlfriend, Kelcie, for housewifing for me while
   I wrote this program. ♥️
 
+* Thanks to pioneers/competitors/colleagues: the makers of dlmalloc,
+  jemalloc, mimalloc, snmalloc, rsbmalloc, ferroc, scudo... and
+  Michael & Scott
+  (https://web.archive.org/web/20241122100644/https://www.cs.rochester.edu/research/synchronization/pseudocode/queues.html),
+  and Leo (the Brave Web Browser AI) for extensive and mostly correct
+  answers to stupid Rust questions.
 
+* Thanks to fluidvanadium for the first PR from a contributor. :-)
