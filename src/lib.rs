@@ -114,9 +114,32 @@ pub const SEPARATE_FREELISTS_SPACE_REGION: usize = NUM_SEPARATE_FREELISTS * SEPA
 // Align the beginning of the data slabs to MAX_ALIGNMENT. This is just to fit the maximum (4096) of smallest slots (1 byte) into a memory page.
 pub const DATA_SLABS_BASE_OFFSET: usize = (SEPARATE_FREELISTS_BASE_OFFSET + SEPARATE_FREELISTS_SPACE_REGION).next_multiple_of(MAX_ALIGNMENT);
 
+const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS+1] {
+    let mut lut: [usize; NUM_SMALL_SLABS+1] = [0; NUM_SMALL_SLABS+1];
+
+    let mut slabnum = 0;
+    let mut sum: usize = 0;
+    while slabnum < NUM_SMALL_SLABS {
+        // Make the beginning of this slab start on a cache line boundary.
+        sum = sum.next_multiple_of(CACHELINE_SIZE);
+        sum += small_slabnum_to_slotsize(slabnum) * NUM_SLOTS_O;
+	slabnum += 1;
+        lut[slabnum] = sum;
+    }
+    lut
+}
+
+const SUM_SMALL_SLAB_SIZES: [usize; NUM_SMALL_SLABS+1] = gen_lut_sum_small_slab_sizes();
+
+/// The sum of the sizes of the small slabs.
+pub const fn sum_small_slab_sizes(numslabs: usize) -> usize {
+    assert!(numslabs <= NUM_SMALL_SLABS);
+    SUM_SMALL_SLAB_SIZES[numslabs]
+}
+
 //XXX add benchmarking of the lookup-table version of this:
 /// The sum of the sizes of the small slabs for one area up to numslabs (exclusive).
-pub const fn sum_small_slab_sizes(numslabs: usize) -> usize {
+pub const fn sum_small_slab_sizes_functional(numslabs: usize) -> usize {
     assert!(numslabs <= NUM_SMALL_SLABS);
     let mut slabnum = 0;
     let mut sum: usize = 0;
@@ -135,9 +158,39 @@ pub const SMALL_SLAB_AREAS_REGION_SPACE: usize = SMALL_SLAB_AREA_SPACE * NUM_SMA
 // Start the large slab region aligned to MAX_ALIGNMENT.
 const LARGE_SLAB_REGION_BASE_OFFSET: usize = (DATA_SLABS_BASE_OFFSET + SMALL_SLAB_AREAS_REGION_SPACE).next_multiple_of(MAX_ALIGNMENT);
 
+const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS+1] {
+    let mut lut: [usize; NUM_LARGE_SLABS+1] = [0; NUM_LARGE_SLABS+1];
+    
+    let mut index = 0;
+    let mut sum: usize = 0;
+    while index < NUM_LARGE_SLABS {
+        let slotsize = large_slabnum_to_slotsize(index);
+        // Padding to make the beginning of this slab start on a multiple of this slot size, or of MAX_ALIGNMENT.
+        sum = sum.next_multiple_of(
+            if slotsize < MAX_ALIGNMENT {
+                slotsize
+            } else {
+                MAX_ALIGNMENT
+            }
+        );
+        sum += slotsize * num_large_slots(index);
+	index += 1;
+        lut[index] = sum;
+    }
+    lut
+}
+
+const SUM_LARGE_SLAB_SIZES: [usize; NUM_LARGE_SLABS+1] = gen_lut_sum_large_slab_sizes();
+
+/// The sum of the sizes of the large slabs.
+pub const fn sum_large_slab_sizes(numslabs: usize) -> usize {
+    assert!(numslabs <= NUM_LARGE_SLABS);
+    SUM_LARGE_SLAB_SIZES[numslabs]
+}
+
 //XXX add benchmarking of the lookup-table version of this:
 /// The sum of the sizes of the large slabs.
-const fn sum_large_slab_sizes(numslabs: usize) -> usize {
+pub const fn sum_large_slab_sizes_functional(numslabs: usize) -> usize {
     assert!(numslabs <= NUM_LARGE_SLABS);
     let mut index = 0;
     let mut sum: usize = 0;
