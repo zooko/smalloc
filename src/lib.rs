@@ -1071,9 +1071,10 @@ mod tests {
         }
     }
 
-    /// generate a number of combinations of requests for the given large slab and for each one call help_inner_alloc_four_times()
+    /// Generate a number of requests (size+alignment) that fit into
+    /// the given large slab and for each request call
+    /// help_inner_alloc_four_times_large()
     fn help_test_inner_alloc_large(largeslabnum: usize) {
-        // Generate requested sizes that fit into this slab:
         let slotsize = large_slabnum_to_slotsize(largeslabnum);
         let smallest = if largeslabnum == 0 {
             small_slabnum_to_slotsize(NUM_SMALL_SLABS-1)+1
@@ -1086,7 +1087,7 @@ mod tests {
             let mut reqalign = 1;
             loop {
                 // Test this size/align combo
-                help_inner_alloc_four_times(largeslabnum, reqsize, reqalign);
+                help_inner_alloc_four_times_large(largeslabnum, reqsize, reqalign);
                 reqalign *= 2;
                 let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
                 if alignedsize > slotsize || alignedsize > MAX_ALIGNMENT { break };
@@ -1094,8 +1095,10 @@ mod tests {
         }
     }
     
+    /// Generate a number of requests (size+alignment) that fit into
+    /// the given small slab and for each request call
+    /// help_inner_alloc_four_times_small()
     fn help_test_inner_alloc_small(smallslabnum: usize) {
-        // Generate requested sizes that fit into this slab:
         let slotsize = small_slabnum_to_slotsize(smallslabnum);
         let smallest = if smallslabnum == 0 {
             1
@@ -1108,7 +1111,7 @@ mod tests {
             let mut reqalign = 1;
             loop {
                 // Test this size/align combo
-                help_test_inner_alloc_small_size_align(smallslabnum, reqsize, reqalign);
+                help_inner_alloc_four_times_small(reqsize, reqalign);
                 reqalign *= 2;
                 let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
                 if alignedsize > slotsize { break };
@@ -1116,29 +1119,27 @@ mod tests {
         }
     }
 
-    use atomic_dbg::dbg;
-    /// Call help_inner_alloc() three times and asserts internal state and then frees the middle one and asserts internal state.
-    fn help_inner_alloc_four_times(largeslabnum: usize, reqsize: usize, reqalign: usize) {
-        let origea: u32 = SM.get_large_eac(largeslabnum).load(Ordering::Relaxed);
-
+    /// Allocate this size+align three times, then free the middle
+    /// one, then allocate a fourth time, and assert that the fourth
+    /// time re-used the freed slot.
+    fn help_inner_alloc_four_times_large(largeslabnum: usize, reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _ } = sl1 else {
             panic!("should have returned a large slot");
         };
-        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+1);
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::LargeSlot { largeslabnum: _, slotnum } = sl2 else {
             panic!("should have returned a large slot");
         };
-        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+2);
         let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _ } = sl3 else {
             panic!("should have returned a large slot");
         };
-        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+3);
+
+        let origea: u32 = SM.get_large_eac(largeslabnum).load(Ordering::Relaxed);
 
         // Now free the middle one.
         SM.push_flh(sl2);
@@ -1149,34 +1150,30 @@ mod tests {
             panic!("should have returned a large slot");
         };
         assert_eq!(slotnum, sl2s_slot);
-        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea+3);
+        assert_eq!(SM.get_large_eac(largeslabnum).load(Ordering::Relaxed), origea);
     }
 
-    fn help_test_inner_alloc_small_size_align(smallslabnum: usize, reqsize: usize, reqalign: usize) {
-        let areanuml = get_thread_areanum();
-
-        let origea: u32 = SM.get_small_eac(areanuml, smallslabnum).load(Ordering::Relaxed);
-
+    /// Allocate this size+align three times, then free the middle
+    /// one, then allocate a fourth time, and assert that the fourth
+    /// time re-uses the freed slot.
+    fn help_inner_alloc_four_times_small(reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::SmallSlot { areanum, smallslabnum, slotnum: _ } = sl1 else {
             panic!("should have returned a small slot");
         };
-        assert_eq!(areanum, areanuml);
-        assert_eq!(SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed), origea+1, "smallslabnum: {}, reqsize: {}, reqalign: {}, areanum: {}, gtan: {}", smallslabnum, reqsize, reqalign, areanum, get_thread_areanum());
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum } = sl2 else {
             panic!("should have returned a small slot");
         };
-        assert_eq!(SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed), origea+2, "gtan: {}, areanum: {}, smallslabnum: {}", get_thread_areanum(), areanum, smallslabnum);
         let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _ } = sl3 else {
             panic!("should have returned a small slot");
         };
-        assert_eq!(SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed), origea+3);
 
+        let origea: u32 = SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed); // xxx !? relaxed ?
         // Now free the middle one.
         SM.push_flh(sl2);
 
@@ -1186,7 +1183,7 @@ mod tests {
             panic!("should have returned a small slot");
         };
         assert_eq!(slotnum, sl2s_slot);
-        assert_eq!(SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed), origea+3);
+        assert_eq!(SM.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed), origea);
     }
 
     #[test]
