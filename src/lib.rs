@@ -1522,4 +1522,38 @@ mod tests {
             handle.join().unwrap();
         }
     }
+
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use rand::Rng;
+    //use atomic_dbg::eprintln;
+    
+    fn help_many_random_allocs_and_deallocs(iters: usize) {
+        let mut r = StdRng::seed_from_u64(0);
+        let mut ps = Vec::new();
+
+        for _i in 0..iters {
+            if r.random::<bool>() {
+                // Free
+                if !ps.is_empty() {
+                    let i = r.random_range(0..ps.len());
+                    let (p, l) = ps.remove(i);
+                    //eprintln!("about to free({:?}, {:?})", p, l);
+                    unsafe { SM.dealloc(p, l) };
+                }
+            } else {
+                // Free
+                let l = Layout::from_size_align(64, 1).unwrap();
+                let p = unsafe { SM.alloc(l) };
+                ps.push((p, l));
+                //eprintln!("alloced({:?})->{:?}", l, p);
+            }
+        }
+    }
+        
+    #[test]
+    fn test_100_000_random_allocs_and_deallocs() {
+        help_many_random_allocs_and_deallocs(100_000);
+    }
+    
 }
