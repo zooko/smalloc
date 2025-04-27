@@ -421,8 +421,8 @@ impl Default for Smalloc {
 }
 
 
-//use atomic_dbg::eprintln;
 //use thousands::Separable;
+use atomic_dbg::{dbg,eprintln);
 
 impl Smalloc {
     pub const fn new() -> Self {
@@ -534,8 +534,8 @@ impl Smalloc {
             // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
 	    let offset_of_next = offset_of_large_slot(largeslabnum, (firstindexplus1-1) as usize);
 	    let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-	    let u32_ptr_to_var = u8_ptr_to_next.cast::<u32>();
-	    let nextindexplus1: u32 = unsafe { u32_ptr_to_var.read_unaligned() };
+	    let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+	    let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
 	    assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
             
 	    if flh.compare_exchange_weak(firstindexplus1, nextindexplus1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
@@ -544,7 +544,8 @@ impl Smalloc {
 	}
     }
 
-    fn inner_push_flh(&self, offset_of_flh: usize, offset_of_new: usize, new_index: u32) {
+    // xxx maxindex is just for assertion checks
+    fn inner_push_flh(&self, offset_of_flh: usize, offset_of_new: usize, new_index: u32, maxindex: u32) {
 	let baseptr = self.get_baseptr();
 
 	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
@@ -554,34 +555,170 @@ impl Smalloc {
 
 	let u8_ptr_to_new = unsafe { baseptr.add(offset_of_new) }; // note this isn't necessarily aligned
 	let u32_ptr_to_new: *mut u32 = u8_ptr_to_new.cast::<u32>();
+//xxx 	let can't do because not aligned :-( atomic_new = unsafe { AtomicU32::from_ptr(u32_ptr_to_new) };
 
         loop {
-	    let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
-	    unsafe { u32_ptr_to_new.write_unaligned(firstindexplus1) };
-            if flh.compare_exchange_weak(firstindexplus1, new_index+1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+	    let firstindexplus1: u32 = flh.load(Ordering::SeqCst);
+            assert!(firstindexplus1 < maxindex+1);
+            //xxx can't do because not aligned :-( atomic_new.store(firstindexplus1, Ordering::Release);
+            unsafe { u32_ptr_to_new.write_unaligned(firstindexplus1) };
+            if flh.compare_exchange_weak(firstindexplus1, new_index+1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
                 break
             }
 	}
     }
 
+    /// There's a bug where the free list is getting corrupted. This is going to find that earlier.
+    /// Returns true if everything checks out, else returns false (and prints a lot of diagnostic information to stderr).
+    fn sanity_check_small_free_list(&self, areanum: usize, smallslabnum: usize) -> bool {
+	let baseptr = self.get_baseptr();
+	
+	let offset_of_flh = offset_of_small_flh(areanum, smallslabnum);
+
+	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
+	assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+	let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
+
+	let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+	let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+
+        let mut evidence: [u32; 300] = [7; 300];
+        let mut ei: usize = 0;
+
+        let mut sane = true;
+        let mut count = 0;
+	while thisindexplus1 != 0 {
+            evidence[ei] = thisindexplus1;
+            ei = (ei + 1) % evidence.len();
+            
+            if thisindexplus1 > NUM_SLOTS_O as u32 {
+                sane = false;
+                dbg!();
+                eprintln!("xxxxxx >>>> gtan: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}, thisindexplus1: {}, evidence: {:?}, ei: {}", get_thread_areanum(), areanum, smallslabnum, count, thisindexplus1, evidence, ei);
+                break;
+            }
+	    //assert!(thisindexplus1 <= NUM_SLOTS_O as u32);
+            
+            // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
+	    let offset_of_next = offset_of_small_free_list_entry(areanum, smallslabnum, (thisindexplus1-1) as usize);
+	    let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+	    let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+	    let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
+            thisindexplus1 = nextindexplus1;
+            count += 1;
+	}
+
+        if !sane {
+            count = 0;
+	    let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+	    while thisindexplus1 != 0 {
+                eprintln!("xxxxxx ==== gtan: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}, ei: {}, thisindexplus1: {}", get_thread_areanum(), areanum, smallslabnum, count, ei, thisindexplus1);
+            
+                // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
+	        let offset_of_next = offset_of_small_free_list_entry(areanum, smallslabnum, (thisindexplus1-1) as usize);
+	        let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+	        let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+	        let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
+                thisindexplus1 = nextindexplus1;
+                count += 1;
+	    }
+
+            eprintln!("xxxxxx <<<< gtan: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}", get_thread_areanum(), areanum, smallslabnum, count);
+        }
+
+        sane
+    }
+        
+    /// There's a bug where the free list is getting corrupted. This is going to find that earlier.
+    /// Returns true if everything checks out, else returns false (and prints a lot of diagnostic information to stderr).
+    fn sanity_check_large_free_list(&self, largeslabnum: usize) -> bool {
+	let baseptr = self.get_baseptr();
+	
+	let offset_of_flh = offset_of_large_flh(largeslabnum);
+
+	let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
+	assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+	let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
+
+	let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+	let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+
+        let mut evidence: [u32; 300] = [7; 300];
+        let mut ei: usize = 0;
+
+        let mut sane = true;
+        let mut count = 0;
+	while thisindexplus1 != 0 {
+            evidence[ei] = thisindexplus1;
+            ei = (ei + 1) % evidence.len();
+            
+            if thisindexplus1 > num_large_slots(largeslabnum) as u32 {
+                sane = false;
+                dbg!();
+                eprintln!("xxxxxx >>>> gtan(): {}, 1 largeslabnum: {}, count: {}, thisindexplus1: {}, num_large_slots(): {}, evidence: {:?}, ei: {}", get_thread_areanum(), largeslabnum, count, thisindexplus1, num_large_slots(largeslabnum), evidence, ei);
+                break;
+            }
+            //assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
+            
+            // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
+	    let offset_of_next = offset_of_large_slot(largeslabnum, (thisindexplus1-1) as usize);
+	    let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+	    let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+	    let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
+            thisindexplus1 = nextindexplus1;
+            count += 1;
+	}
+
+        if !sane {
+            count = 0;
+	    let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+	    while thisindexplus1 != 0 {
+                eprintln!("xxxxxx ==== gtan: {}, 1(large) largeslabnum: {}, count: {}, ei: {}, thisindexplus1: {}", get_thread_areanum(), largeslabnum, count, ei, thisindexplus1);
+                //assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
+            
+                // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
+	        let offset_of_next = offset_of_large_slot(largeslabnum, (thisindexplus1-1) as usize);
+	        let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+	        let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+	        let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
+                thisindexplus1 = nextindexplus1;
+                count += 1;
+	    }
+
+            eprintln!("xxxxxx <<<< gtan: {}, 1(large) largeslabnum: {}, count: {}", get_thread_areanum(), largeslabnum, count);
+        }
+
+        sane
+    }
+        
     fn push_flh(&self, newsl: SlotLocation) {
         match newsl {
             SlotLocation::SmallSlot { areanum, smallslabnum, slotnum } => {
                 assert!(slotnum < NUM_SLOTS_O);
+                debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum));
+        
                 self.inner_push_flh(
                     offset_of_small_flh(areanum, smallslabnum),
                     offset_of_small_free_list_entry(areanum, smallslabnum, slotnum),
-                    slotnum as u32
-                )
+                    slotnum as u32,
+                    NUM_SLOTS_O as u32
+                );
+
+                debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum));
             }
             SlotLocation::LargeSlot { largeslabnum, slotnum } => {
                 assert!(slotnum < num_large_slots(largeslabnum));
+                debug_assert!(self.sanity_check_large_free_list(largeslabnum));
+
                 // Intrusive free list -- the free list entry is stored in the data slot.
                 self.inner_push_flh(
                     offset_of_large_flh(largeslabnum),
                     offset_of_large_slot(largeslabnum, slotnum),
-                    slotnum as u32
-                )
+                    slotnum as u32,
+                    num_large_slots(largeslabnum) as u32
+                );
+
+                debug_assert!(self.sanity_check_large_free_list(largeslabnum));
             }
         }
     }
@@ -645,6 +782,8 @@ impl Smalloc {
     }
 
     fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
+        debug_assert!(self.sanity_check_large_free_list(largeslabnum));
+        
 	let flhplus1 = self.pop_large_flh(largeslabnum);
 	if flhplus1 != 0 {
 	    // xxx add unit test of this case
@@ -726,8 +865,6 @@ fn get_thread_areanum() -> u32 {
 
 // xxx can i get the Rust typechecker to tell me if I'm accidentally adding a slot number to an offset ithout multiplying it by a slot size first?
 //XXX learn about Constant Parameters and consider using them in here
-
-
 unsafe impl GlobalAlloc for Smalloc {
     /// I require `layout`'s `align` to be <= MAX_ALIGNMENT.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -889,6 +1026,29 @@ mod tests {
         static ref SM: Smalloc = Smalloc::new();
     }
 
+    #[test]
+    fn test_one_alloc_small() {
+        SM.idempotent_init();
+
+	let layout = Layout::from_size_align(6, 1).unwrap();
+        SM.inner_alloc(layout).unwrap();
+    }
+
+    #[test]
+    fn test_one_alloc_large() {
+        SM.idempotent_init();
+
+	let layout = Layout::from_size_align(120, 4).unwrap();
+        SM.inner_alloc(layout).unwrap();
+    }
+
+    #[test]
+    fn test_one_alloc_huge() {
+        SM.idempotent_init();
+
+	let layout = Layout::from_size_align(1000000, 8).unwrap();
+        SM.inner_alloc(layout).unwrap();
+    }
 
     #[test]
     fn test_a_few_allocs_and_a_dealloc_small() {
