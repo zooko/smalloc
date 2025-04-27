@@ -8,9 +8,12 @@ use rand::rngs::StdRng;
 use test::Bencher;
 
 use smalloc::{
-    NUM_SMALL_SLABS, NUM_LARGE_SLABS, sum_small_slab_sizes, sum_small_slab_sizes_functional, sum_large_slab_sizes, sum_large_slab_sizes_functional
-//XXX    NUM_AREAS, NUM_SLABS, NUM_SLABS_CACHELINEY, NUM_SLOTS, SLABNUM_TO_SLOTSIZE, SlotLocation,
-//XXX    layout_to_slabnum, slotlocation_of_ptr,
+    NUM_LARGE_SLABS,
+    NUM_SMALL_SLABS,
+    sum_large_slab_sizes,
+    sum_large_slab_sizes_functional,
+    sum_small_slab_sizes,
+    sum_small_slab_sizes_functional,
 };
 
 use std::hint::black_box;
@@ -26,7 +29,9 @@ const NUM_ARGS: usize = 128;
 #[bench]
 fn bench_sum_small_slab_sizes(b: &mut Bencher) {
     let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..=NUM_SMALL_SLABS)).collect();
+    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+        .map(|_| r.random_range(0..=NUM_SMALL_SLABS))
+        .collect();
     let mut i = 0;
 
     b.iter(|| {
@@ -39,7 +44,9 @@ fn bench_sum_small_slab_sizes(b: &mut Bencher) {
 #[bench]
 fn bench_sum_small_slab_sizes_functional(b: &mut Bencher) {
     let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..=NUM_SMALL_SLABS)).collect();
+    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+        .map(|_| r.random_range(0..=NUM_SMALL_SLABS))
+        .collect();
     let mut i = 0;
 
     b.iter(|| {
@@ -52,7 +59,9 @@ fn bench_sum_small_slab_sizes_functional(b: &mut Bencher) {
 #[bench]
 fn bench_sum_large_slab_sizes(b: &mut Bencher) {
     let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..=NUM_LARGE_SLABS)).collect();
+    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+        .map(|_| r.random_range(0..=NUM_LARGE_SLABS))
+        .collect();
     let mut i = 0;
 
     b.iter(|| {
@@ -65,7 +74,9 @@ fn bench_sum_large_slab_sizes(b: &mut Bencher) {
 #[bench]
 fn bench_sum_large_slab_sizes_functional(b: &mut Bencher) {
     let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..=NUM_LARGE_SLABS)).collect();
+    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+        .map(|_| r.random_range(0..=NUM_LARGE_SLABS))
+        .collect();
     let mut i = 0;
 
     b.iter(|| {

@@ -2,11 +2,10 @@
 
 use std::alloc::Layout;
 
-
 #[derive(Debug)]
 pub struct AllocFailed;
 
-impl std::error::Error for AllocFailed { }
+impl std::error::Error for AllocFailed {}
 
 use std::fmt;
 impl fmt::Display for AllocFailed {
@@ -23,10 +22,10 @@ pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
     assert!(alignment > 0);
     assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
     assert!(alignment <= 4096); // We can't guarantee larger alignments than 4096
-    
+
     let ptr = vendor::sys_alloc(size)?;
     assert!(ptr.is_aligned_to(alignment));
-    
+
     Ok(ptr)
 }
 
@@ -52,43 +51,43 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
 
     let new_ptr = vendor::sys_realloc(ptr, oldsize, newsize);
     assert!(new_ptr.is_aligned_to(oldalignment));
-    
+
     new_ptr
 }
 
 #[cfg(target_os = "linux")]
 pub mod vendor {
-    use rustix::mm::{mmap_anonymous, mremap, munmap, ProtFlags, MapFlags, MremapFlags};
+    use crate::platformalloc::AllocFailed;
+    use rustix::mm::{MapFlags, MremapFlags, ProtFlags, mmap_anonymous, mremap, munmap};
     use std::ffi::c_void;
     use std::ptr;
-    use crate::platformalloc::AllocFailed;
 
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
-	match unsafe {
-	    mmap_anonymous(
-		ptr::null_mut(),
-		reqsize,
-		ProtFlags::READ | ProtFlags::WRITE,
-		MapFlags::PRIVATE | MapFlags::NORESERVE
-	    )
-	} {
-	    Ok(p) => {
-		Ok(p as *mut u8)
-	    }
-	    Err(_) => {
-		Err(AllocFailed)
-	    }
-	}
+        match unsafe {
+            mmap_anonymous(
+                ptr::null_mut(),
+                reqsize,
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE | MapFlags::NORESERVE,
+            )
+        } {
+            Ok(p) => Ok(p as *mut u8),
+            Err(_) => Err(AllocFailed),
+        }
     }
 
     pub fn sys_dealloc(p: *mut u8, size: usize) {
-	unsafe {
-	    munmap(p as *mut c_void, size).ok();
-	}
+        unsafe {
+            munmap(p as *mut c_void, size).ok();
+        }
     }
 
     pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
-	unsafe { mremap(p as *mut c_void, oldsize, newsize, MremapFlags::MAYMOVE).ok().unwrap() as *mut u8 }
+        unsafe {
+            mremap(p as *mut c_void, oldsize, newsize, MremapFlags::MAYMOVE)
+                .ok()
+                .unwrap() as *mut u8
+        }
     }
 
     // Investigating the effects of MADV_RANDOM:
@@ -100,75 +99,74 @@ pub mod vendor {
     // vma_has_recency() always returns false if VM_RAND_READ
     // memory.c: if !vma_has_recency() then in_lru_fault = false
     // workingset.c, skip LRU
-    // vmscan.c: should_skip_vma(). It always "skips" if !vma_has_recency(). What does "skipping" do? should_skip_vma() is used in get_next_vma(). What does get_next_vma() do? It's used from walk_pte_range(), walk_pmd_range(), and walk_pud_range()... and there are functions of the same names but different arguments in pagewalk.c. 🤔 I'm guessing vmscan.c is for evicting pages to repurpose physical memory and pagewalk.c is for something else... let's see if I can confirm that... Well, I couldn't confirm it by looking at the linux source code, but I asked the Brave AI what was the difference and it said what I thought -- vmscan is for reclamation of memory. 
+    // vmscan.c: should_skip_vma(). It always "skips" if !vma_has_recency(). What does "skipping" do? should_skip_vma() is used in get_next_vma(). What does get_next_vma() do? It's used from walk_pte_range(), walk_pmd_range(), and walk_pud_range()... and there are functions of the same names but different arguments in pagewalk.c. 🤔 I'm guessing vmscan.c is for evicting pages to repurpose physical memory and pagewalk.c is for something else... let's see if I can confirm that... Well, I couldn't confirm it by looking at the linux source code, but I asked the Brave AI what was the difference and it said what I thought -- vmscan is for reclamation of memory.
     // Okay I'm going to give up on this research project and just conclude that *default* behavior (not MADV_RANDOM) is probably good for smalloc's purposes. I have no idea what it would mean to exclude certain pages from an LRU policy, nor what it means to skip these vma's when walking page tables. But neither of them sound like something we really want for smalloc's allocations.
-    
-     
-    
-
 }
 
 #[cfg(target_vendor = "apple")]
 pub mod vendor {
-    use std::mem::size_of;
-    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
-    use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
-    use mach_sys::port::mach_port_t;
+    use crate::platformalloc::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
+    use mach_sys::port::mach_port_t;
     use mach_sys::traps::mach_task_self;
-    use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
+    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
     use mach_sys::vm_inherit::VM_INHERIT_NONE;
     use mach_sys::vm_prot::vm_prot_t;
-    use crate::platformalloc::AllocFailed;
+    use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
+    use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
+    use std::mem::size_of;
 
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
-	let task: mach_port_t = unsafe { mach_task_self() };
-	let mut address: mach_vm_address_t = 0;
-	let size: mach_vm_size_t = size as mach_vm_size_t;
+        let task: mach_port_t = unsafe { mach_task_self() };
+        let mut address: mach_vm_address_t = 0;
+        let size: mach_vm_size_t = size as mach_vm_size_t;
 
         let retval;
-	unsafe {
-	    retval = mach_vm_allocate(task, &mut address, size, VM_FLAGS_ANYWHERE);
-	}
+        unsafe {
+            retval = mach_vm_allocate(task, &mut address, size, VM_FLAGS_ANYWHERE);
+        }
         if retval == KERN_SUCCESS {
-	    Ok(address as *mut u8)
+            Ok(address as *mut u8)
         } else {
-	    Err(AllocFailed)
+            Err(AllocFailed)
         }
     }
 
     pub fn sys_dealloc(p: *mut u8, size: usize) {
-	assert!(size_of::<usize>() == size_of::<u64>());
-	assert!(size_of::<*mut u8>() == size_of::<u64>());
-	
-	unsafe {
-	    let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
-	    assert!(retval == KERN_SUCCESS);
-	}
+        assert!(size_of::<usize>() == size_of::<u64>());
+        assert!(size_of::<*mut u8>() == size_of::<u64>());
+
+        unsafe {
+            let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
+            assert!(retval == KERN_SUCCESS);
+        }
     }
 
     pub fn sys_realloc(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
-	assert!(size_of::<*mut u8>() == size_of::<u64>());
+        assert!(size_of::<*mut u8>() == size_of::<u64>());
 
-	let mut newaddress: mach_vm_address_t = 0;
-	let task: mach_port_t = unsafe { mach_task_self() };
-	let mut cur_prot: vm_prot_t = 0;
-	let mut max_prot: vm_prot_t = 0;
-	unsafe {
-	    let retval = mach_vm_remap(task,
-		   &mut newaddress,
-		   u64::try_from(newsize).unwrap(),
-		   0, // mask
-		   VM_FLAGS_ANYWHERE,
-		   task,
-		   p.addr() as u64,
-		   0, // copy = False
-		   &mut cur_prot, &mut max_prot, 
-		   VM_INHERIT_NONE);
-	    assert!(retval == KERN_SUCCESS);
-	}
+        let mut newaddress: mach_vm_address_t = 0;
+        let task: mach_port_t = unsafe { mach_task_self() };
+        let mut cur_prot: vm_prot_t = 0;
+        let mut max_prot: vm_prot_t = 0;
+        unsafe {
+            let retval = mach_vm_remap(
+                task,
+                &mut newaddress,
+                u64::try_from(newsize).unwrap(),
+                0, // mask
+                VM_FLAGS_ANYWHERE,
+                task,
+                p.addr() as u64,
+                0, // copy = False
+                &mut cur_prot,
+                &mut max_prot,
+                VM_INHERIT_NONE,
+            );
+            assert!(retval == KERN_SUCCESS);
+        }
 
-	newaddress as *mut u8
+        newaddress as *mut u8
     }
 
     // Hm, looking at https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_map.c and ./bsd/kern/kern_mman.c and vm_map.c ...
@@ -197,7 +195,7 @@ pub mod vendor {
     // * VM_BEHAVIOR_WILLNEED -> vm_map_willneed()
     //   If an anonymous mapping, -> vm_pre_fault() -> vm_fault() -> vm_fault_internal()
     //   That seems to heavyweight for smalloc's needs. smalloc won't use WILLNEED. Anyway, in the common case the memory page in question will already have been in use to hold the free list entry and so it will already be in cache by the time smalloc does anything! :-)
-    
+
     // * VM_BEHAVIOR_REUSABLE -> vm_map_reusable_pages()
     //   This checks each vm_map_entry_t in the range by calling "vm_map_entry_is_reusable()" on it, and errors out if any one is not. So... I guess this means that the action the caller intends by "VM_BEHAVIOR_REUSABLE" is not simply the fact that it is already "vm_map_entry_is_reusable()", since the latter is required to always be true... Update: okay, vm_map_entry_is_reusable() is always gonna be true for smalloc's vm map entries, and that state isn't the same as the "reusable" flag on *objects*, see below...
     //   ... and then (for the private, anonymous memory that smalloc uses), -> vm_object_deactivate_pages(kill_page==1, reusable_page==1, reusable_no_write==0)
@@ -209,19 +207,17 @@ pub mod vendor {
 
     // Okay! So this is the pair of behavior flags that smalloc wants to use: call `mach_vm_behavior_set(VM_BEHAVIOR_REUSABLE)` to deactivate a virtual page while marking it to be kept around and reused if it comes to that. Then call `mach_vm_behavior_set(VM_BEHAVIOR_REUSE)` when it comes to that.
 
-//"    There is no MADV_REUSABLE flag for madvise(). The madvise() flag that leads (through VM_BEHAVIOR_REUSABLE) to vm_map_reusable_pages() is MADV_FREE_REUSABLE, and the madvise() flag that leads (through VM_BEHAVIOR_CAN_REUSE) to vm_map_can_reuse() is MADV_CAN_REUSE.
-	
+    //"    There is no MADV_REUSABLE flag for madvise(). The madvise() flag that leads (through VM_BEHAVIOR_REUSABLE) to vm_map_reusable_pages() is MADV_FREE_REUSABLE, and the madvise() flag that leads (through VM_BEHAVIOR_CAN_REUSE) to vm_map_can_reuse() is MADV_CAN_REUSE.
+
     // * VM_BEHAVIOR_CAN_REUSE -> vm_map_can_reuse()
     //   This seems to have no side effects (other than incrementing `vm_page_stats_reusable.can_reuse_success`, which a quick grep suggests has no effects).
 
     // useful blog post explaining the mach_vm_* functions: https://yoursubtitle.blogspot.com/2009/11/section-86-mach-vm-user-space-interface.html
     // Yep, reading that makes me think default behavior will be best for smalloc's purposes.
-	
 }
 
 // for Windows, check out VirtualAllocEx with MEM_RESERVE flag: https://learn.microsoft.com/en-us/windows/win32/memory/page-state
 // https://stackoverflow.com/questions/15261527/how-can-i-reserve-virtual-memory-in-linux?rq=1
 // Use MADV_REUSE rather than MADV_FREE, on Linux, based on Brave AI's explanations, and on Mach(iOS/MacOS), use MADV_FREE_REUSABLE and when done with a page and MADV_FREE_REUSE before re-using the page. The latter is to avoid the overhead of the kernel zero'ing the page's contents.
-	//xxx look into VirtualAlloc on windows and the difference between "reserve" and "commit"...
+//xxx look into VirtualAlloc on windows and the difference between "reserve" and "commit"...
 // xxx check if we're using the rustix linux-raw or the rustix libc backend, on linux
-
