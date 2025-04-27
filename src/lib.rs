@@ -1435,41 +1435,11 @@ mod tests {
         let baseptr_for_testing: *mut u8 = SIZE_OF_HUGE_SLOTS as *mut u8;
 
         // First the small-slabs region:
-        for areanum in [
-            1,
-            2,
-            30,
-            31,
-            32,
-            33,
-            NUM_SMALL_SLAB_AREAS - 3,
-            NUM_SMALL_SLAB_AREAS - 2,
-            NUM_SMALL_SLAB_AREAS - 1,
+        for areanum in [ 1, 2, 30, 31, 32, 33, NUM_SMALL_SLAB_AREAS - 3, NUM_SMALL_SLAB_AREAS - 2, NUM_SMALL_SLAB_AREAS - 1,
         ] {
             for smallslabnum in 0..NUM_SMALL_SLABS {
-                for slotnum in [
-                    0,
-                    1,
-                    2,
-                    253,
-                    254,
-                    255,
-                    256,
-                    257,
-                    1022,
-                    1023,
-                    1024,
-                    2usize.pow(16) - 1,
-                    2usize.pow(16),
-                    2usize.pow(16) + 1,
-                    NUM_SLOTS_O - 2,
-                    NUM_SLOTS_O - 1,
-                ] {
-                    let sl1 = SlotLocation::SmallSlot {
-                        areanum,
-                        smallslabnum,
-                        slotnum,
-                    };
+                for slotnum in [ 0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16) - 1, 2usize.pow(16), 2usize.pow(16) + 1, NUM_SLOTS_O - 2, NUM_SLOTS_O - 1, ] {
+                    let sl1 = SlotLocation::SmallSlot { areanum, smallslabnum, slotnum, };
                     let offset = sl1.offset();
                     assert!(offset >= DATA_SLABS_BASE_OFFSET);
                     assert!(
@@ -1492,28 +1462,8 @@ mod tests {
 
         // Then the large-slabs region excluding the huge slab:
         for largeslabnum in 0..HUGE_SLABNUM {
-            for slotnum in [
-                0,
-                1,
-                2,
-                253,
-                254,
-                255,
-                256,
-                257,
-                1022,
-                1023,
-                1024,
-                2usize.pow(16) - 1,
-                2usize.pow(16),
-                2usize.pow(16) + 1,
-                NUM_SLOTS_O - 2,
-                NUM_SLOTS_O - 1,
-            ] {
-                let sl1 = SlotLocation::LargeSlot {
-                    largeslabnum,
-                    slotnum,
-                };
+            for slotnum in [ 0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16) - 1, 2usize.pow(16), 2usize.pow(16) + 1, NUM_SLOTS_O - 2, NUM_SLOTS_O - 1, ] {
+                let sl1 = SlotLocation::LargeSlot { largeslabnum, slotnum, };
                 let offset = sl1.offset();
                 assert!(offset >= DATA_SLABS_BASE_OFFSET);
                 let p = unsafe { baseptr_for_testing.add(offset) };
@@ -1524,28 +1474,8 @@ mod tests {
 
         // Then the huge slab:
         let largeslabnum = HUGE_SLABNUM;
-        for slotnum in [
-            0,
-            1,
-            2,
-            253,
-            254,
-            255,
-            256,
-            257,
-            1022,
-            1023,
-            1024,
-            2usize.pow(16) - 1,
-            2usize.pow(16),
-            2usize.pow(16) + 1,
-            NUM_SLOTS_HUGE - 2,
-            NUM_SLOTS_HUGE - 1,
-        ] {
-            let sl1 = SlotLocation::LargeSlot {
-                largeslabnum,
-                slotnum,
-            };
+        for slotnum in [ 0, 1, 2, 253, 254, 255, 256, 257, 1022, 1023, 1024, 2usize.pow(16) - 1, 2usize.pow(16), 2usize.pow(16) + 1, NUM_SLOTS_HUGE - 2, NUM_SLOTS_HUGE - 1, ] {
+            let sl1 = SlotLocation::LargeSlot { largeslabnum, slotnum, };
             let offset = sl1.offset();
             assert!(offset >= DATA_SLABS_BASE_OFFSET);
             let p = unsafe { baseptr_for_testing.add(offset) };
