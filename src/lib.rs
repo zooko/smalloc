@@ -1316,30 +1316,18 @@ mod tests {
     /// time re-used the freed slot.
     fn help_inner_alloc_four_times_large(largeslabnum: usize, reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot {
-            largeslabnum: _,
-            slotnum: _,
-        } = sl1
-        else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl1 else {
             panic!("should have returned a large slot");
         };
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot {
-            largeslabnum: _,
-            slotnum,
-        } = sl2
-        else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum, } = sl2 else {
             panic!("should have returned a large slot");
         };
         let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot {
-            largeslabnum: _,
-            slotnum: _,
-        } = sl3
-        else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl3 else {
             panic!("should have returned a large slot");
         };
 
@@ -1350,11 +1338,7 @@ mod tests {
 
         // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
         let sl4 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot {
-            largeslabnum: _,
-            slotnum,
-        } = sl4
-        else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum, } = sl4 else {
             panic!("should have returned a large slot");
         };
         assert_eq!(slotnum, sl2s_slot);
@@ -1369,33 +1353,18 @@ mod tests {
     /// time re-uses the freed slot.
     fn help_inner_alloc_four_times_small(reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot {
-            areanum,
-            smallslabnum,
-            slotnum: _,
-        } = sl1
-        else {
+        let SlotLocation::SmallSlot { areanum, smallslabnum, slotnum: _, } = sl1 else {
             panic!("should have returned a small slot");
         };
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot {
-            areanum: _,
-            smallslabnum: _,
-            slotnum,
-        } = sl2
-        else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum, } = sl2 else {
             panic!("should have returned a small slot");
         };
         let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot {
-            areanum: _,
-            smallslabnum: _,
-            slotnum: _,
-        } = sl3
-        else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _, } = sl3 else {
             panic!("should have returned a small slot");
         };
 
@@ -1407,12 +1376,7 @@ mod tests {
 
         // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
         let sl4 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot {
-            areanum: _,
-            smallslabnum: _,
-            slotnum,
-        } = sl4
-        else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum, } = sl4 else {
             panic!("should have returned a small slot");
         };
         assert_eq!(slotnum, sl2s_slot);
