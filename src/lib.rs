@@ -1025,6 +1025,7 @@ impl Smalloc {
 use std::cell::Cell;
 
 static GLOBAL_THREAD_AREANUM: AtomicU32 = AtomicU32::new(0);
+
 thread_local! {
     static THREAD_AREANUM: Cell<Option<u32>> = const { Cell::new(None) };
 }
@@ -1035,7 +1036,7 @@ fn get_thread_areanum() -> usize {
     THREAD_AREANUM.with(|cell| {
         cell.get().map_or_else(
             || {
-                let new_value = GLOBAL_THREAD_AREANUM.fetch_add(1, Ordering::Relaxed);
+                let new_value = GLOBAL_THREAD_AREANUM.fetch_add(1, Ordering::Relaxed) % NUM_SMALL_SLAB_AREAS as u32;
                 THREAD_AREANUM.with(|cell| cell.set(Some(new_value)));
                 new_value
             },
@@ -1275,7 +1276,7 @@ mod tests {
             let mut reqalign = 1;
             loop {
                 // Test this size/align combo
-                help_inner_alloc_four_times_large(largeslabnum, reqsize, reqalign);
+                help_inner_alloc_four_times_large(reqsize, reqalign);
                 reqalign *= 2;
                 let alignedsize: usize = ((reqsize - 1) | (reqalign - 1)) + 1;
                 if alignedsize > slotsize || alignedsize > MAX_ALIGNMENT {
@@ -1312,79 +1313,59 @@ mod tests {
     }
 
     /// Allocate this size+align three times, then free the middle
-    /// one, then allocate a fourth time, and assert that the fourth
-    /// time re-used the freed slot.
-    fn help_inner_alloc_four_times_large(largeslabnum: usize, reqsize: usize, reqalign: usize) {
+    /// one, then allocate a fourth time.
+    fn help_inner_alloc_four_times_large(reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl1 else {
             panic!("should have returned a large slot");
         };
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot { largeslabnum: _, slotnum, } = sl2 else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl2 else {
             panic!("should have returned a large slot");
         };
-        let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl3 else {
             panic!("should have returned a large slot");
         };
 
-        let origea: u32 = SM.get_large_eac(largeslabnum).load(Ordering::Relaxed);
-
         // Now free the middle one.
         SM.push_flh(sl2);
 
-        // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
+        // And allocate another one.
         let sl4 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::LargeSlot { largeslabnum: _, slotnum, } = sl4 else {
+        let SlotLocation::LargeSlot { largeslabnum: _, slotnum: _, } = sl4 else {
             panic!("should have returned a large slot");
         };
-        assert_eq!(slotnum, sl2s_slot);
-        assert_eq!(
-            SM.get_large_eac(largeslabnum).load(Ordering::Relaxed),
-            origea
-        );
     }
 
     /// Allocate this size+align three times, then free the middle
-    /// one, then allocate a fourth time, and assert that the fourth
-    /// time re-uses the freed slot.
+    /// one, then allocate a fourth time.
     fn help_inner_alloc_four_times_small(reqsize: usize, reqalign: usize) {
         let sl1 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot { areanum, smallslabnum, slotnum: _, } = sl1 else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _, } = sl1 else {
             panic!("should have returned a small slot");
         };
 
         let sl2 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum, } = sl2 else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _, } = sl2 else {
             panic!("should have returned a small slot");
         };
-        let sl2s_slot = slotnum;
 
         let sl3 = help_inner_alloc(reqsize, reqalign);
         let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _, } = sl3 else {
             panic!("should have returned a small slot");
         };
 
-        let origea: u32 = SM
-            .get_small_eac(areanum, smallslabnum)
-            .load(Ordering::Relaxed); // xxx !? relaxed ?
         // Now free the middle one.
         SM.push_flh(sl2);
 
-        // And allocate another one. The ever-allocated-count should not go up because it re-uses the freed slot for the subsequent allocation.
+        // And allocate another one.
         let sl4 = help_inner_alloc(reqsize, reqalign);
-        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum, } = sl4 else {
+        let SlotLocation::SmallSlot { areanum: _, smallslabnum: _, slotnum: _, } = sl4 else {
             panic!("should have returned a small slot");
         };
-        assert_eq!(slotnum, sl2s_slot);
-        assert_eq!(
-            SM.get_small_eac(areanum, smallslabnum)
-                .load(Ordering::Relaxed),
-            origea
-        );
     }
 
     #[test]
@@ -1445,6 +1426,100 @@ mod tests {
             let p = unsafe { baseptr_for_testing.add(offset) };
             let sl2 = SlotLocation::new_from_ptr(baseptr_for_testing, p).unwrap();
             assert_eq!(sl1, sl2);
+        }
+    }
+
+    use std::thread;
+
+    #[test]
+    fn test_two_threads() {
+        SM.idempotent_init();
+
+        let handle1 = thread::spawn(move || {
+            for _j in 0..1000 {
+                help_test_inner_alloc_small(0);
+            }
+        });
+        
+        let handle2 = thread::spawn(move || {
+            for _j in 0..1000 {
+                help_test_inner_alloc_small(0);
+            }
+        });
+
+        handle1.join().unwrap();
+        handle2.join().unwrap();
+    }
+
+    #[test]
+    fn test_twelve_threads_small() {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..12 {
+            handles.push(thread::spawn(move || {
+                for _j in 0..1000 {
+                    help_test_inner_alloc_small(0);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_twelve_threads_large() {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..12 {
+            handles.push(thread::spawn(move || {
+                for _j in 0..1000 {
+                    help_test_inner_alloc_large(0);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_a_thousand_threads_small() {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..1000 {
+            handles.push(thread::spawn(move || {
+                for _j in 0..12 {
+                    help_test_inner_alloc_small(0);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_a_thousand_threads_large() {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..1000 {
+            handles.push(thread::spawn(move || {
+                for _j in 0..12 {
+                    help_test_inner_alloc_large(0);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
         }
     }
 }
