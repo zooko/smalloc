@@ -467,6 +467,7 @@ impl Default for Smalloc {
 
 //use thousands::Separable;
 use atomic_dbg::{dbg, eprintln};
+use std::collections::HashSet;
 
 impl Smalloc {
     pub const fn new() -> Self {
@@ -757,12 +758,15 @@ impl Smalloc {
 
         let mut evidence: [u32; 300] = [7; 300];
         let mut ei: usize = 0;
+        let mut h = HashSet::new();
 
         let mut sane = true;
         let mut count = 0;
         while thisindexplus1 != 0 {
             evidence[ei] = thisindexplus1;
             ei = (ei + 1) % evidence.len();
+
+            h.insert(thisindexplus1);
 
             if thisindexplus1 > num_large_slots(largeslabnum) as u32 {
                 sane = false;
