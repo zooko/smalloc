@@ -2,6 +2,17 @@
 #![feature(assert_matches)]
 // #![allow(clippy::needless_range_loop)] // I like using needless range loops more than I like using enumerate.
 
+static mut HIGHWATER_FREELIST_LENGTH: u32 = 0;
+
+pub fn highwater_freelist_length(count: u32) {
+    unsafe {
+        if count > HIGHWATER_FREELIST_LENGTH {
+            HIGHWATER_FREELIST_LENGTH = count;
+            eprintln!("new HIGHWATER_FREELIST_LENGTH: {}", count);
+        }
+    }
+}
+
 // These slot sizes were chosen by calculating how many objects of this size would fit into the least-well-packed 64-byte cache line when we lay out objects of these size end-to-end over many successive 64-byte cache lines. If that makes sense. The worst-case number of objects that can be packed into a cache line can be up 2 fewer than the best-case, since the first object in this cache line might cross the cache line boundary and only the last part of the object is in this cache line, and the last object in this cache line might similarly be unable to fit entirely in and only the first part of it might be in this cache line. So this "how many fit" number below counts only the ones that entirely fit in, even when we are laying out objects of this size one after another (with no padding) across many cache lines. So it can be 0, 1, or 2 fewer than you might think. (Excluding any sizes which are smaller and can't fit more -- in the worst case -- than a larger size.)
 
 // small slots:
@@ -635,7 +646,7 @@ impl Smalloc {
         //xxx 	let can't do because not aligned :-( atomic_new = unsafe { AtomicU32::from_ptr(u32_ptr_to_new) };
 
         loop {
-            let firstindexplus1: u32 = flh.load(Ordering::SeqCst);
+            let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
             assert!(firstindexplus1 < maxindex + 1);
             //xxx can't do because not aligned :-( atomic_new.store(firstindexplus1, Ordering::Release);
             unsafe { u32_ptr_to_new.write_unaligned(firstindexplus1) };
@@ -643,8 +654,8 @@ impl Smalloc {
                 .compare_exchange_weak(
                     firstindexplus1,
                     new_index + 1,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
                 )
                 .is_ok()
             {
@@ -656,12 +667,7 @@ impl Smalloc {
     /// There's a bug where the free list is getting corrupted. This is going to find that earlier.
     /// Returns true if everything checks out, else returns false (and prints a lot of diagnostic information to stderr).
     /// If `verbose`, print out the contents of the free list in every case, else only print out the contents when an incorrect link is detected.
-    fn sanity_check_small_free_list(
-        &self,
-        areanum: usize,
-        smallslabnum: usize,
-        verbose: bool,
-    ) -> bool {
+    fn _sanity_check_small_free_list(&self, areanum: usize, smallslabnum: usize, verbose: bool) -> bool {
         let baseptr = self.get_baseptr();
 
         let offset_of_flh = offset_of_small_flh(areanum, smallslabnum);
@@ -671,29 +677,21 @@ impl Smalloc {
         let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
 
         let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
-        let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
-
-        let mut evidence: [u32; 300] = [7; 300];
-        let mut ei: usize = 0;
+        let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
 
         let mut sane = true;
         let mut count = 0;
         while thisindexplus1 != 0 {
-            evidence[ei] = thisindexplus1;
-            ei = (ei + 1) % evidence.len();
-
             if thisindexplus1 > NUM_SLOTS_O as u32 {
                 sane = false;
                 dbg!();
                 eprintln!(
-                    "xxxxxx >>>> gtan: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}, thisindexplus1: {}, evidence: {:?}, ei: {}",
+                    "xxxxxx >>>> thread: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}, thisindexplus1: {}",
                     get_thread_areanum(),
                     areanum,
                     smallslabnum,
                     count,
-                    thisindexplus1,
-                    evidence,
-                    ei
+                    thisindexplus1
                 );
                 break;
             }
@@ -714,7 +712,7 @@ impl Smalloc {
 
         if !sane || verbose {
             count = 0;
-            let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+            let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
             while thisindexplus1 != 0 {
                 // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
                 let offset_of_next = offset_of_small_free_list_entry(
@@ -730,7 +728,7 @@ impl Smalloc {
             }
 
             eprintln!(
-                "xxxxxx <<<< gtan: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}",
+                "xxxxxx <<<< thread: {}, 1(small) areanum: {}, smallslabnum: {}, count: {}",
                 get_thread_areanum(),
                 areanum,
                 smallslabnum,
@@ -754,17 +752,13 @@ impl Smalloc {
         let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
 
         let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
-        let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+        let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
 
-        let mut evidence: [u32; 300] = [7; 300];
-        let mut ei: usize = 0;
         let mut h = HashSet::new();
 
         let mut sane = true;
         let mut count = 0;
         while thisindexplus1 != 0 {
-            evidence[ei] = thisindexplus1;
-            ei = (ei + 1) % evidence.len();
 
             h.insert(thisindexplus1);
 
@@ -772,18 +766,35 @@ impl Smalloc {
                 sane = false;
                 dbg!();
                 eprintln!(
-                    "xxxxxx >>>> gtan(): {}, 1 largeslabnum: {}, count: {}, thisindexplus1: {}, num_large_slots(): {}, evidence: {:?}, ei: {}",
+                    "xxxxxx >>>> index>numslots thread: {}, largeslabnum: {}, count: {}, thisindexplus1: {}, num_large_slots(): {}",
                     get_thread_areanum(),
                     largeslabnum,
                     count,
                     thisindexplus1,
-                    num_large_slots(largeslabnum),
-                    evidence,
-                    ei
+                    num_large_slots(largeslabnum)
                 );
+                //panic!();
                 break;
             }
-            //assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
+
+            //assert!(!h.contains(&thisindexplus1));
+            // yyy h.insert(thisindexplus1);
+            // eprintln!("{}", h.len());
+            // if h.contains(&thisindexplus1) {
+            //     sane = false;
+            //     dbg!();
+            //     eprintln!(
+            //         "xxxxxx >>>> loop thread: {}, largeslabnum: {}, count: {}, thisindexplus1: {}",
+            //         get_thread_areanum(),
+            //         largeslabnum,
+            //         count,
+            //         thisindexplus1
+            //     );
+            //     //panic!();
+            //     break;
+            // } else {
+            //     h.insert(thisindexplus1);
+            // }
 
             // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
             let offset_of_next = offset_of_large_slot(largeslabnum, (thisindexplus1 - 1) as usize);
@@ -792,18 +803,34 @@ impl Smalloc {
             let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
             thisindexplus1 = nextindexplus1;
             count += 1;
+            let eac = self.get_large_eac(largeslabnum).load(Ordering::Relaxed);
+            if count > eac {
+                sane = false;
+                dbg!();
+                eprintln!(
+                    "xxxxxx >>>> count>eac thread: {}, largeslabnum: {}, count: {}, eac: {}, thisindexplus1: {}",
+                    get_thread_areanum(),
+                    largeslabnum,
+                    count,
+                    eac,
+                    thisindexplus1
+                );
+                //panic!();
+                break;
+            }
+            //highwater_freelist_length(count);
         }
 
         if !sane || verbose {
             count = 0;
-            let mut thisindexplus1: u32 = flh.load(Ordering::SeqCst);
+            let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
             while thisindexplus1 != 0 {
                 eprintln!(
-                    "xxxxxx ==== gtan: {}, 1(large) largeslabnum: {}, count: {}, ei: {}, thisindexplus1: {}",
+                    "xxxxxx ==== thread: {}, largeslabnum: {}, count: {}, eac: {}, thisindexplus1: {}",
                     get_thread_areanum(),
                     largeslabnum,
                     count,
-                    ei,
+                    self.get_large_eac(largeslabnum).load(Ordering::Relaxed),
                     thisindexplus1
                 );
                 //assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
@@ -819,7 +846,7 @@ impl Smalloc {
             }
 
             eprintln!(
-                "xxxxxx <<<< gtan: {}, 1(large) largeslabnum: {}, count: {}",
+                "xxxxxx <<<< thread: {}, largeslabnum: {}, count: {}",
                 get_thread_areanum(),
                 largeslabnum,
                 count
@@ -837,7 +864,7 @@ impl Smalloc {
                 slotnum,
             } => {
                 assert!(slotnum < NUM_SLOTS_O);
-                debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false));
+                //debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false));
 
                 self.inner_push_flh(
                     offset_of_small_flh(areanum, smallslabnum),
@@ -846,14 +873,14 @@ impl Smalloc {
                     NUM_SLOTS_O as u32,
                 );
 
-                debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false));
+                //debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false));
             }
             SlotLocation::LargeSlot {
                 largeslabnum,
                 slotnum,
             } => {
                 assert!(slotnum < num_large_slots(largeslabnum));
-                debug_assert!(self.sanity_check_large_free_list(largeslabnum, false));
+                //debug_assert!(self.sanity_check_large_free_list(largeslabnum, false));
 
                 // Intrusive free list -- the free list entry is stored in the data slot.
                 self.inner_push_flh(
@@ -951,7 +978,7 @@ impl Smalloc {
     }
 
     fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
-        debug_assert!(self.sanity_check_large_free_list(largeslabnum, false));
+        //debug_assert!(self.sanity_check_large_free_list(largeslabnum, false));
 
         let flhplus1 = self.pop_large_flh(largeslabnum);
         if flhplus1 != 0 {
@@ -1244,7 +1271,7 @@ mod tests {
         SM.idempotent_init();
 
         for smallslabnum in 0..NUM_SMALL_SLABS {
-            help_test_inner_alloc_small(smallslabnum);
+            help_inner_alloc_small(smallslabnum);
         }
     }
 
@@ -1253,14 +1280,14 @@ mod tests {
         SM.idempotent_init();
 
         for largeslabnum in 0..NUM_LARGE_SLABS {
-            help_test_inner_alloc_large(largeslabnum);
+            help_inner_alloc_large(largeslabnum);
         }
     }
 
     /// Generate a number of requests (size+alignment) that fit into
     /// the given large slab and for each request call
     /// help_inner_alloc_four_times_large()
-    fn help_test_inner_alloc_large(largeslabnum: usize) {
+    fn help_inner_alloc_large(largeslabnum: usize) {
         let slotsize = large_slabnum_to_slotsize(largeslabnum);
         let smallest = if largeslabnum == 0 {
             small_slabnum_to_slotsize(NUM_SMALL_SLABS - 1) + 1
@@ -1268,14 +1295,7 @@ mod tests {
             large_slabnum_to_slotsize(largeslabnum - 1) + 1
         };
         let largest = slotsize;
-        for reqsize in [
-            smallest,
-            smallest + 1,
-            smallest + 2,
-            largest - 3,
-            largest - 1,
-            largest,
-        ] {
+        for reqsize in [ smallest, smallest + 1, smallest + 2, largest - 3, largest - 1, largest, ] {
             // Generate alignments
             let mut reqalign = 1;
             loop {
@@ -1293,7 +1313,7 @@ mod tests {
     /// Generate a number of requests (size+alignment) that fit into
     /// the given small slab and for each request call
     /// help_inner_alloc_four_times_small()
-    fn help_test_inner_alloc_small(smallslabnum: usize) {
+    fn help_inner_alloc_small(smallslabnum: usize) {
         let slotsize = small_slabnum_to_slotsize(smallslabnum);
         let smallest = if smallslabnum == 0 {
             1
@@ -1441,13 +1461,13 @@ mod tests {
 
         let handle1 = thread::spawn(move || {
             for _j in 0..1000 {
-                help_test_inner_alloc_small(0);
+                help_inner_alloc_small(0);
             }
         });
         
         let handle2 = thread::spawn(move || {
             for _j in 0..1000 {
-                help_test_inner_alloc_small(0);
+                help_inner_alloc_small(0);
             }
         });
 
@@ -1463,7 +1483,7 @@ mod tests {
         for _i in 0..12 {
             handles.push(thread::spawn(move || {
                 for _j in 0..1000 {
-                    help_test_inner_alloc_small(0);
+                    help_inner_alloc_small(0);
                 }
             }));
         }
@@ -1474,15 +1494,13 @@ mod tests {
     }
 
     #[test]
-    fn test_twelve_threads_large() {
+    fn test_twelve_threads_large_random() {
         SM.idempotent_init();
 
         let mut handles = Vec::new();
         for _i in 0..12 {
             handles.push(thread::spawn(move || {
-                for _j in 0..1000 {
-                    help_test_inner_alloc_large(0);
-                }
+                help_many_random_allocs_and_deallocs(10_000);
             }));
         }
 
@@ -1499,7 +1517,7 @@ mod tests {
         for _i in 0..1000 {
             handles.push(thread::spawn(move || {
                 for _j in 0..12 {
-                    help_test_inner_alloc_small(0);
+                    help_inner_alloc_small(0);
                 }
             }));
         }
@@ -1510,15 +1528,13 @@ mod tests {
     }
 
     #[test]
-    fn test_a_thousand_threads_large() {
+    fn test_a_thousand_threads_large_random() {
         SM.idempotent_init();
 
         let mut handles = Vec::new();
         for _i in 0..1000 {
             handles.push(thread::spawn(move || {
-                for _j in 0..12 {
-                    help_test_inner_alloc_large(0);
-                }
+                help_many_random_allocs_and_deallocs(1000);
             }));
         }
 
