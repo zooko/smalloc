@@ -7,9 +7,12 @@ use rand::rngs::StdRng;
 
 use test::Bencher;
 
+use std::alloc::Layout;
+
 use smalloc::{
     NUM_LARGE_SLABS,
     NUM_SMALL_SLABS,
+    Smalloc,
     sum_large_slab_sizes,
     sum_large_slab_sizes_functional,
     sum_small_slab_sizes,
@@ -25,6 +28,47 @@ const NUM_ARGS: usize = 128;
 
 //XXX add cache-flushing to try to suss out cached vs uncached performance
 //XXX try Leo's suggestion of criterion bench_function
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref SM: Smalloc = Smalloc::new();
+}
+
+use std::alloc::GlobalAlloc;
+
+// #[bench]
+// fn bench_alloc_and_free_32_threads(b: &mut Bencher) {
+//     let l = Layout::from_size_align(64, 1).unwrap();
+
+//     let mut r = StdRng::seed_from_u64(0);
+//     let mut ps = Vec::new();
+
+//     b.iter(|| {
+//         if r.random::<bool>() {
+//             // Free
+//             if !ps.is_empty() {
+//                 let i = r.random_range(0..ps.len());
+//                 let (p, l2) = ps.remove(i);
+//                 unsafe { SM.dealloc(p, l2) };
+//             }
+//         } else {
+//             // Malloc
+//             let p = unsafe { SM.alloc(l) };
+//             ps.push((p, l));
+//         }
+//     });
+// }
+
+#[bench]
+fn bench_alloc_and_free(b: &mut Bencher) {
+    let layout = Layout::from_size_align(1, 1).unwrap();
+
+    b.iter(|| {
+        let p = black_box(unsafe { SM.alloc(layout) });
+        unsafe { SM.dealloc(p, layout) };
+    });
+}
 
 #[bench]
 fn bench_sum_small_slab_sizes(b: &mut Bencher) {

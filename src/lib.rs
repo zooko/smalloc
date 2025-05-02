@@ -72,33 +72,39 @@ pub const fn num_large_slots(largeslabnum: usize) -> usize {
     }
 }
 
-// The per-slab variables and the free list entries have this size in bytes.
-const WORDSIZE: usize = 4;
+// The per-slab flhs and eacs have this size in bytes.
+const DOUBLEWORDSIZE: usize = 8;
+
+// The free list entries have this size in bytes.
+const SINGLEWORDSIZE: usize = 4;
+
+// One eac plus one flh
+const VARSSIZE: usize = DOUBLEWORDSIZE * 2;
 
 // There are 64 areas each with a full complements of small slabs.
 // (Large slabs live in a separate region that is not one of those 64 areas.)
 pub const NUM_SMALL_SLAB_AREAS: usize = 64;
 
-// Intentionally not aligning this to anything bigger than WORDSIZE. (Which it will be anyway, so the next_multiple_of() here is a no-op.
+// Aligning this to DOUBLEWORDSIZE for the sake of the flh's.
 const LARGE_SLABS_VARS_BASE_OFFSET: usize =
-    (NUM_SMALL_SLAB_AREAS * NUM_SMALL_SLABS * 2 * WORDSIZE).next_multiple_of(WORDSIZE);
+    (NUM_SMALL_SLAB_AREAS * NUM_SMALL_SLABS * VARSSIZE).next_multiple_of(DOUBLEWORDSIZE);
 
-pub const VARIABLES_SPACE: usize = LARGE_SLABS_VARS_BASE_OFFSET + NUM_LARGE_SLABS * 2 * WORDSIZE;
-
-fn offset_of_small_eac(areanum: usize, smallslabnum: usize) -> usize {
-    (areanum * NUM_SMALL_SLABS * 2 + smallslabnum * 2) * WORDSIZE
-}
-
-fn offset_of_large_eac(largeslabnum: usize) -> usize {
-    LARGE_SLABS_VARS_BASE_OFFSET + largeslabnum * 2 * WORDSIZE
-}
+pub const VARIABLES_SPACE: usize = LARGE_SLABS_VARS_BASE_OFFSET + NUM_LARGE_SLABS * VARSSIZE;
 
 fn offset_of_small_flh(areanum: usize, smallslabnum: usize) -> usize {
-    (areanum * NUM_SMALL_SLABS * 2 + smallslabnum * 2 + 1) * WORDSIZE
+    (areanum * NUM_SMALL_SLABS + smallslabnum) * VARSSIZE
 }
 
 fn offset_of_large_flh(largeslabnum: usize) -> usize {
-    LARGE_SLABS_VARS_BASE_OFFSET + (largeslabnum * 2 + 1) * WORDSIZE
+    LARGE_SLABS_VARS_BASE_OFFSET + largeslabnum * VARSSIZE
+}
+
+fn offset_of_small_eac(areanum: usize, smallslabnum: usize) -> usize {
+    (areanum * NUM_SMALL_SLABS + smallslabnum) * VARSSIZE + DOUBLEWORDSIZE
+}
+
+fn offset_of_large_eac(largeslabnum: usize) -> usize {
+    LARGE_SLABS_VARS_BASE_OFFSET + largeslabnum * VARSSIZE + DOUBLEWORDSIZE
 }
 
 const CACHELINE_SIZE: usize = 64;
@@ -107,15 +113,15 @@ const CACHELINE_SIZE: usize = 64;
 pub const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(CACHELINE_SIZE);
 
 // The calls to next_multiple_of() on a space are to start the *next* thing on a cacheline boundary.
-const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * WORDSIZE).next_multiple_of(CACHELINE_SIZE); // Size of each of the separate free lists
-const NUM_SEPARATE_FREELISTS: usize = 3; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte word (slab numbers 0, 1, and 2)
+const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * SINGLEWORDSIZE).next_multiple_of(CACHELINE_SIZE); // Size of each of the separate free lists
+const NUM_SEPARATE_FREELISTS: usize = 6; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte-aligned 4-byte word (slab numbers 0, 1, 2, 3, 4, and 5)
 
 pub const SEPARATE_FREELISTS_SPACE_REGION: usize =
     NUM_SEPARATE_FREELISTS * SEPARATE_FREELIST_SPACE * NUM_SMALL_SLAB_AREAS;
 
-// Align the beginning of the data slabs to MAX_ALIGNMENT. This is just to fit the maximum (4096) of smallest slots (1 byte) into a memory page.
-pub const DATA_SLABS_BASE_OFFSET: usize = (SEPARATE_FREELISTS_BASE_OFFSET
-    + SEPARATE_FREELISTS_SPACE_REGION)
+// Align the beginning of the data slabs to MAX_ALIGNMENT. This is just to fit the maximum (4096) of smallest slots (1 byte) into a (4096-byte) memory page.
+pub const DATA_SLABS_BASE_OFFSET: usize =
+    (SEPARATE_FREELISTS_BASE_OFFSET + SEPARATE_FREELISTS_SPACE_REGION)
     .next_multiple_of(MAX_ALIGNMENT);
 
 const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS + 1] {
@@ -438,16 +444,16 @@ fn offset_of_small_free_list_entry(areanum: usize, smallslabnum: usize, slotnum:
         let pastslots =
             areanum * NUM_SEPARATE_FREELISTS * NUM_SLOTS_O + smallslabnum * NUM_SLOTS_O + slotnum;
         // The separate free lists are laid out after the variables...
-        SEPARATE_FREELISTS_BASE_OFFSET + pastslots * WORDSIZE
+        SEPARATE_FREELISTS_BASE_OFFSET + pastslots * SINGLEWORDSIZE
     } else {
-        // Intrusive free list -- the location of the next-slot space is also the location of the data slot.
-        offset_of_small_slot(areanum, smallslabnum, slotnum)
+        // Intrusive free list -- the location of the next-slot space is the first 4-byte-aligned location in the data slot.
+        offset_of_small_slot(areanum, smallslabnum, slotnum).next_multiple_of(SINGLEWORDSIZE)
     }
 }
 
 use core::alloc::{GlobalAlloc, Layout};
 
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 pub mod platformalloc;
 use platformalloc::{sys_alloc, sys_dealloc, sys_realloc};
 use std::ptr::{copy_nonoverlapping, null_mut};
@@ -463,26 +469,25 @@ impl Default for Smalloc {
     }
 }
 
-use thousands::Separable;
-use std::collections::HashSet;
-use std::time::Instant;
-use lazy_static::lazy_static;
+//use thousands::Separable;
+// use std::time::Instant;
+// use lazy_static::lazy_static;
 
-lazy_static! {
-    static ref START_TIME: Instant = Instant::now();
-}
+// lazy_static! {
+//     static ref START_TIME: Instant = Instant::now();
+// }
 
-macro_rules! debugln {
-    ($($arg:tt)*) => {{
-        let mut frmt = String::new();
-        let tim_str = format!("{} ", START_TIME.elapsed().as_nanos().separate_with_commas());
-        frmt.push_str(&tim_str);
-        let pid_str = format!("thread: {}, ", get_thread_areanum());
-        frmt.push_str(&pid_str);
-        frmt.push_str(&format!($($arg)*));
-        atomic_dbg::eprintln!("{}", frmt);
-    }};
-}
+// macro_rules! debugln {
+//     ($($arg:tt)*) => {{
+//         let mut frmt = String::new();
+//         let tim_str = format!("{:>12} ", START_TIME.elapsed().as_nanos().separate_with_commas());
+//         frmt.push_str(&tim_str);
+//         let pid_str = format!("thread: {:>3}, ", get_thread_areanum());
+//         frmt.push_str(&pid_str);
+//         frmt.push_str(&format!($($arg)*));
+//         atomic_dbg::eprintln!("{}", frmt);
+//     }};
+// }
 
 impl Smalloc {
     pub const fn new() -> Self {
@@ -495,7 +500,7 @@ impl Smalloc {
     fn idempotent_init(&self) -> *mut u8 {
         let mut p: *mut u8;
 
-        p = self.baseptr.load(Ordering::Acquire); // XXX ?? relaxed ???
+        p = self.baseptr.load(Ordering::Acquire); // YYY Acquire
         if !p.is_null() {
             return p;
         }
@@ -507,37 +512,52 @@ impl Smalloc {
 
         // acquire spin lock
         loop {
-            if self
-                .initlock
-                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+            if self.initlock.compare_exchange_weak(
+                false,
+                true,
+                Ordering::AcqRel, // YYY AcqRel
+                Ordering::Acquire // YYY Acquire
+            ).is_ok() {
                 break;
             }
         }
 
-        p = self.baseptr.load(Ordering::Acquire);
+        p = self.baseptr.load(Ordering::Acquire); // YYY Acquire
         if p.is_null() {
-            // XXX come back and figure out if Relaxed is okay. :-)
             p = sys_alloc(layout).unwrap();
             assert!(!p.is_null());
-            assert!(p.is_aligned_to(MAX_ALIGNMENT)); // This is just testing my understanding that mmap() always returns page-aligned pointers (and that page-alignment is always a multiple of 4096.)
-            self.baseptr.store(p, Ordering::Release); // XXX come back and figure out if Relaxed would be okay. :-)  Jack says never. :-)
+            assert!(p.is_aligned_to(MAX_ALIGNMENT));
+            self.baseptr.store(p, Ordering::Release); // YYY Release
         }
-        self.initlock.store(false, Ordering::Release);
 
         // Release the spin lock
+        self.initlock.store(false, Ordering::Release); // YYY Release
+
 
         p
     }
 
     fn get_baseptr(&self) -> *mut u8 {
-        // It is not okay to call this in alloc()/idempotent_init()
-        let p = self.baseptr.load(Ordering::Relaxed);
+        let p = self.baseptr.load(Ordering::Acquire); // YYY ??? Acquire ???
         assert!(!p.is_null());
 
         p
     }
+
+    // /// For testing/debugging.
+    // fn sl_to_ptr(&self, sl: &SlotLocation) -> *mut u8 {
+    //     unsafe { self.get_baseptr().add(sl.offset()) }
+    // }
+
+    // /// For testing/debugging.
+    // fn lssp1_p(&self, largeslabnum: usize, slotnump1u32: u32) -> *mut u8 {
+    //     if slotnump1u32 > 0 {
+    //         let slotnum = (slotnump1u32-1) as usize;
+    //         unsafe { self.get_baseptr().add(SlotLocation::LargeSlot{ largeslabnum, slotnum }.offset()) }
+    //     } else {
+    //         null_mut()
+    //     }
+    // }
 
     /// Pop the head of the free list and return it. Returns 0 if the
     /// free list is empty, or returns the one greater than the index
@@ -549,13 +569,15 @@ impl Smalloc {
         let offset_of_flh = offset_of_small_flh(areanum, smallslabnum);
 
         let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
-        assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
+        assert!(u8_ptr_to_flh.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
+        let u64_ptr_to_flh = u8_ptr_to_flh.cast::<u64>();
 
-        let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+        let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
         loop {
-            let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             assert!(firstindexplus1 <= NUM_SLOTS_O as u32);
+            let counter: u32 = (flhdword >> 32) as u32;
 
             if firstindexplus1 == 0 {
                 // 0 is the sentinel value meaning no next entry, meaning the free list is empty
@@ -568,19 +590,20 @@ impl Smalloc {
                 (firstindexplus1 - 1) as usize,
             );
             let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-            let u32_ptr_to_var = u8_ptr_to_next.cast::<u32>();
-            let nextindexplus1: u32 = unsafe { u32_ptr_to_var.read_unaligned() };
+            assert!(u8_ptr_to_next.is_aligned_to(SINGLEWORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
+            let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
+            let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
+            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
             assert!(nextindexplus1 <= NUM_SLOTS_O as u32);
 
-            if flh
-                .compare_exchange_weak(
-                    firstindexplus1,
-                    nextindexplus1,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
+            let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
+
+            if flh.compare_exchange_weak(
+                flhdword,
+                newflhdword,
+                Ordering::AcqRel, // YYY AcqRel
+                Ordering::Acquire // YYY Acquire
+            ).is_ok() {
                 return firstindexplus1;
             }
         }
@@ -596,13 +619,16 @@ impl Smalloc {
         let offset_of_flh = offset_of_large_flh(largeslabnum);
 
         let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
-        assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
+        assert!(u8_ptr_to_flh.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
+        let u64_ptr_to_flh = u8_ptr_to_flh.cast::<u64>();
 
-        let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+        let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
         loop {
-            let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32);
+            let counter: u32 = (flhdword >> 32) as u32;
+            //debugln!("pop firstindexplus1: {}/{:?}", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1));
 
             if firstindexplus1 == 0 {
                 // 0 is the sentinel value meaning no next entry, meaning the free list is empty
@@ -611,270 +637,76 @@ impl Smalloc {
 
             // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
             let offset_of_next = offset_of_large_slot(largeslabnum, (firstindexplus1 - 1) as usize);
-            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) };
+            assert!(u8_ptr_to_next.is_aligned_to(SINGLEWORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
             let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
-            let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
+            let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
+            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
             assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
+            //debugln!("pop firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
 
-            if flh
-                .compare_exchange_weak(
-                    firstindexplus1,
-                    nextindexplus1,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                return firstindexplus1;
-            }
+            let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
+
+            if flh.compare_exchange_weak(
+                flhdword,
+                newflhdword,
+                Ordering::AcqRel, // AcqRel
+                Ordering::Acquire, // Acquire
+            ).is_ok() {
+                //debugln!("{:>3}/{:>13?}->{:>3}/{:>13?}                    {:>3}/  [{:>3}/ -  ... ] POP  ce ok", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1), firstindexplus1, nextindexplus1);
+                break firstindexplus1
+            }// else {
+                //debugln!("{}/{:?}->{}/{:?} pop ce fail", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
+            //}
         }
     }
 
     // xxx maxindex is just for assertion checks
+    // xxx lsn is just for debugln
     fn inner_push_flh(
         &self,
         offset_of_flh: usize,
         offset_of_new: usize,
         new_index: u32,
         maxindex: u32,
+        _lsn: usize
     ) {
         let baseptr = self.get_baseptr();
 
         let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
-        assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
-        let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
+        assert!(u8_ptr_to_flh.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
+        let u64_ptr_to_flh = u8_ptr_to_flh.cast::<u64>();
+        let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
 
-        let u8_ptr_to_new = unsafe { baseptr.add(offset_of_new) }; // note this isn't necessarily aligned
+        let u8_ptr_to_new = unsafe { baseptr.add(offset_of_new) };
+        assert!(u8_ptr_to_new.is_aligned_to(SINGLEWORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
         let u32_ptr_to_new: *mut u32 = u8_ptr_to_new.cast::<u32>();
-        //xxx 	let can't do because not aligned :-( atomic_new = unsafe { AtomicU32::from_ptr(u32_ptr_to_new) };
+        let newentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_new) };
 
         loop {
-            let firstindexplus1: u32 = flh.load(Ordering::Relaxed);
+            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             assert!(firstindexplus1 < maxindex + 1);
-            //xxx can't do because not aligned :-( atomic_new.store(firstindexplus1, Ordering::Release);
-            unsafe { u32_ptr_to_new.write_unaligned(firstindexplus1) };
-            if flh
-                .compare_exchange_weak(
-                    firstindexplus1,
-                    new_index + 1,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
+            let counter: u32 = (flhdword >> 32) as u32;
+
+            //debugln!("push firstindexplus1: {}/{:?}, new_index+1: {}/{:?}", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
+            newentry.store(firstindexplus1, Ordering::Release); // YYY Release
+            //debugln!("push firstindexplus1: {}/{:?} stored into {}/{:?}", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
+
+            let newflhdword = ((counter as u64 + 1) << 32) | (new_index+1) as u64;
+
+            if flh.compare_exchange_weak(
+                flhdword,
+                newflhdword,
+                Ordering::AcqRel, // AcqRel
+                Ordering::Acquire, // Acquire
+            ).is_ok() {
+                //debugln!("{:>3}/{:>13?}->{:>3}/{:>13?}                          [{:>3}/ - {:>3}/ ] PUSH ce ok", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1), new_index+1, firstindexplus1);
                 break;
-            }
+            }// else {
+                //debugln!("{}/{:?}->{}/{:?} push ce fail", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
+            //}
         }
-    }
-
-    /// There's a bug where the free list is getting corrupted. This is going to find that earlier.
-    /// Returns true if everything checks out, else returns false (and prints a lot of diagnostic information to stderr).
-    /// If `verbose`, print out the contents of the free list in every case, else only print out the contents when an incorrect link is detected.
-    fn _sanity_check_small_free_list(&self, areanum: usize, smallslabnum: usize, verbose: bool) -> bool {
-        let baseptr = self.get_baseptr();
-
-        let offset_of_flh = offset_of_small_flh(areanum, smallslabnum);
-
-        let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
-        assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
-
-        let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
-        let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
-
-        let mut sane = true;
-        let mut count = 0;
-        while thisindexplus1 != 0 {
-            assert!(thisindexplus1 < NUM_SLOTS_O as u32 +1);
-            if thisindexplus1 > NUM_SLOTS_O as u32 {
-                sane = false;
-                debugln!(
-                    "xxxxxx >>>> areanum: {}, smallslabnum: {}, count: {}, thisindexplus1: {}",
-                    areanum,
-                    smallslabnum,
-                    count,
-                    thisindexplus1
-                );
-                break;
-            }
-            //assert!(thisindexplus1 <= NUM_SLOTS_O as u32);
-
-            // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
-            let offset_of_next = offset_of_small_free_list_entry(
-                areanum,
-                smallslabnum,
-                (thisindexplus1 - 1) as usize,
-            );
-            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-            let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
-            let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
-            thisindexplus1 = nextindexplus1;
-            count += 1;
-        }
-
-        if !sane || verbose {
-            count = 0;
-            let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
-            while thisindexplus1 != 0 {
-                // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
-                let offset_of_next = offset_of_small_free_list_entry(
-                    areanum,
-                    smallslabnum,
-                    (thisindexplus1 - 1) as usize,
-                );
-                let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-                let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
-                let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
-                thisindexplus1 = nextindexplus1;
-                count += 1;
-            }
-
-            debugln!(
-                "xxxxxx <<<< areanum: {}, smallslabnum: {}, count: {}",
-                areanum,
-                smallslabnum,
-                count
-            );
-        }
-
-        sane
-    }
-    
-    /// There's a bug where the free list is getting corrupted. This is going to find that earlier.
-    /// Returns true if everything checks out, else returns false (and prints a lot of diagnostic information to stderr).
-    /// If `verbose`, print out the contents of the free list in every case, else only print out the contents when an incorrect link is detected.
-    /// If `requiredindp1` is non-0, it will treat it as insane if `requiredindp1` does not appear in the freelist.
-    /// If `requiredabsentindp1` is non-0, it will treat it as insane if `requiredabsentindp1` appears in the freelist.
-    fn sanity_check_large_free_list(&self, largeslabnum: usize, verbose: bool, requiredindp1: u32, requiredabsentindp1: u32) -> bool {
-        let baseptr = self.get_baseptr();
-
-        let offset_of_flh = offset_of_large_flh(largeslabnum);
-
-        let u8_ptr_to_flh = unsafe { baseptr.add(offset_of_flh) };
-        assert!(u8_ptr_to_flh.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_flh = u8_ptr_to_flh.cast::<u32>();
-
-        let flh = unsafe { AtomicU32::from_ptr(u32_ptr_to_flh) };
-        let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
-
-        let mut h = HashSet::new();
-
-        let mut foundrequiredindp1 = false;
-
-        let mut sane = true;
-        let mut count = 0;
-        while thisindexplus1 != 0 {
-            if thisindexplus1 > num_large_slots(largeslabnum) as u32 {
-                sane = false;
-                debugln!(
-                    "xxxxxx >>>> insane: index>numslots / largeslabnum: {}, count: {}, thisindexplus1: {}",
-                    largeslabnum,
-                    count,
-                    thisindexplus1
-                );
-                break;
-            }
-
-            if h.contains(&thisindexplus1) {
-                sane = false;
-                debugln!(
-                    "xxxxxx >>>> insane: cycle / largeslabnum: {}, count: {}, thisindexplus1: {}",
-                    largeslabnum,
-                    count,
-                    thisindexplus1
-                );
-                break;
-            }
-            h.insert(thisindexplus1);
-
-            if requiredindp1 != 0 && requiredindp1 == thisindexplus1 {
-                foundrequiredindp1 = true;
-            }
-            if requiredabsentindp1 != 0 && requiredabsentindp1 == thisindexplus1 {
-                sane = false;
-                debugln!(
-                    "xxxxxx >>>> insane: found required-absent index / largeslabnum: {}, count: {}, thisindexplus1: {}",
-                    largeslabnum,
-                    count,
-                    thisindexplus1
-                );
-                break;
-            }
-
-            // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
-            let offset_of_next = offset_of_large_slot(largeslabnum, (thisindexplus1 - 1) as usize);
-            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-            let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
-            let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
-            thisindexplus1 = nextindexplus1;
-            count += 1;
-        }
-
-        let eac = self.get_large_eac(largeslabnum).load(Ordering::Relaxed);
-        if count > eac {
-            sane = false;
-            debugln!(
-                "xxxxxx >>>> insane: count>eac / largeslabnum: {}, count: {}, eac: {}, thisindexplus1: {}",
-                largeslabnum,
-                count,
-                eac,
-                thisindexplus1
-            );
-        }
-
-        if requiredindp1 != 0 && !foundrequiredindp1 {
-            sane = false;
-            debugln!(
-                "xxxxxx >>>> insane: didn't find required index / largeslabnum: {}, count: {}, requiredindp1: {}",
-                largeslabnum,
-                count,
-                requiredindp1
-            );
-        }
-        
-        h.clear();
-        if !sane || verbose {
-            count = 0;
-            let mut thisindexplus1: u32 = flh.load(Ordering::Relaxed);
-            while thisindexplus1 != 0 {
-                debugln!(
-                    "xxxxxx ==== largeslabnum: {}, count: {}, eac: {}, thisindexplus1: {}",
-                    largeslabnum,
-                    count,
-                    self.get_large_eac(largeslabnum).load(Ordering::Relaxed),
-                    thisindexplus1
-                );
-                //assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
-
-                if h.contains(&thisindexplus1) {
-                    debugln!("cycle");
-                    break;
-                }
-                h.insert(thisindexplus1);
-
-                // Intrusive free list -- free list entries are stored in data slots (when they are not in use for data).
-                let offset_of_next =
-                    offset_of_large_slot(largeslabnum, (thisindexplus1 - 1) as usize);
-                let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
-                let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
-                let nextindexplus1: u32 = unsafe { u32_ptr_to_next.read_unaligned() };
-                thisindexplus1 = nextindexplus1;
-                count += 1;
-            }
-
-            debugln!(
-                "xxxxxx <<<< largeslabnum: {}, count: {}",
-                largeslabnum,
-                count
-            );
-        }
-
-        if !sane {
-            panic!();
-        }
-
-        sane
     }
 
     fn push_flh(&self, newsl: SlotLocation) {
@@ -885,23 +717,20 @@ impl Smalloc {
                 slotnum,
             } => {
                 assert!(slotnum < NUM_SLOTS_O);
-                //debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false, 0, slotnum+1));
-
                 self.inner_push_flh(
                     offset_of_small_flh(areanum, smallslabnum),
                     offset_of_small_free_list_entry(areanum, smallslabnum, slotnum),
                     slotnum as u32,
                     NUM_SLOTS_O as u32,
+                    smallslabnum
                 );
-
-                //debug_assert!(self.sanity_check_small_free_list(areanum, smallslabnum, false, slotnum+1, 0));
             }
             SlotLocation::LargeSlot {
                 largeslabnum,
                 slotnum,
             } => {
                 assert!(slotnum < num_large_slots(largeslabnum));
-                debug_assert!(self.sanity_check_large_free_list(largeslabnum, true, 0, slotnum as u32+1));
+                //debugln!("about to push p: {:?}, slotnum: {}", self.sl_to_ptr(&newsl), slotnum);
 
                 // Intrusive free list -- the free list entry is stored in the data slot.
                 self.inner_push_flh(
@@ -909,39 +738,40 @@ impl Smalloc {
                     offset_of_large_slot(largeslabnum, slotnum),
                     slotnum as u32,
                     num_large_slots(largeslabnum) as u32,
+                    largeslabnum
                 );
 
-                debug_assert!(self.sanity_check_large_free_list(largeslabnum, true, 0, 0));
+                //debugln!("just pushed p: {:?}, slotnum: {}", self.sl_to_ptr(&newsl), slotnum);
             }
         }
     }
 
-    fn get_small_eac(&self, areanum: usize, smallslabnum: usize) -> &AtomicU32 {
+    fn get_small_eac(&self, areanum: usize, smallslabnum: usize) -> &AtomicU64 {
         assert!(areanum < NUM_SMALL_SLAB_AREAS);
         assert!(smallslabnum < NUM_SMALL_SLABS);
 
         let baseptr = self.get_baseptr();
         let offset_of_eac = offset_of_small_eac(areanum, smallslabnum);
         let u8_ptr_to_eac = unsafe { baseptr.add(offset_of_eac) };
-        assert!(u8_ptr_to_eac.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_eac = u8_ptr_to_eac.cast::<u32>();
-        unsafe { AtomicU32::from_ptr(u32_ptr_to_eac) }
+        assert!(u8_ptr_to_eac.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
+        let u64_ptr_to_eac = u8_ptr_to_eac.cast::<u64>();
+        unsafe { AtomicU64::from_ptr(u64_ptr_to_eac) }
     }
 
-    fn get_large_eac(&self, largeslabnum: usize) -> &AtomicU32 {
+    fn get_large_eac(&self, largeslabnum: usize) -> &AtomicU64 {
         assert!(largeslabnum < NUM_LARGE_SLABS);
 
         let baseptr = self.get_baseptr();
         let offset_of_eac = offset_of_large_eac(largeslabnum);
         let u8_ptr_to_eac = unsafe { baseptr.add(offset_of_eac) };
-        assert!(u8_ptr_to_eac.is_aligned_to(WORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
-        let u32_ptr_to_eac = u8_ptr_to_eac.cast::<u32>();
-        unsafe { AtomicU32::from_ptr(u32_ptr_to_eac) }
+        assert!(u8_ptr_to_eac.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
+        let u64_ptr_to_eac = u8_ptr_to_eac.cast::<u64>();
+        unsafe { AtomicU64::from_ptr(u64_ptr_to_eac) }
     }
 
-    /// Returns the index of the next never-before-allocated slot. Returns 1 greater than the maximum  slot number in the case that all slots have been allocated.
-    fn increment_eac(&self, eac: &AtomicU32, hugeslab: bool) -> usize {
-        let nexteac = eac.fetch_add(1, Ordering::Acquire); // reconsider whether this can be Relaxed (meaning it would be okay if some other memory access got reordered to happen before this fetch_add??
+    /// Returns the index of the next never-before-allocated slot. Returns 1 greater than the maximum slot number in the case that all slots have been allocated.
+    fn increment_eac(&self, eac: &AtomicU64, hugeslab: bool) -> usize {
+        let nexteac = eac.fetch_add(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
         if nexteac as usize
             <= if hugeslab {
                 NUM_SLOTS_HUGE
@@ -956,13 +786,13 @@ impl Smalloc {
                     NUM_SLOTS_HUGE
                 } else {
                     NUM_SLOTS_O
-                } + 100
+                } + 100000
             {
-                // If eac is maxed out -- at NUM_SLOTS -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed NUM_SLOTS. However, if this has happened more than a few times simultaneously, such that eac is more than a small number higher than NUM_SLOTS, then something is very wrong and we should panic to prevent some kind of failure case or exploitation. If eac reached 2^32 then it would wrap, and we want to panic long before that.
-                panic!("the Ever-Allocated-Counter exceeded max slots + 100");
+                // If eac is maxed out -- at NUM_SLOTS -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed NUM_SLOTS. However, if this has happened many, many times simultaneously, such that eac is more than a small number higher than NUM_SLOTS, then something is wrong and we should panic to prevent some kind of unknown failure case or exploitation.
+                panic!("the Ever-Allocated-Counter exceeded max slots + 100000");
             }
 
-            eac.fetch_sub(1, Ordering::Acquire); // reconsider whether this can be Relaxed (meaning it would be okay if some other memory access got reordered to happen before this fetch_add??
+            eac.fetch_sub(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
 
             if hugeslab {
                 NUM_SLOTS_HUGE
@@ -999,29 +829,28 @@ impl Smalloc {
     }
 
     fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
-        debug_assert!(self.sanity_check_large_free_list(largeslabnum, true, 0, 0));
-
         let flhplus1 = self.pop_large_flh(largeslabnum);
-        debugln!("in inner_large_alloc({}), flhplus1: {}", largeslabnum, flhplus1);
-        debug_assert!(self.sanity_check_large_free_list(largeslabnum, true, 0, flhplus1));
         if flhplus1 != 0 {
             // xxx add unit test of this case
-            Some(SlotLocation::LargeSlot {
+            let sl = SlotLocation::LargeSlot {
                 largeslabnum,
                 slotnum: (flhplus1 - 1) as usize,
-            })
+            };
+            //debugln!("... in inner_large_alloc(), flhplus1: {}/{:?}", flhplus1, self.sl_to_ptr(&sl));
+            Some(sl)
         } else {
             let eac: usize = self.increment_eac(
                 self.get_large_eac(largeslabnum),
                 largeslabnum == HUGE_SLABNUM,
             );
-            debugln!("in inner_large_alloc({}), eac: {}", largeslabnum, eac);
             if eac < num_large_slots(largeslabnum) {
                 // xxx add unit test of this case
-                Some(SlotLocation::LargeSlot {
+                let sl = SlotLocation::LargeSlot {
                     largeslabnum,
                     slotnum: eac,
-                })
+                };
+                //debugln!("in inner_large_alloc(), eac: {}/{:?}", eac, self.sl_to_ptr(&sl));
+                Some(sl)
             } else {
                 // xxx add unit test of this case
                 // The slab is full!
@@ -1091,7 +920,7 @@ fn get_thread_areanum() -> usize {
     THREAD_AREANUM.with(|cell| {
         cell.get().map_or_else(
             || {
-                let new_value = GLOBAL_THREAD_AREANUM.fetch_add(1, Ordering::Relaxed) % NUM_SMALL_SLAB_AREAS as u32;
+                let new_value = GLOBAL_THREAD_AREANUM.fetch_add(1, Ordering::Relaxed) % NUM_SMALL_SLAB_AREAS as u32; // reconsider we need stronger ordering constraints
                 THREAD_AREANUM.with(|cell| cell.set(Some(new_value)));
                 new_value
             },
@@ -1138,7 +967,6 @@ unsafe impl GlobalAlloc for Smalloc {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
             Some(sl) => {
-                debugln!("in dealloc({:?}), sl: {:?}", ptr, sl);
                 self.push_flh(sl);
             }
             None => {
@@ -1229,46 +1057,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_main_thread_noop() {
-    }
-
-    #[test]
     fn test_offset_of_vars() {
-        assert_eq!(offset_of_small_eac(0, 0), 0);
-        assert_eq!(offset_of_small_flh(0, 0), 4);
-        assert_eq!(offset_of_small_eac(0, 1), 8);
-        assert_eq!(offset_of_small_flh(0, 1), 12);
+        assert_eq!(offset_of_small_flh(0, 0), 0);
+        assert_eq!(offset_of_small_eac(0, 0), 8);
+        assert_eq!(offset_of_small_flh(0, 1), 16);
+        assert_eq!(offset_of_small_eac(0, 1), 24);
 
-        // There are 11 slabs in an small-slab-area, 2 variables for each slab, and 4 bytes for each variable, so the first variable in the second slab (slab index 1) should be at offset 88.
-        assert_eq!(offset_of_small_eac(1, 0), 88);
-        assert_eq!(offset_of_small_flh(1, 0), 92);
-        assert_eq!(offset_of_small_eac(1, 1), 96);
-        assert_eq!(offset_of_small_flh(1, 1), 100);
+        // There are 11 slabs in an small-slab-area, 2 variables for each slab, and 8 bytes for each variable, so the first variable in the second slab (slab index 1) should be at offset 176.
+        assert_eq!(offset_of_small_flh(1, 0), 176);
+        assert_eq!(offset_of_small_eac(1, 0), 184);
+        assert_eq!(offset_of_small_flh(1, 1), 192);
+        assert_eq!(offset_of_small_eac(1, 1), 200);
 
         // The large-slab vars start after all the small-slab vars
-        let all_small_slab_vars = 11 * 2 * 4 * NUM_SMALL_SLAB_AREAS;
-        assert_eq!(offset_of_large_eac(0), all_small_slab_vars);
-        assert_eq!(offset_of_large_flh(0), all_small_slab_vars + 4);
-        assert_eq!(offset_of_large_eac(1), all_small_slab_vars + 8);
-        assert_eq!(offset_of_large_flh(1), all_small_slab_vars + 12);
-
-        // There are 7 large slabs, 2 variables for each slab, and 4 bytes for each variable.
-        assert_eq!(offset_of_large_eac(0), all_small_slab_vars);
-        assert_eq!(offset_of_large_flh(0), all_small_slab_vars + 4);
-        assert_eq!(offset_of_large_eac(1), all_small_slab_vars + 8);
-        assert_eq!(offset_of_large_flh(1), all_small_slab_vars + 12);
-    }
-
-    /// Simply generate a Layout and call `inner_alloc()`.
-    fn help_inner_alloc(size: usize, alignment: usize) -> SlotLocation {
-        let layout = Layout::from_size_align(size, alignment).unwrap();
-        SM.inner_alloc(layout).unwrap()
+        let all_small_slab_vars = 11 * 2 * 8 * NUM_SMALL_SLAB_AREAS;
+        assert_eq!(offset_of_large_flh(0), all_small_slab_vars);
+        assert_eq!(offset_of_large_eac(0), all_small_slab_vars + 8);
+        assert_eq!(offset_of_large_flh(1), all_small_slab_vars + 16);
+        assert_eq!(offset_of_large_eac(1), all_small_slab_vars + 24);
     }
 
     use lazy_static::lazy_static;
 
     lazy_static! {
         static ref SM: Smalloc = Smalloc::new();
+    }
+
+    /// Simply generate a Layout and call `inner_alloc()`.
+    fn help_inner_alloc(size: usize, alignment: usize) -> SlotLocation {
+        let layout = Layout::from_size_align(size, alignment).unwrap();
+        SM.inner_alloc(layout).unwrap()
     }
 
     #[test]
@@ -1296,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_few_allocs_and_a_dealloc_small() {
+    fn test_a_few_allocs_and_a_dealloc_for_each_small_slab() {
         SM.idempotent_init();
 
         for smallslabnum in 0..NUM_SMALL_SLABS {
@@ -1305,7 +1123,7 @@ mod tests {
     }
 
     #[test]
-    fn test_a_few_allocs_and_a_dealloc_large() {
+    fn test_a_few_allocs_and_a_dealloc_for_each_large_slab() {
         SM.idempotent_init();
 
         for largeslabnum in 0..NUM_LARGE_SLABS {
@@ -1489,16 +1307,6 @@ mod tests {
     }
 
     #[test]
-    fn test_one_thread_init() {
-        SM.idempotent_init();
-
-        let handle1 = thread::spawn(move || {
-        });
-        
-        handle1.join().unwrap();
-    }
-
-    #[test]
     fn test_one_thread_simple() {
         SM.idempotent_init();
 
@@ -1549,13 +1357,16 @@ mod tests {
         }
     }
 
-    fn _test_twelve_threads_large_random() {
+    #[test]
+    fn test_twelve_threads_large_random() {
         SM.idempotent_init();
+
+        let l = Layout::from_size_align(64, 1).unwrap();
 
         let mut handles = Vec::new();
         for _i in 0..12 {
             handles.push(thread::spawn(move || {
-                help_many_random_allocs_and_deallocs(10_000, 0);
+                help_many_random_allocs_and_deallocs(10_000, l, 0);
             }));
         }
 
@@ -1582,13 +1393,13 @@ mod tests {
         }
     }
 
-    fn help_n_threads_large_random(n: u32, iters: usize, seed: u64) {
+    fn help_n_threads(n: u32, iters: usize, layout: Layout, seed: u64) {
         SM.idempotent_init();
 
         let mut handles = Vec::new();
         for _i in 0..n {
             handles.push(thread::spawn(move || {
-                help_many_random_allocs_and_deallocs(iters, seed);
+                help_many_random_allocs_and_deallocs(iters, layout, seed);
             }));
         }
 
@@ -1598,32 +1409,39 @@ mod tests {
     }
 
     #[test]
-    fn test_a_few_threads_large_random() {
+    fn test_32_threads_large_random() {
         // This reproduces the corruption after a few seconds.
         //let mut r = rand::rng();
         //let seed = r.random::<u64>();
-        let seed = 8583711223585616712;
-        debugln!("saved seed: {}", seed);
-        help_n_threads_large_random(32, 1000, seed); // ocacsional failure
+        //debugln!("rand seed: {}", seed);
+        let seed = 0;
+        //debugln!("hardcoded seed: {}", seed);
+
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_n_threads(32, 1000, l, seed);
     }
 
     #[test]
-    fn test_3_threads_large_random() {
-        help_n_threads_large_random(3, 1000, 0); // occasional failure! about 1/4kkkk
+    fn test_32_threads_small_random() {
+        // This reproduces the corruption after a few seconds.
+        //let mut r = rand::rng();
+        //let seed = r.random::<u64>();
+        //debugln!("rand seed: {}", seed);
+        let seed = 0;
+        //debugln!("hardcoded seed: {}", seed);
+
+        let l = Layout::from_size_align(4, 1).unwrap();
+
+        help_n_threads(32, 1000, l, seed);
     }
+
 
     #[test]
-    fn test_4_threads_large_random() {
-        help_n_threads_large_random(4, 1000, 0);
-    }
+    fn test_a_thousand_threads_large_random() {
+        let l = Layout::from_size_align(64, 1).unwrap();
 
-    #[test]
-    fn test_5_threads_large_random() {
-        help_n_threads_large_random(5, 1000, 2);
-    }
-
-    fn _test_a_thousand_threads_large_random() {
-        help_n_threads_large_random(1000, 1000, 0);
+        help_n_threads(1000, 1000, l, 0);
     }
 
     use rand::rngs::StdRng;
@@ -1632,7 +1450,8 @@ mod tests {
     use ahash::HashSet;
     use ahash::RandomState;
     
-    fn help_many_random_allocs_and_deallocs(iters: usize, seed: u64) {
+    fn help_many_random_allocs_and_deallocs(iters: usize, layout: Layout, seed: u64) {
+        let l = layout;
         let mut r = StdRng::seed_from_u64(seed);
         let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_hasher(RandomState::with_seed(seed as usize));
         
@@ -1640,45 +1459,29 @@ mod tests {
 
         for _i in 0..iters {
             // random coin
-            if r.random::<u8>() < 128 {
+            if r.random::<bool>() {
                 // Free
-                if !m.is_empty() {
+                if !ps.is_empty() {
                     let i = r.random_range(0..ps.len());
-                    let (p, l) = ps.remove(i);
-                    debugln!("about to free({:?}, {:?})", p, l);
-                    assert!(m.contains(&(p, l)));
-                    m.remove(&(p, l));
-                    unsafe { SM.dealloc(p, l) };
+                    let (p, l2) = ps.remove(i);
+                    assert!(m.contains(&(p, l2)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
+                    m.remove(&(p, l2));
+                    unsafe { SM.dealloc(p, l2) };
                 }
             } else {
                 // Malloc
-                let l = Layout::from_size_align(64, 1).unwrap();
-                debugln!("about to alloc({:?})", l);
                 let p = unsafe { SM.alloc(l) };
-                assert!(!m.contains(&(p, l)));
+                assert!(!m.contains(&(p, l)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
                 m.insert((p, l));
                 ps.push((p, l));
-                debugln!("->{:?}", p);
             }
         }
     }
         
     #[test]
     fn test_100_000_random_allocs_and_deallocs() {
-        help_many_random_allocs_and_deallocs(100_000, 0);
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_many_random_allocs_and_deallocs(100_000, l, 0);
     }
-    
 }
-
-// to push:
-// start with new index in reg-c
-// 1. load word from addr-of-flh -> reg-a -- needs Ordering::?
-// 2. load word from reg-a-as-address -> reg-b -- needs Ordering::?
-// 3. store word from reg-b -> reg-c-as-address -- needs Ordering::?
-// 4. compare-exchange into addr-of-flh, if it contains word from reg-a, word from reg-c; else go to 1. -- needs Ordering::?
-
-// to pop:
-// 1. load word from addr-of-flh -> reg-a -- needs Ordering::?
-// 2. load word from reg-a-as-address -> reg-b -- needs Ordering::?
-// 4. compare-exchange into addr-of-flh, if it contains word from reg-a, word from reg-b; else go to 1. -- needs Ordering::?
-// 5. return word from reg-a

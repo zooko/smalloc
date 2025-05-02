@@ -36,7 +36,7 @@ exclusively for that memory allocation until it is `free()`'ed [*].
 too big to fit into even the biggest of `smalloc`'s slots, which
 `smalloc` instead satisfies by falling back to `mmap()`.)
 
-All slabs have 20,971,520 slots (20 times 2^20). They are 0-indexed,
+xxx not all slabs All slabs have 20,971,520 slots (20 times 2^20). They are 0-indexed,
 so the largest slot number in each slab is 20,971,519.
 
 Each slab has slots of a different size. Slab 0 has slots that are 1
@@ -97,34 +97,35 @@ slab #  slot size
 
 ### Variables
 
-For each slab, there are two associated variables: the count of
-ever-allocated slots, and the index of the most-recently freed slot.
+For each slab, there are two associated variables: the index of the
+most-recently freed slot, and the count of ever-allocated slots.
+
+The index of the most-recently freed slot is also known as the
+"free list head" and is abbreviated `flh`.
 
 The count of ever-allocated slots (abbreviated `eac`) is the number of
 slots in that slab have ever been allocated (i.e. has a pointer ever
-been returned by `malloc()` or `realloc()` that points to that
-slot). The index of the most-recently freed slot is also known as the
-"free list head" and is abbreviated `flh`. `eac` and `flh` are both 4
-bytes in size.
+been returned by `malloc()` or `realloc()` that points to that slot).
+`flh` is 8 bytes in size and `eac` is 4 bytes in size.
 
 ```
 Figure 2. Organization of variables.
 
- * "eac" is "ever-allocated count"
  * "flh" is "free-list head"
+ * "eac" is "ever-allocated count"
 
 slab #        variable
 ------        --------
               .-----. .-----.
-     0        | eac | | flh |
+     0        | flh | | eac |
               .-----. .-----.
-     1        | eac | | flh |
+     1        | flh | | eac |
               .-----. .-----.
-     2        | eac | | flh |
+     2        | flh | | eac |
               .-----. .-----.
    ...          ...     ...
               .-----. .-----.
-    17        | eac | | flh |
+    17        | flh | | eac |
               .-----. .-----.
 ```
 
@@ -363,37 +364,37 @@ and the separate free list spaces for the first 3 slabs:
 ```
 Figure 7. Organization of variables including areas.
 
- * "eac" is "ever-allocated count"
  * "flh" is "free-list head"
+ * "eac" is "ever-allocated count"
 
    area # ->      area 0           area 1      ...     area 63
                   ------           ------              -------
 slab #        variable
 ------        --------
               .-----. .-----.  .-----. .-----.     .-----. .-----.
-     0        | eac | | flh |  | eac | | flh | ... | eac | | flh |
+     0        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
-     1        | eac | | flh |  | eac | | flh | ... | eac | | flh |
+     1        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
-     2        | eac | | flh |  | eac | | flh | ... | eac | | flh |
+     2        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
    ...          ...     ...      ...     ...         ...     ...
               .-----. .-----.  .-----. .-----.     .-----. .-----.
-     9        | eac | | flh |  | eac | | flh | ... | eac | | flh |
+     9        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
-    10        | eac | | flh |  | eac | | flh | ... | eac | | flh |
+    10        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
      ^-- slots that we can fit multiple of them into a 64-byte cache line
           
      v-- slots that we can't
               .-----. .-----.
-    11        | eac | | flh |
+    11        | flh | | eac |
               .-----. .-----.
-    12        | eac | | flh |
+    12        | flh | | eac |
               .-----. .-----.
    ...          ...     ...
               .-----. .-----.
-    17        | eac | | flh |
+    17        | flh | | eac |
               .-----. .-----.
 ```
 
@@ -940,6 +941,13 @@ written here in roughly descending order of importance:
   bittwiddling instead of a loop or a lookup to map size to
   slabnumber. :-))
 
+* Consider the previous two items with an eye to removing unaligned
+  free list entries for simplicity.
+
+* Benchmark replacing `compare_exchange_weak` with `compare_exchange`
+  (on various platforms with various levels of multithreading
+  contention).
+
 * The current design and implementation of `smalloc` is "tuned" to
   64-byte cache lines and 4096-bit virtal memory pages.
 
@@ -987,6 +995,9 @@ written here in roughly descending order of importance:
   of these CPU instructions or to just load the thread number from
   thread-local storage. :-)
 
+* Define some kind of Rust type to manage the add-1/sub-1 on the
+  indexes of the free list? (Nate's suggestion)
+
 * Rewrite it in Zig. :-)
 
 Notes:
@@ -1010,7 +1021,8 @@ Things `smalloc` does not currently attempt to do:
   that I implemented (see notes in documentation above).
 
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner
-  for advice and encouragement.
+  for advice and encouragement. Thanks to Nate Wilcox especially for
+  debugging help!
 
 * Thanks to Kris Nuttycombe for suggesting the name "smalloc". :-)
 
