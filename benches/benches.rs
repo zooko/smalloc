@@ -98,44 +98,6 @@ fn bench_sum_large_slab_sizes(b: &mut Bencher) {
     });
 }
 
-// #[bench]
-// fn bench_layout_to_slabnum_align(b: &mut Bencher) {
-//     let mut r = StdRng::seed_from_u64(0);
-//     let reqsizs: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
-//     let reqalignments: Vec<usize> = (0..NUM_ARGS)
-//         .map(|_| 2usize.pow(r.random_range(0..7)))
-//         .collect();
-//     let mut i = 0;
-
-//     b.iter(|| {
-//         let num = reqsizs[i % NUM_ARGS];
-//         let align = reqalignments[i % NUM_ARGS];
-//         black_box(layout_to_slabnum(
-//             Layout::from_size_align(num, align).unwrap(),
-//         ));
-
-//         i += 1;
-//     });
-// }
-
-// XXX bench table-lookup offset-of-vars vs computation offset-of-vars
-
-// #[bench]
-// fn bench_slabnum_to_slotsize(b: &mut Bencher) {
-//     let mut r = StdRng::seed_from_u64(0);
-//     let reqscs: Vec<usize> = (0..NUM_ARGS)
-//         .map(|_| r.random_range(0..NUM_SLABS))
-//         .collect();
-//     let mut i = 0;
-
-//     b.iter(|| {
-//         let sc = reqscs[i % NUM_ARGS];
-//         black_box(SLABNUM_TO_SLOTSIZE[sc]);
-
-//         i += 1;
-//     });
-// }
-
 #[inline(always)]
 fn pot_builtin(x: usize) -> bool {
     x.is_power_of_two()
