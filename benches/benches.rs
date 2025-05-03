@@ -14,9 +14,7 @@ use smalloc::{
     NUM_SMALL_SLABS,
     Smalloc,
     sum_large_slab_sizes,
-    sum_large_slab_sizes_functional,
-    sum_small_slab_sizes,
-    sum_small_slab_sizes_functional,
+    sum_small_slab_sizes
 };
 
 use std::hint::black_box;
@@ -86,21 +84,6 @@ fn bench_sum_small_slab_sizes(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_sum_small_slab_sizes_functional(b: &mut Bencher) {
-    let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
-        .map(|_| r.random_range(0..=NUM_SMALL_SLABS))
-        .collect();
-    let mut i = 0;
-
-    b.iter(|| {
-        black_box(sum_small_slab_sizes_functional(reqslabnums[i % NUM_ARGS]));
-
-        i += 1;
-    });
-}
-
-#[bench]
 fn bench_sum_large_slab_sizes(b: &mut Bencher) {
     let mut r = StdRng::seed_from_u64(0);
     let reqslabnums: Vec<usize> = (0..NUM_ARGS)
@@ -110,21 +93,6 @@ fn bench_sum_large_slab_sizes(b: &mut Bencher) {
 
     b.iter(|| {
         black_box(sum_large_slab_sizes(reqslabnums[i % NUM_ARGS]));
-
-        i += 1;
-    });
-}
-
-#[bench]
-fn bench_sum_large_slab_sizes_functional(b: &mut Bencher) {
-    let mut r = StdRng::seed_from_u64(0);
-    let reqslabnums: Vec<usize> = (0..NUM_ARGS)
-        .map(|_| r.random_range(0..=NUM_LARGE_SLABS))
-        .collect();
-    let mut i = 0;
-
-    b.iter(|| {
-        black_box(sum_large_slab_sizes_functional(reqslabnums[i % NUM_ARGS]));
 
         i += 1;
     });
