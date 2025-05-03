@@ -1,4 +1,5 @@
 #![feature(pointer_is_aligned_to)]
+#![feature(test)]
 
 // These slot sizes were chosen by calculating how many objects of this size would fit into the least-well-packed 64-byte cache line when we lay out objects of these size end-to-end over many successive 64-byte cache lines. If that makes sense. The worst-case number of objects that can be packed into a cache line can be up 2 fewer than the best-case, since the first object in this cache line might cross the cache line boundary and only the last part of the object is in this cache line, and the last object in this cache line might similarly be unable to fit entirely in and only the first part of it might be in this cache line. So this "how many fit" number below counts only the ones that entirely fit in, even when we are laying out objects of this size one after another (with no padding) across many cache lines. So it can be 0, 1, or 2 fewer than you might think. (Excluding any sizes which are smaller and can't fit more -- in the worst case -- than a larger size.)
 
@@ -1555,7 +1556,7 @@ mod tests {
             }
         }
     }
-        
+    
     fn help_many_random_alloc_dealloc_with_writes(iters: usize, layout: Layout, seed: u64) {
         let l = layout;
         let mut r = StdRng::seed_from_u64(seed);
@@ -1665,7 +1666,7 @@ mod tests {
             }
         }
     }
-        
+    
     fn help_many_random_alloc_dealloc_realloc_with_writes(iters: usize, layout: Layout, seed: u64) {
         let l1 = layout;
         let mut ls = Vec::new();
@@ -1735,7 +1736,7 @@ mod tests {
             }
         }
     }
-        
+    
     #[test]
     fn test_100_000_large_allocs_deallocs_reallocs_with_writes() {
         let l = Layout::from_size_align(64, 1).unwrap();
@@ -1756,4 +1757,206 @@ mod tests {
 
         help_many_random_alloc_dealloc_with_writes(100_000, l, 0);
     }
+
+    extern crate test;
+    use test::Bencher;
+
+    const MAX: usize = 2usize.pow(39);
+    const NUM_ARGS: usize = 128;
+
+    use std::hint::black_box;
+
+    fn pot_builtin(x: usize) -> bool {
+        x.is_power_of_two()
+    }
+
+    #[bench]
+    fn bench_pot_builtin_randoms(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqalignments: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            let align = reqalignments[i % NUM_ARGS];
+            black_box(pot_builtin(align));
+
+            i += 1;
+        });
+    }
+
+    // #[bench]
+    // fn bench_alloc_and_free_32_threads(b: &mut Bencher) {
+    //     let l = Layout::from_size_align(64, 1).unwrap();
+
+    //     let mut r = StdRng::seed_from_u64(0);
+    //     let mut ps = Vec::new();
+
+    //     b.iter(|| {
+    //         if r.random::<bool>() {
+    //             // Free
+    //             if !ps.is_empty() {
+    //                 let i = r.random_range(0..ps.len());
+    //                 let (p, l2) = ps.remove(i);
+    //                 unsafe { SM.dealloc(p, l2) };
+    //             }
+    //         } else {
+    //             // Malloc
+    //             let p = unsafe { SM.alloc(l) };
+    //             ps.push((p, l));
+    //         }
+    //     });
+    // }
+
+    #[bench]
+    fn bench_alloc_and_free(b: &mut Bencher) {
+        let layout = Layout::from_size_align(1, 1).unwrap();
+
+        b.iter(|| {
+            let p = black_box(unsafe { SM.alloc(layout) });
+            unsafe { SM.dealloc(p, layout) };
+        });
+    }
+
+    #[bench]
+    fn bench_sum_small_slab_sizes(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+            .map(|_| r.random_range(0..=NUM_SMALL_SLABS))
+            .collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            black_box(sum_small_slab_sizes(reqslabnums[i % NUM_ARGS]));
+
+            i += 1;
+        });
+    }
+
+    #[bench]
+    fn bench_sum_large_slab_sizes(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqslabnums: Vec<usize> = (0..NUM_ARGS)
+            .map(|_| r.random_range(0..=NUM_LARGE_SLABS))
+            .collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            black_box(sum_large_slab_sizes(reqslabnums[i % NUM_ARGS]));
+
+            i += 1;
+        });
+    }
+
+    fn pot_bittwiddle(x: usize) -> bool {
+        x > 0 && (x & (x - 1)) != 0
+    }
+
+    // fn dummy() { }
+
+    // #[bench]
+    // fn bench_pop_large_flh(b: &mut Bencher) {
+    //     SM.idempotent_init();
+
+    //     let sls = Vec:new();
+    //     let mut i = 0;
+    //     while i < NUM_SLOTS_O {
+    //         let sl = SM.inner_large_alloc(0).unwrap();
+
+    
+
+    //         i += 1;
+    //     }
+
+    //     b.iter(|| {
+    //         black_box(dummy());
+
+    //         i += 1;
+    //     });
+
+    //     eprintln!("i is now {}", i);
+    // }
+
+    #[bench]
+    fn bench_pot_builtin_powtwos(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqalignments: Vec<usize> = (0..NUM_ARGS)
+            .map(|_| 2usize.pow(r.random_range(0..35)))
+            .collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            let align = reqalignments[i % NUM_ARGS];
+            black_box(pot_builtin(align));
+
+            i += 1;
+        });
+    }
+
+    #[bench]
+    fn bench_pot_bittwiddle_randoms(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqalignments: Vec<usize> = (0..NUM_ARGS).map(|_| r.random_range(0..MAX)).collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            let align = reqalignments[i % NUM_ARGS];
+            black_box(pot_bittwiddle(align));
+
+            i += 1;
+        });
+    }
+
+    #[bench]
+    fn bench_pot_bittwiddle_powtwos(b: &mut Bencher) {
+        let mut r = StdRng::seed_from_u64(0);
+        let reqalignments: Vec<usize> = (0..NUM_ARGS)
+            .map(|_| 2usize.pow(r.random_range(0..35)))
+            .collect();
+        let mut i = 0;
+
+        b.iter(|| {
+            let align = reqalignments[i % NUM_ARGS];
+            black_box(pot_bittwiddle(align));
+
+            i += 1;
+        });
+    }
+
+    //use std::ptr::null_mut;
+
+    // #[bench]
+    // fn bench_slotlocation_of_ptr(b: &mut Bencher) {
+    //     let mut r = StdRng::seed_from_u64(0);
+    //     let baseptr_for_testing: *mut u8 = null_mut();
+    //     let mut reqptrs = [null_mut(); NUM_ARGS];
+    //     let mut i = 0;
+    //     while i < NUM_ARGS {
+    //         // generate a random slot
+    //         let areanum = r.random_range(0..NUM_AREAS);
+    //         let slabnum;
+    //         if areanum == 0 {
+    //             slabnum = r.random_range(0..NUM_SLABS);
+    //         } else {
+    //             slabnum = r.random_range(0..NUM_SLABS_CACHELINEY);
+    //         }
+    //         let slotnum = r.random_range(0..NUM_SLOTS);
+    //         let sl: SlotLocation = SlotLocation {
+    //             areanum,
+    //             slabnum,
+    //             slotnum,
+    //         };
+
+    //         // put the random slot's pointer into the test set
+    //         reqptrs[i] = unsafe { baseptr_for_testing.add(sl.offset_of_slot()) };
+
+    //         i += 1;
+    //     }
+
+    //     b.iter(|| {
+    //         let ptr = reqptrs[i % NUM_ARGS];
+    //         black_box(slotlocation_of_ptr(baseptr_for_testing, ptr));
+
+    //         i += 1;
+    //     });
+    // }
 }
