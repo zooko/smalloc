@@ -416,8 +416,10 @@ fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
 
 fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
     //xxx replace part of this with table from largeslabnum to offset
-    assert!(largeslabnum < NUM_LARGE_SLABS);
-    assert!(slotnum < num_large_slots(largeslabnum));
+    // assert!(largeslabnum < NUM_LARGE_SLABS, "largeslabnum: {}, slotnum: {}", largeslabnum, slotnum); // alloc
+    assert!(largeslabnum < NUM_LARGE_SLABS); // no alloc
+    // assert!(slotnum < num_large_slots(largeslabnum), "slotnum: {}", slotnum);
+    assert!(slotnum < num_large_slots(largeslabnum)); // noalloc
 
     let slotsize = large_slabnum_to_slotsize(largeslabnum);
 
@@ -469,7 +471,7 @@ impl Default for Smalloc {
     }
 }
 
-//use thousands::Separable;
+// use thousands::Separable;
 // use std::time::Instant;
 // use lazy_static::lazy_static;
 
@@ -576,8 +578,13 @@ impl Smalloc {
         loop {
             let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
             let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
-            assert!(firstindexplus1 <= NUM_SLOTS_O as u32);
+            // assert!(firstindexplus1 <= NUM_SLOTS_O as u32, "firstindexplus1: {}", firstindexplus1); // alloc
+            assert!(firstindexplus1 <= NUM_SLOTS_O as u32); // noalloc
+            // debug_assert!(firstindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst), "areanum: {}, smallslabnum: {}, firstindexplus1: {}, eac: {}", areanum, smallslabnum, firstindexplus1, self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst)); // alloc
+            debug_assert!(firstindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst)); // noalloc
+
             let counter: u32 = (flhdword >> 32) as u32;
+            //debugln!("starting to pop / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---", areanum, smallslabnum, firstindexplus1);
 
             if firstindexplus1 == 0 {
                 // 0 is the sentinel value meaning no next entry, meaning the free list is empty
@@ -594,7 +601,7 @@ impl Smalloc {
             let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
             let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
             let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
-            assert!(nextindexplus1 <= NUM_SLOTS_O as u32);
+            //debugln!("continuing to pop (loaded next) / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---, nextindexplus1: {}/---", areanum, smallslabnum, firstindexplus1, nextindexplus1);
 
             let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
 
@@ -604,7 +611,17 @@ impl Smalloc {
                 Ordering::AcqRel, // YYY AcqRel
                 Ordering::Acquire // YYY Acquire
             ).is_ok() {
-                return firstindexplus1;
+                //debugln!("POPPED / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---, nextindexplus1: {}/---", areanum, smallslabnum, firstindexplus1, nextindexplus1);
+
+                // These constraints must be true considering that the POP succeeded.
+                // assert!(nextindexplus1 <= NUM_SLOTS_O as u32, "nextindexplus1: {}", nextindexplus1); // alloc
+                assert!(nextindexplus1 <= NUM_SLOTS_O as u32);
+                // debug_assert!(nextindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst), "areanum: {}, smallslabnum: {}, firstindexplus1: {}, eac: {}", areanum, smallslabnum, firstindexplus1, self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst)); // alloc
+                debug_assert!(nextindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst)); // noalloc
+
+                break firstindexplus1
+            } else {
+                //debugln!("failed to pop / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---, nextindexplus1: {}/---", areanum, smallslabnum, firstindexplus1, nextindexplus1);
             }
         }
     }
@@ -626,9 +643,13 @@ impl Smalloc {
         loop {
             let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
             let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
-            assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32);
+            // assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32, "firstindexplus1: {}", firstindexplus1); // alloc
+            assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32); // noalloc
+            // debug_assert!(firstindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst), "largeslabnum: {}, firstindexplus1: {}, eac: {}", largeslabnum, firstindexplus1, self.get_large_eac(largeslabnum).load(Ordering::SeqCst)); // alloc
+            debug_assert!(firstindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst)); // noalloc
+
             let counter: u32 = (flhdword >> 32) as u32;
-            //debugln!("pop firstindexplus1: {}/{:?}", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1));
+            //debugln!("starting to pop / largeslabnum: {}, firstindexplus1: {}/{:?}", largeslabnum, firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1));
 
             if firstindexplus1 == 0 {
                 // 0 is the sentinel value meaning no next entry, meaning the free list is empty
@@ -642,8 +663,7 @@ impl Smalloc {
             let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
             let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
             let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
-            assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
-            //debugln!("pop firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
+            //debugln!("continuing to pop (loaded next) / largeslabnum: {}, firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", largeslabnum, firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
 
             let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
 
@@ -653,23 +673,28 @@ impl Smalloc {
                 Ordering::AcqRel, // AcqRel
                 Ordering::Acquire, // Acquire
             ).is_ok() {
-                //debugln!("{:>3}/{:>13?}->{:>3}/{:>13?}                    {:>3}/  [{:>3}/ -  ... ] POP  ce ok", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1), firstindexplus1, nextindexplus1);
+                //debugln!("POPPED / largeslabnum: {}, firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", largeslabnum, firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
+
+                // These constraints must be true considering that the POP succeeded.
+                // assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32, "nextindexplus1: {}", nextindexplus1); // alloc
+                assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32); // no alloc
+                // debug_assert!(nextindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst), "thread: {}, largeslabnum: {}, firstindexplus1: {}, nextindexplus1: {}, eac: {}, time: {}", get_thread_areanum(), largeslabnum, firstindexplus1, nextindexplus1, self.get_large_eac(largeslabnum).load(Ordering::SeqCst), START_TIME.elapsed().as_nanos().separate_with_commas()); // alloc
+                debug_assert!(nextindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst)); // no alloc
+
                 break firstindexplus1
-            }// else {
-                //debugln!("{}/{:?}->{}/{:?} pop ce fail", firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
-            //}
+            } else {
+                //debugln!("failed to pop / largeslabnum: {}, firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", largeslabnum, firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
+            }
         }
     }
 
     // xxx maxindex is just for assertion checks
-    // xxx lsn is just for debugln
     fn inner_push_flh(
         &self,
         offset_of_flh: usize,
         offset_of_new: usize,
         new_index: u32,
-        maxindex: u32,
-        _lsn: usize
+        maxindex: u32
     ) {
         let baseptr = self.get_baseptr();
 
@@ -689,9 +714,8 @@ impl Smalloc {
             assert!(firstindexplus1 < maxindex + 1);
             let counter: u32 = (flhdword >> 32) as u32;
 
-            //debugln!("push firstindexplus1: {}/{:?}, new_index+1: {}/{:?}", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
             newentry.store(firstindexplus1, Ordering::Release); // YYY Release
-            //debugln!("push firstindexplus1: {}/{:?} stored into {}/{:?}", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
+            //debugln!("trying to push / new_index+1: {}/{:?} ahead of firstindexplus1: {}/--- (stored first into new)", new_index+1, u8_ptr_to_new, firstindexplus1);
 
             let newflhdword = ((counter as u64 + 1) << 32) | (new_index+1) as u64;
 
@@ -701,11 +725,11 @@ impl Smalloc {
                 Ordering::AcqRel, // AcqRel
                 Ordering::Acquire, // Acquire
             ).is_ok() {
-                //debugln!("{:>3}/{:>13?}->{:>3}/{:>13?}                          [{:>3}/ - {:>3}/ ] PUSH ce ok", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1), new_index+1, firstindexplus1);
+                //debugln!("PUSHED / new_index+1: {}/{:?} ahead of firstindexplus1: {}/---", new_index+1, u8_ptr_to_new, firstindexplus1);
                 break;
-            }// else {
-                //debugln!("{}/{:?}->{}/{:?} push ce fail", firstindexplus1, self.lssp1_p(lsn, firstindexplus1), new_index+1, self.lssp1_p(lsn, new_index+1));
-            //}
+            } else {
+                //debugln!("failed to push / new_index+1: {}/{:?} ahead of firstindexplus1: {}/---", new_index+1, u8_ptr_to_new, firstindexplus1);
+            }
         }
     }
 
@@ -717,31 +741,33 @@ impl Smalloc {
                 slotnum,
             } => {
                 assert!(slotnum < NUM_SLOTS_O);
+                //debugln!("smallslabnum: {}, about to push p: {:?}, slotnum: {}", smallslabnum, self.sl_to_ptr(&newsl), slotnum);
+
                 self.inner_push_flh(
                     offset_of_small_flh(areanum, smallslabnum),
                     offset_of_small_free_list_entry(areanum, smallslabnum, slotnum),
                     slotnum as u32,
-                    NUM_SLOTS_O as u32,
-                    smallslabnum
+                    NUM_SLOTS_O as u32
                 );
+
+                //debugln!("smallslabnum: {}, just pushed p: {:?}, slotnum: {}", smallslabnum, self.sl_to_ptr(&newsl), slotnum);
             }
             SlotLocation::LargeSlot {
                 largeslabnum,
                 slotnum,
             } => {
                 assert!(slotnum < num_large_slots(largeslabnum));
-                //debugln!("about to push p: {:?}, slotnum: {}", self.sl_to_ptr(&newsl), slotnum);
+                //debugln!("largeslabnum: {}, about to push p: {:?}, slotnum: {}", largeslabnum, self.sl_to_ptr(&newsl), slotnum);
 
                 // Intrusive free list -- the free list entry is stored in the data slot.
                 self.inner_push_flh(
                     offset_of_large_flh(largeslabnum),
                     offset_of_large_slot(largeslabnum, slotnum),
                     slotnum as u32,
-                    num_large_slots(largeslabnum) as u32,
-                    largeslabnum
+                    num_large_slots(largeslabnum) as u32
                 );
 
-                //debugln!("just pushed p: {:?}, slotnum: {}", self.sl_to_ptr(&newsl), slotnum);
+                //debugln!("largeslabnum: {}, just pushed p: {:?}, slotnum: {}", largeslabnum, self.sl_to_ptr(&newsl), slotnum);
             }
         }
     }
@@ -769,36 +795,20 @@ impl Smalloc {
         unsafe { AtomicU64::from_ptr(u64_ptr_to_eac) }
     }
 
-    /// Returns the index of the next never-before-allocated slot. Returns 1 greater than the maximum slot number in the case that all slots have been allocated.
-    fn increment_eac(&self, eac: &AtomicU64, hugeslab: bool) -> usize {
+    /// Increment the count of ever-allocated-slots (which is the same as the index of the next never-before-allocated slot). Return the number before the increment, which is the index of the next slot you should use. In the case that all slots have been allocated, return the max number of slots (which is 1 greater than the maximum slot number).
+    fn increment_eac(&self, eac: &AtomicU64, maxnumslots: usize) -> usize {
         let nexteac = eac.fetch_add(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
-        if nexteac as usize
-            <= if hugeslab {
-                NUM_SLOTS_HUGE
-            } else {
-                NUM_SLOTS_O
-            }
-        {
+        if nexteac as usize <= maxnumslots {
             nexteac as usize
         } else {
-            if nexteac as usize
-                > if hugeslab {
-                    NUM_SLOTS_HUGE
-                } else {
-                    NUM_SLOTS_O
-                } + 100000
-            {
-                // If eac is maxed out -- at NUM_SLOTS -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed NUM_SLOTS. However, if this has happened many, many times simultaneously, such that eac is more than a small number higher than NUM_SLOTS, then something is wrong and we should panic to prevent some kind of unknown failure case or exploitation.
+            if nexteac as usize > maxnumslots + 100000 {
+                // If eac is maxed out -- at maxnumslots -- another thread has incremented past NUM_SLOTS but not yet decremented it, then this could exceed maxnumslots. However, if this has happened many, many times simultaneously, such that eac is more than a small number higher than maxnuslots, then something is wrong and we should panic to prevent some kind of unknown failure case or exploitation.
                 panic!("the Ever-Allocated-Counter exceeded max slots + 100000");
             }
-
+            
             eac.fetch_sub(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
-
-            if hugeslab {
-                NUM_SLOTS_HUGE
-            } else {
-                NUM_SLOTS_O
-            }
+            
+            maxnumslots
         }
     }
 
@@ -806,20 +816,24 @@ impl Smalloc {
         let flhplus1 = self.pop_small_flh(areanum, smallslabnum);
         if flhplus1 != 0 {
             // xxx add unit test of this case
-            Some(SlotLocation::SmallSlot {
+            let sl = SlotLocation::SmallSlot {
                 areanum,
                 smallslabnum,
                 slotnum: (flhplus1 - 1) as usize,
-            })
+            };
+            //debugln!("... in inner_small_alloc(), flhplus1: {}/{:?}", flhplus1, self.sl_to_ptr(&sl));
+            Some(sl)
         } else {
-            let eac: usize = self.increment_eac(self.get_small_eac(areanum, smallslabnum), false);
+            let eac: usize = self.increment_eac(self.get_small_eac(areanum, smallslabnum), NUM_SLOTS_O);
             if eac < NUM_SLOTS_O {
                 // xxx add unit test of this case
-                Some(SlotLocation::SmallSlot {
+                let sl = SlotLocation::SmallSlot {
                     areanum,
                     smallslabnum,
                     slotnum: eac,
-                })
+                };
+                //debugln!("in inner_small_alloc(), eac: {}/{:?}", eac, self.sl_to_ptr(&sl));
+                Some(sl)
             } else {
                 // xxx add unit test of this case
                 // The slab is full!
@@ -836,12 +850,12 @@ impl Smalloc {
                 largeslabnum,
                 slotnum: (flhplus1 - 1) as usize,
             };
-            //debugln!("... in inner_large_alloc(), flhplus1: {}/{:?}", flhplus1, self.sl_to_ptr(&sl));
+            //debugln!("... in inner_large_alloc(), largeslabnum: {}, popped flhplus1: {}/{:?}", largeslabnum, flhplus1, self.sl_to_ptr(&sl));
             Some(sl)
         } else {
             let eac: usize = self.increment_eac(
                 self.get_large_eac(largeslabnum),
-                largeslabnum == HUGE_SLABNUM,
+                if largeslabnum == HUGE_SLABNUM { NUM_SLOTS_HUGE } else { NUM_SLOTS_O }
             );
             if eac < num_large_slots(largeslabnum) {
                 // xxx add unit test of this case
@@ -849,7 +863,7 @@ impl Smalloc {
                     largeslabnum,
                     slotnum: eac,
                 };
-                //debugln!("in inner_large_alloc(), eac: {}/{:?}", eac, self.sl_to_ptr(&sl));
+                //debugln!("in inner_large_alloc(), largeslabnum: {}, eac'ed {}/{:?}", largeslabnum, eac, self.sl_to_ptr(&sl));
                 Some(sl)
             } else {
                 // xxx add unit test of this case
@@ -1055,6 +1069,14 @@ unsafe impl GlobalAlloc for Smalloc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+    const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
+    const BYTES3: [u8; 8] = [0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11];
+    const BYTES4: [u8; 8] = [0x12, 0x11, 0x10, 0xF, 0xE, 0xD, 0xC, 0xB];
+    // const BYTES5: [u8; 8] = [0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A];
+    const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
+    //const BYTES7: [u8; 8] = [0xF7, 0xF6, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0];
 
     #[test]
     fn test_offset_of_vars() {
@@ -1358,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn test_twelve_threads_large_random() {
+    fn test_twelve_threads_large_alloc_dealloc() {
         SM.idempotent_init();
 
         let l = Layout::from_size_align(64, 1).unwrap();
@@ -1366,7 +1388,7 @@ mod tests {
         let mut handles = Vec::new();
         for _i in 0..12 {
             handles.push(thread::spawn(move || {
-                help_many_random_allocs_and_deallocs(10_000, l, 0);
+                help_many_random_alloc_dealloc(1000, l, 0);
             }));
         }
 
@@ -1393,13 +1415,58 @@ mod tests {
         }
     }
 
-    fn help_n_threads(n: u32, iters: usize, layout: Layout, seed: u64) {
+    fn help_n_threads_malloc_dealloc(n: u32, iters: usize, layout: Layout, seed: u64) {
         SM.idempotent_init();
 
         let mut handles = Vec::new();
         for _i in 0..n {
             handles.push(thread::spawn(move || {
-                help_many_random_allocs_and_deallocs(iters, layout, seed);
+                help_many_random_alloc_dealloc(iters, layout, seed);
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    fn help_n_threads_malloc_dealloc_with_writes(n: u32, iters: usize, layout: Layout, seed: u64) {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..n {
+            handles.push(thread::spawn(move || {
+                help_many_random_alloc_dealloc_with_writes(iters, layout, seed);
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    fn help_n_threads_malloc_dealloc_realloc_no_writes(n: u32, iters: usize, layout: Layout, seed: u64) {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..n {
+            handles.push(thread::spawn(move || {
+                help_many_random_alloc_dealloc_realloc_no_writes(iters, layout, seed);
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    fn help_n_threads_malloc_dealloc_realloc_with_writes(n: u32, iters: usize, layout: Layout, seed: u64) {
+        SM.idempotent_init();
+
+        let mut handles = Vec::new();
+        for _i in 0..n {
+            handles.push(thread::spawn(move || {
+                help_many_random_alloc_dealloc_realloc_with_writes(iters, layout, seed);
             }));
         }
 
@@ -1409,8 +1476,16 @@ mod tests {
     }
 
     #[test]
-    fn test_32_threads_large_random() {
-        // This reproduces the corruption after a few seconds.
+    fn test_32_threads_large_malloc_dealloc_no_writes() {
+        let seed = 0;
+
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_n_threads_malloc_dealloc(32, 1000, l, seed);
+    }
+
+    #[test]
+    fn test_32_threads_large_malloc_dealloc_with_writes() {
         //let mut r = rand::rng();
         //let seed = r.random::<u64>();
         //debugln!("rand seed: {}", seed);
@@ -1419,12 +1494,37 @@ mod tests {
 
         let l = Layout::from_size_align(64, 1).unwrap();
 
-        help_n_threads(32, 1000, l, seed);
+        help_n_threads_malloc_dealloc_with_writes(32, 1000, l, seed);
     }
 
     #[test]
-    fn test_32_threads_small_random() {
-        // This reproduces the corruption after a few seconds.
+    fn test_32_threads_large_malloc_dealloc_realloc_with_writes() {
+        //let mut r = rand::rng();
+        //let seed = r.random::<u64>();
+        //debugln!("rand seed: {}", seed);
+        let seed = 0;
+        //debugln!("hardcoded seed: {}", seed);
+
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_n_threads_malloc_dealloc_realloc_with_writes(32, 1000, l, seed);
+    }
+
+    #[test]
+    fn test_32_threads_large_malloc_dealloc_realloc_no_writes() {
+        //let mut r = rand::rng();
+        //let seed = r.random::<u64>();
+        //debugln!("rand seed: {}", seed);
+        let seed = 0;
+        //debugln!("hardcoded seed: {}", seed);
+
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_n_threads_malloc_dealloc_realloc_no_writes(32, 1000, l, seed);
+    }
+
+    #[test]
+    fn test_32_threads_small_malloc_dealloc() {
         //let mut r = rand::rng();
         //let seed = r.random::<u64>();
         //debugln!("rand seed: {}", seed);
@@ -1433,15 +1533,28 @@ mod tests {
 
         let l = Layout::from_size_align(4, 1).unwrap();
 
-        help_n_threads(32, 1000, l, seed);
+        help_n_threads_malloc_dealloc(32, 1000, l, seed);
+    }
+
+    #[test]
+    fn test_32_threads_small_malloc_dealloc_with_writes() {
+        //let mut r = rand::rng();
+        //let seed = r.random::<u64>();
+        //debugln!("rand seed: {}", seed);
+        let seed = 0;
+        //debugln!("hardcoded seed: {}", seed);
+
+        let l = Layout::from_size_align(4, 1).unwrap();
+
+        help_n_threads_malloc_dealloc_with_writes(32, 1000, l, seed);
     }
 
 
     #[test]
-    fn test_a_thousand_threads_large_random() {
+    fn test_a_thousand_threads_large_malloc_dealloc() {
         let l = Layout::from_size_align(64, 1).unwrap();
 
-        help_n_threads(1000, 1000, l, 0);
+        help_n_threads_malloc_dealloc(1000, 1000, l, 0);
     }
 
     use rand::rngs::StdRng;
@@ -1450,7 +1563,7 @@ mod tests {
     use ahash::HashSet;
     use ahash::RandomState;
     
-    fn help_many_random_allocs_and_deallocs(iters: usize, layout: Layout, seed: u64) {
+    fn help_many_random_alloc_dealloc(iters: usize, layout: Layout, seed: u64) {
         let l = layout;
         let mut r = StdRng::seed_from_u64(seed);
         let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_hasher(RandomState::with_seed(seed as usize));
@@ -1463,10 +1576,10 @@ mod tests {
                 // Free
                 if !ps.is_empty() {
                     let i = r.random_range(0..ps.len());
-                    let (p, l2) = ps.remove(i);
-                    assert!(m.contains(&(p, l2)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
-                    m.remove(&(p, l2));
-                    unsafe { SM.dealloc(p, l2) };
+                    let (p, lt) = ps.remove(i);
+                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
+                    m.remove(&(p, lt));
+                    unsafe { SM.dealloc(p, lt) };
                 }
             } else {
                 // Malloc
@@ -1478,10 +1591,204 @@ mod tests {
         }
     }
         
+    fn help_many_random_alloc_dealloc_with_writes(iters: usize, layout: Layout, seed: u64) {
+        let l = layout;
+        let mut r = StdRng::seed_from_u64(seed);
+        let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_hasher(RandomState::with_seed(seed as usize));
+        
+        let mut ps = Vec::new();
+        
+        for _i in 0..iters {
+            if r.random::<bool>() && !ps.is_empty() {
+                // Free
+                let (p, lt) = ps.remove(r.random_range(0..ps.len()));
+                assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
+                m.remove(&(p, lt));
+                unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
+                //debugln!("wrote to {:?} with {:?}", p, BYTES1);
+                unsafe { SM.dealloc(p, lt) };
+
+                // Write to a random (other) allocation...
+                if !ps.is_empty() {
+                    let (po, lto) = ps[r.random_range(0..ps.len())];
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po, min(BYTES2.len(), lto.size())) };
+                }
+            } else {
+                // Malloc
+                let p = unsafe { SM.alloc(l) };
+                unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), layout.size())) };
+                assert!(!m.contains(&(p, l)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, l.size(), l.align());
+                m.insert((p, l));
+                ps.push((p, l));
+
+                // Write to a random (other) allocation...
+                if !ps.is_empty() {
+                    let (po, lto) = ps[r.random_range(0..ps.len())];
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), po, min(BYTES4.len(), lto.size())) };
+                }
+            }
+        }
+    }
+    
+    use rand::seq::IndexedRandom;
+    fn help_many_random_alloc_dealloc_realloc_no_writes(iters: usize, layout: Layout, seed: u64) {
+        let l1 = layout;
+        let mut ls = Vec::new();
+        ls.push(l1);
+        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
+        ls.push(l2);
+        let l3 = Layout::from_size_align(l1.size() - 10, l1.align()).unwrap();
+        ls.push(l3);
+        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
+        ls.push(l4);
+        
+        let mut r = StdRng::seed_from_u64(seed);
+        let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_hasher(RandomState::with_seed(seed as usize));
+
+        let mut ps = Vec::new();
+
+        for _i in 0..iters {
+            // random coin
+            let coin = r.random_range(0..3);
+            if coin == 0 {
+                // Free
+                if !ps.is_empty() {
+                    let (p, lt) = ps.remove(r.random_range(0..ps.len()));
+                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                    m.remove(&(p, lt));
+                    //unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
+                    unsafe { SM.dealloc(p, lt) };
+
+                    // Write to a random (other) allocation...
+                    //if !ps.is_empty() {
+                    //    let (po, lto) = ps[r.random_range(0..ps.len())];
+                    //    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po, min(BYTES2.len(), lto.size())) };
+                    //}
+                }
+            } else if coin == 1 {
+                // Malloc
+                let lt = ls.choose(&mut r).unwrap();
+                let p = unsafe { SM.alloc(*lt) };
+                //unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+                assert!(!m.contains(&(p, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                m.insert((p, *lt));
+                ps.push((p, *lt));
+
+                //if !ps.is_empty() {
+                //    let (po, lto) = ps[r.random_range(0..ps.len())];
+                //    unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), po, min(BYTES4.len(), lto.size())) };
+                //}
+            } else {
+                // Realloc
+                if !ps.is_empty() {
+                    let i = r.random_range(0..ps.len());
+                    let (p, lt) = ps.remove(i);
+                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                    m.remove(&(p, lt));
+
+                    let newlt = ls.choose(&mut r).unwrap();
+                    let newp = unsafe { SM.realloc(p, lt, newlt.size()) };
+
+                    assert!(!m.contains(&(newp, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), newp, newlt.size(), newlt.align());
+                    m.insert((newp, *newlt));
+                    ps.push((newp, *newlt));
+
+                    //// Write to a random allocation...
+                    //let (po, lto) = ps.choose(&mut r).unwrap();
+                    //unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), *po, min(BYTES6.len(), lto.size())) };
+                }
+            }
+        }
+    }
+        
+    fn help_many_random_alloc_dealloc_realloc_with_writes(iters: usize, layout: Layout, seed: u64) {
+        let l1 = layout;
+        let mut ls = Vec::new();
+        ls.push(l1);
+        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
+        ls.push(l2);
+        let l3 = Layout::from_size_align(l1.size() - 10, l1.align()).unwrap();
+        ls.push(l3);
+        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
+        ls.push(l4);
+        
+        let mut r = StdRng::seed_from_u64(seed);
+        let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_hasher(RandomState::with_seed(seed as usize));
+
+        let mut ps = Vec::new();
+
+        for _i in 0..iters {
+            // random coin
+            let coin = r.random_range(0..3);
+            if coin == 0 {
+                // Free
+                if !ps.is_empty() {
+                    let (p, lt) = ps.remove(r.random_range(0..ps.len()));
+                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                    m.remove(&(p, lt));
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
+                    unsafe { SM.dealloc(p, lt) };
+
+                    // Write to a random (other) allocation...
+                    if !ps.is_empty() {
+                        let (po, lto) = ps[r.random_range(0..ps.len())];
+                        unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po, min(BYTES2.len(), lto.size())) };
+                    }
+                }
+            } else if coin == 1 {
+                // Malloc
+                let lt = ls.choose(&mut r).unwrap();
+                let p = unsafe { SM.alloc(*lt) };
+                unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+                assert!(!m.contains(&(p, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                m.insert((p, *lt));
+                ps.push((p, *lt));
+
+                if !ps.is_empty() {
+                    let (po, lto) = ps[r.random_range(0..ps.len())];
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), po, min(BYTES4.len(), lto.size())) };
+                }
+            } else {
+                // Realloc
+                if !ps.is_empty() {
+                    let i = r.random_range(0..ps.len());
+                    let (p, lt) = ps.remove(i);
+                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), p, lt.size(), lt.align());
+                    m.remove(&(p, lt));
+
+                    let newlt = ls.choose(&mut r).unwrap();
+                    let newp = unsafe { SM.realloc(p, lt, newlt.size()) };
+
+                    assert!(!m.contains(&(newp, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_areanum(), newp, newlt.size(), newlt.align());
+                    m.insert((newp, *newlt));
+                    ps.push((newp, *newlt));
+
+                    // Write to a random allocation...
+                    let (po, lto) = ps.choose(&mut r).unwrap();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), *po, min(BYTES6.len(), lto.size())) };
+                }
+            }
+        }
+    }
+        
     #[test]
-    fn test_100_000_random_allocs_and_deallocs() {
+    fn test_100_000_large_allocs_deallocs_reallocs_with_writes() {
         let l = Layout::from_size_align(64, 1).unwrap();
 
-        help_many_random_allocs_and_deallocs(100_000, l, 0);
+        help_many_random_alloc_dealloc_realloc_with_writes(100_000, l, 0);
+    }
+
+    #[test]
+    fn test_100_000_large_allocs_deallocs_no_reallocs_no_writes() {
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_many_random_alloc_dealloc(100_000, l, 0);
+    }
+
+    #[test]
+    fn test_100_000_large_allocs_deallocs_no_reallocs_with_writes() {
+        let l = Layout::from_size_align(64, 1).unwrap();
+
+        help_many_random_alloc_dealloc_with_writes(100_000, l, 0);
     }
 }
