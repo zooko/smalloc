@@ -6,6 +6,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use core::time::Duration;
 use std::ptr::null_mut;
+use std::alloc::GlobalAlloc;
 
 const NUM_ARGS: usize = 50_000;
 
@@ -91,6 +92,21 @@ fn bench_pop_large_flh(c: &mut Criterion) {
     }));
 }
 
+fn randdist_reqsiz(r: &mut StdRng) -> usize {
+    // The following distribution was roughly modelled on smalloclog profiling of Zebra.
+    let randnum = r.random::<u8>();
+
+    if randnum < 50 {
+        r.random_range(1..16)
+    } else if randnum < 150 {
+        32
+    } else if randnum < 200 {
+        64
+    } else {
+        r.random_range(65..10_000)
+    }
+}
+
 fn bench_inner_alloc(c: &mut Criterion) {
     SM.idempotent_init();
 
@@ -98,22 +114,7 @@ fn bench_inner_alloc(c: &mut Criterion) {
     let mut reqs = Vec::with_capacity(NUM_ARGS);
 
     while reqs.len() < NUM_ARGS {
-        let randnum = r.random::<u8>();
-        let reqsiz;
-
-        // The following distribution was roughly modelled on smalloclog profiling of Zebra.
-
-        if randnum < 50 {
-            reqsiz = r.random_range(1..16);
-        } else if randnum < 150 {
-            reqsiz = 32;
-        } else if randnum < 200 {
-            reqsiz = 64;
-        } else {
-            reqsiz = r.random_range(65..10_000);
-        }
-
-        reqs.push(Layout::from_size_align(reqsiz, 1).unwrap());
+        reqs.push(Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap());
     }
 
     let mut i = 0;
@@ -192,6 +193,37 @@ fn bench_new_from_ptr(c: &mut Criterion) {
     }));
 }
 
+fn bench_alloc(c: &mut Criterion) {
+    let mut r = StdRng::seed_from_u64(0);
+    let mut reqs = Vec::with_capacity(NUM_ARGS);
+    while reqs.len() < NUM_ARGS {
+        reqs.push(Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap());
+    }
+
+    let mut i = 0;
+    c.bench_function("alloc", |b| b.iter(|| {
+        let l = reqs[i % reqs.len()];
+        black_box(unsafe { SM.alloc(l) });
+        //unsafe { SM.dealloc(p, l) };
+        i += 1
+    }));
+}
+
+fn bench_free(c: &mut Criterion) {
+    let mut r = StdRng::seed_from_u64(0);
+    let mut reqs = Vec::with_capacity(NUM_ARGS);
+    while reqs.len() < NUM_ARGS {
+        let l = Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap();
+        reqs.push((unsafe { SM.alloc(l) }, l));
+    }
+
+    let mut i = 0;
+    c.bench_function("free", |b| b.iter(|| {
+        let (p, l) = reqs[i % reqs.len()];
+        unsafe { SM.dealloc(p, l) };
+        i += 1
+    }));
+}
 
     // const MAX: usize = 2usize.pow(39);
     // const NUM_ARGS: usize = 128;
@@ -222,10 +254,10 @@ fn bench_new_from_ptr(c: &mut Criterion) {
     // use std::ptr::null_mut;
 
 criterion_group!{
-    name = slabs;
+    name = smalloc;
     config = Criterion::default().warm_up_time(Duration::from_millis(100)).measurement_time(Duration::from_millis(1000));
-    targets = bench_sum_large_slab_sizes, bench_sum_small_slab_sizes, bench_pop_large_flh, bench_inner_alloc, bench_inner_large_alloc, bench_inner_small_alloc, bench_pop_small_flh, bench_new_from_ptr
+    targets = bench_sum_large_slab_sizes, bench_sum_small_slab_sizes, bench_pop_large_flh, bench_inner_alloc, bench_inner_large_alloc, bench_inner_small_alloc, bench_pop_small_flh, bench_new_from_ptr, bench_alloc, bench_free
 }
 
-criterion_main!(slabs);
+criterion_main!(smalloc);
 
