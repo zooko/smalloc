@@ -6,7 +6,7 @@ mod notests {
     use smalloc::Smalloc;
 
     #[global_allocator]
-    static SMALLOCLOG: Smalloc = Smalloc::new();
+    static SMALLOC: Smalloc = Smalloc::new();
 
     use rand::rngs::StdRng;
     use rand::SeedableRng;

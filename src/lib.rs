@@ -36,8 +36,36 @@
 //        5   2048   B          2
 //        6      4 MiB          0
 
-// This is the largest alignment we can conveniently guarantee, based on Linux mmap() returning pointers aligned to at least this (in common configurations of linux).
-pub const MAX_ALIGNMENT: usize = 4096;
+
+// Map of the following offsets and sizes:
+
+// 1. Base Pointer -- 4 MiB alignment
+// 
+// 2. Vars -- 8 B alignment for each var (and automatic page alignment
+//    for all vars)
+//   a. NUM_SMALL_SLAB_AREAS x Small Slab Vars
+//   b. Large Slab Vars
+//
+// 3. Separate Free Lists -- 16 KiB alignment per free list (and
+//    automatic 4 B alignment per entry)
+//
+// 4. Data slabs region -- 4 MiB alignment
+//
+//   a. Small Slab Areas Region
+//     i. NUM_SMALL_SLAB_AREAS x Small Slab Area -- 16 KiB alignment per area
+//       * Small Slabs -- 16 KiB alignment per slab
+//
+// 5. Large Slabs Region -- 4 MiB alignment
+//   a. Large Slabs excluding the huge-slots slab -- 16 KiB alignment
+//   b. Large Slabs, the huge-slots slab -- 4 MiB alignment
+
+// This is the size of virtual memory pages on modern XNU (Macos, iOS,
+// etc.), and conveniently it is a nice multiple of 4 times the
+// default size of virtual memory pages on Linux.
+pub const PAGE_ALIGNMENT: usize = 2usize.pow(14);
+
+// This is the largest alignment we can guarantee for data slots.
+pub const MAX_ALIGNMENT: usize = 2usize.pow(22);
 
 pub const NUM_SMALL_SLABS: usize = 11;
 pub const NUM_LARGE_SLABS: usize = 7;
@@ -45,10 +73,8 @@ pub const HUGE_SLABNUM: usize = 6;
 
 pub const SIZE_OF_BIGGEST_SMALL_SLOT: usize = 32;
 pub const SIZE_OF_HUGE_SLOTS: usize = 4194304; // 4 * 2^20
-pub const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] =
-    [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, SIZE_OF_BIGGEST_SMALL_SLOT];
-pub const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] =
-    [64, 128, 256, 512, 1024, 2048, SIZE_OF_HUGE_SLOTS];
+pub const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, SIZE_OF_BIGGEST_SMALL_SLOT];
+pub const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, SIZE_OF_HUGE_SLOTS];
 
 pub const fn small_slabnum_to_slotsize(smallslabnum: usize) -> usize {
     debug_assert!(smallslabnum < NUM_SMALL_SLABS);
@@ -74,6 +100,14 @@ pub const fn num_large_slots(largeslabnum: usize) -> usize {
     }
 }
 
+pub const fn large_slab_alignment(largeslabnum: usize) -> usize {
+    if largeslabnum == HUGE_SLABNUM {
+        SIZE_OF_HUGE_SLOTS
+    } else {
+        PAGE_ALIGNMENT
+    }
+}
+
 // The per-slab flhs and eacs have this size in bytes.
 const DOUBLEWORDSIZE: usize = 8;
 
@@ -87,9 +121,7 @@ const VARSSIZE: usize = DOUBLEWORDSIZE * 2;
 // (Large slabs live in a separate region that is not one of those 64 areas.)
 pub const NUM_SMALL_SLAB_AREAS: usize = 64;
 
-// Aligning this to DOUBLEWORDSIZE for the sake of the flh's.
-const LARGE_SLABS_VARS_BASE_OFFSET: usize =
-    (NUM_SMALL_SLAB_AREAS * NUM_SMALL_SLABS * VARSSIZE).next_multiple_of(DOUBLEWORDSIZE);
+const LARGE_SLABS_VARS_BASE_OFFSET: usize = NUM_SMALL_SLAB_AREAS * NUM_SMALL_SLABS * VARSSIZE;
 
 pub const VARIABLES_SPACE: usize = LARGE_SLABS_VARS_BASE_OFFSET + NUM_LARGE_SLABS * VARSSIZE;
 
@@ -111,30 +143,39 @@ fn offset_of_large_eac(largeslabnum: usize) -> usize {
 
 const CACHELINE_SIZE: usize = 64;
 
-// Align the beginning of the separate free lists region to CACHELINE_SIZE.
-pub const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(CACHELINE_SIZE);
+// Align the beginning of the separate free lists region, and the
+// beginning of each individual separate free list, to PAGE_ALIGNMENT
+// in order to minimize having (the in-use part of) the free list span
+// more memory pages than necessary. (As well as to make the items in
+// the free list, starting with the first one, pack nicely into
+// cachelines.)
+pub const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(PAGE_ALIGNMENT);
 
-// The calls to next_multiple_of() on a space are to start the *next* thing on a cacheline boundary.
-const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * SINGLEWORDSIZE).next_multiple_of(CACHELINE_SIZE); // Size of each of the separate free lists
+// The calls to next_multiple_of() on a SEPARATE_FREELIST_SPACE are to
+// start the *next* separate free list on an alignment boundary.
+const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * SINGLEWORDSIZE).next_multiple_of(PAGE_ALIGNMENT); // Size of each of the separate free lists
 const NUM_SEPARATE_FREELISTS: usize = 6; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte-aligned 4-byte word (slab numbers 0, 1, 2, 3, 4, and 5)
 
 pub const SEPARATE_FREELISTS_SPACE_REGION: usize =
     NUM_SEPARATE_FREELISTS * SEPARATE_FREELIST_SPACE * NUM_SMALL_SLAB_AREAS;
 
-// Align the beginning of the data slabs to MAX_ALIGNMENT. This is just to fit the maximum (4096) of smallest slots (1 byte) into a (4096-byte) memory page.
-pub const DATA_SLABS_BASE_OFFSET: usize =
-    (SEPARATE_FREELISTS_BASE_OFFSET + SEPARATE_FREELISTS_SPACE_REGION)
-    .next_multiple_of(MAX_ALIGNMENT);
+// The beginning of the data slabs region (DATA_SLABS_BASE_OFFSET) is
+// aligned to MAX_ALIGNMENT, so that we can conveniently calculate
+// alignments, including alignments up to MAX_ALIGNMENT, with offsets
+// from the DATA_SLABS_BASE_OFFSET.
+pub const DATA_SLABS_BASE_OFFSET: usize = (SEPARATE_FREELISTS_BASE_OFFSET + SEPARATE_FREELISTS_SPACE_REGION).next_multiple_of(MAX_ALIGNMENT);
 
 const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS + 1] {
     let mut lut: [usize; NUM_SMALL_SLABS + 1] = [0; NUM_SMALL_SLABS + 1];
-
+    
     let mut slabnum = 0;
     let mut sum: usize = 0;
     while slabnum < NUM_SMALL_SLABS {
-        // Make the beginning of this slab start on a cache line boundary.
-        sum = sum.next_multiple_of(CACHELINE_SIZE);
         sum += small_slabnum_to_slotsize(slabnum) * NUM_SLOTS_O;
+        // Add padding to align the beginning of the next small data
+        // slab to PAGE_ALIGNMENT, so that the first few slots will
+        // touch only one page.
+        sum = sum.next_multiple_of(PAGE_ALIGNMENT);
         slabnum += 1;
         lut[slabnum] = sum;
     }
@@ -149,28 +190,38 @@ pub const fn sum_small_slab_sizes(numslabs: usize) -> usize {
     SUM_SMALL_SLAB_SIZES[numslabs]
 }
 
-const SMALL_SLAB_AREA_SPACE: usize =
-    sum_small_slab_sizes(NUM_SMALL_SLABS).next_multiple_of(CACHELINE_SIZE);
+// To account for the fact that the other small slab areas, which
+// themselves will consist of small slabs that are aligned, is the
+// same size as the first small slab area, we need to pad the
+// SMALL_SLAB_AREA_SPACE to the alignment.
+const SMALL_SLAB_AREA_SPACE: usize = sum_small_slab_sizes(NUM_SMALL_SLABS).next_multiple_of(PAGE_ALIGNMENT);
 pub const SMALL_SLAB_AREAS_REGION_SPACE: usize = SMALL_SLAB_AREA_SPACE * NUM_SMALL_SLAB_AREAS;
 
-// Start the large slab region aligned to MAX_ALIGNMENT.
+// Aligning LARGE_SLAB_REGION_BASE_OFFSET to 4 MiB so that it is easy
+// to calculate alignments within the large slab region.
 const LARGE_SLAB_REGION_BASE_OFFSET: usize =
     (DATA_SLABS_BASE_OFFSET + SMALL_SLAB_AREAS_REGION_SPACE).next_multiple_of(MAX_ALIGNMENT);
-
+        
 const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
     let mut lut: [usize; NUM_LARGE_SLABS + 1] = [0; NUM_LARGE_SLABS + 1];
 
     let mut index = 0;
     let mut sum: usize = 0;
     while index < NUM_LARGE_SLABS {
-        let slotsize = large_slabnum_to_slotsize(index);
-        // Padding to make the beginning of this slab start on a multiple of this slot size, or of MAX_ALIGNMENT.
-        sum = sum.next_multiple_of(if slotsize < MAX_ALIGNMENT {
-            slotsize
-        } else {
-            MAX_ALIGNMENT
-        });
-        sum += slotsize * num_large_slots(index);
+        sum += large_slabnum_to_slotsize(index) * num_large_slots(index);
+
+        // Add padding to align the beginning of the next large data
+        // slab. The non-huge-slots one to PAGE_ALIGNMENT, so that the
+        // first few slots will touch only one page, and so that each
+        // slot will be aligned to its own size. The huge-slots slab
+        // is aligned to MAX_ALIGNMENT so that the slots themselves
+        // can be aligned to their size.
+        if index+1 == HUGE_SLABNUM {
+            sum = sum.next_multiple_of(SIZE_OF_HUGE_SLOTS);
+        } else if index < HUGE_SLABNUM {
+            sum = sum.next_multiple_of(PAGE_ALIGNMENT);
+        }
+
         index += 1;
         lut[index] = sum;
     }
@@ -179,7 +230,12 @@ const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
 
 const SUM_LARGE_SLAB_SIZES: [usize; NUM_LARGE_SLABS + 1] = gen_lut_sum_large_slab_sizes();
 
-/// The sum of the sizes of the large slabs.
+/// The sum of the sizes of the large slabs. The argument `numslabs`
+/// is how many slabs to count the aggregate size of, not the index of
+/// the biggest slab. So if `numslabs` is 0 the return value is 0. If
+/// `numslabs` is 4, then the return value is the sum of the sizes of
+/// slabs 0, 1, 2, and 3. If `numslabs` is 7, then it is the sum of
+/// all the slabs, including the huge-slots slab.
 pub const fn sum_large_slab_sizes(numslabs: usize) -> usize {
     debug_assert!(numslabs <= NUM_LARGE_SLABS);
     SUM_LARGE_SLAB_SIZES[numslabs]
@@ -254,7 +310,7 @@ impl SlotLocation {
         }
 
         // If it wasn't a pointer from a system allocation, then it must be a pointer into one of our slots.
-        debug_assert!(p_as_usize >= baseptr_as_usize + DATA_SLABS_BASE_OFFSET);
+        assert!(p_as_usize >= baseptr_as_usize + DATA_SLABS_BASE_OFFSET); // keep this as a non-debug_ assert, to catch bugs in the user code
 
         // Okay now we know that it is pointer into our allocation, so it is safe to subtract baseptr from it.
         let ioffset = unsafe { ptr.offset_from(baseptr) };
@@ -287,15 +343,16 @@ impl SlotLocation {
             });
             let slotnum = withinslaboffset / slotsize;
             debug_assert!(if slotnum == 0 {
-                ptr.is_aligned_to(CACHELINE_SIZE)
+                ioffset as usize % PAGE_ALIGNMENT == 0
             } else {
                 true
-            });
-            debug_assert!(if slotsize.is_power_of_two() {
-                ptr.is_aligned_to(slotsize)
+            }, "ioffset: {}, ptr: {:?}, baseptr: {:?}", ioffset, ptr, baseptr);
+
+            debug_assert!(if slotnum == 0 {
+                ptr.is_aligned_to(PAGE_ALIGNMENT)
             } else {
                 true
-            });
+            }, "ptr: {:?}", ptr);
 
             Some(Self::SmallSlot {
                 areanum,
@@ -304,9 +361,6 @@ impl SlotLocation {
             })
         } else {
             // This points into the "large-slabs-region".
-            debug_assert!(LARGE_SLAB_REGION_BASE_OFFSET.is_multiple_of(CACHELINE_SIZE));
-            debug_assert!(LARGE_SLAB_REGION_BASE_OFFSET.is_multiple_of(MAX_ALIGNMENT));
-
             let withinregionoffset = offset - LARGE_SLAB_REGION_BASE_OFFSET;
 
             let mut largeslabnum = 0;
@@ -318,19 +372,18 @@ impl SlotLocation {
             debug_assert!(largeslabnum < NUM_LARGE_SLABS);
             let slotsize = large_slabnum_to_slotsize(largeslabnum);
             debug_assert!(if slotsize.is_power_of_two() {
-                ptr.is_aligned_to(min(slotsize, MAX_ALIGNMENT))
+                ptr.is_aligned_to(slotsize)
             } else {
                 true
             });
 
             // This ptr is within this slab.
             // XXX replace without using offset_of_large_slot () ? Table from largeslabnum to offset!
-            let withinslaboffset =
-                withinregionoffset - within_region_offset_of_large_slot_slab(largeslabnum);
+            let withinslaboffset = withinregionoffset - within_region_offset_of_large_slot_slab(largeslabnum);
             debug_assert!(withinslaboffset.is_multiple_of(slotsize)); // ptr must point to the beginning of a slot.
             let slotnum = withinslaboffset / slotsize;
             debug_assert!(if slotnum == 0 {
-                ptr.is_aligned_to(CACHELINE_SIZE)
+                ptr.is_aligned_to(PAGE_ALIGNMENT)
             } else {
                 true
             });
@@ -365,8 +418,6 @@ fn offset_of_small_slot(areanum: usize, slabnum: usize, slotnum: usize) -> usize
     offset
 }
 
-use std::cmp::min;
-
 fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
     //XXX replace with table
     debug_assert!(largeslabnum < NUM_LARGE_SLABS, "{largeslabnum}");
@@ -376,10 +427,10 @@ fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
     // Count past the bytes of any earlier slabs before this slab:
     offset += sum_large_slab_sizes(largeslabnum);
 
-    let slotsize = large_slabnum_to_slotsize(largeslabnum);
-
-    // The beginning of each large slab is aligned with its slotsize, or MAX_ALIGNMENT.
-    debug_assert!(offset.is_multiple_of(min(slotsize, MAX_ALIGNMENT)));
+    // The beginning of each large slab is aligned with
+    // PAGE_ALIGNMENT, except for the huge-slots slab which is aligned
+    // with MAX_ALIGNMENT.
+    debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
 
     offset
 }
@@ -398,14 +449,15 @@ fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
     // The beginning of this slab within the large slabs region:
     offset += within_region_offset_of_large_slot_slab(largeslabnum);
 
-    // The beginning of each large slab is aligned with its slotsize, or MAX_ALIGNMENT.
-    debug_assert!(offset.is_multiple_of(min(slotsize, MAX_ALIGNMENT)));
+    // The beginning of each large slab is aligned with
+    // PAGE_ALIGNMENT.
+    debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
 
     // Count past the bytes of any earlier slots in this slab:
     offset += slotnum * slotsize;
 
-    // The beginning of each large slot is aligned with its slotsize, or MAX_ALIGNMENT.
-    debug_assert!(offset.is_multiple_of(min(slotsize, MAX_ALIGNMENT)));
+    // The beginning of each large slot is aligned with its slotsize.
+    debug_assert!(offset.is_multiple_of(slotsize), "largeslabnum: {}, slotnum: {}, slotsize: {}, offset%slotsize: {}", largeslabnum, slotnum, slotsize, offset%slotsize);
 
     offset
 }
@@ -473,7 +525,7 @@ impl Smalloc {
     pub fn idempotent_init(&self) -> *mut u8 {
         let mut p: *mut u8;
 
-        p = self.baseptr.load(Ordering::Acquire); // YYY Acquire
+        p = self.baseptr.load(Ordering::Acquire);
         if !p.is_null() {
             return p;
         }
@@ -488,30 +540,40 @@ impl Smalloc {
             if self.initlock.compare_exchange_weak(
                 false,
                 true,
-                Ordering::AcqRel, // YYY AcqRel
-                Ordering::Acquire // YYY Acquire
+                Ordering::AcqRel,
+                Ordering::Acquire
             ).is_ok() {
                 break;
             }
         }
 
-        p = self.baseptr.load(Ordering::Acquire); // YYY Acquire
+        p = self.baseptr.load(Ordering::Acquire);
         if p.is_null() {
-            p = sys_alloc(layout).unwrap();
-            debug_assert!(!p.is_null());
+            let sysbaseptr = sys_alloc(layout).unwrap();
+            debug_assert!(!sysbaseptr.is_null());
+
+            let addrp = sysbaseptr.addr();
+            let alipad = if addrp.is_multiple_of(MAX_ALIGNMENT) {
+                0
+            } else {
+                addrp - (addrp % MAX_ALIGNMENT)
+            };
+            debug_assert!(alipad < TOTAL_VIRTUAL_MEMORY); // ha
+
+            p = unsafe { sysbaseptr.add(alipad) };
             debug_assert!(p.is_aligned_to(MAX_ALIGNMENT));
-            self.baseptr.store(p, Ordering::Release); // YYY Release
+
+            self.baseptr.store(p, Ordering::Release);
         }
 
         // Release the spin lock
-        self.initlock.store(false, Ordering::Release); // YYY Release
-
+        self.initlock.store(false, Ordering::Release);
 
         p
     }
 
     fn get_baseptr(&self) -> *mut u8 {
-        let p = self.baseptr.load(Ordering::Acquire); // YYY ??? Acquire ???
+        let p = self.baseptr.load(Ordering::Acquire);
         debug_assert!(!p.is_null());
 
         p
@@ -548,7 +610,7 @@ impl Smalloc {
 
         let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
         loop {
-            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let flhdword: u64 = flh.load(Ordering::Acquire);
             let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             // debug_assert!(firstindexplus1 <= NUM_SLOTS_O as u32, "firstindexplus1: {}", firstindexplus1); // alloc
             debug_assert!(firstindexplus1 <= NUM_SLOTS_O as u32); // noalloc
@@ -568,11 +630,11 @@ impl Smalloc {
                 smallslabnum,
                 (firstindexplus1 - 1) as usize,
             );
-            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) }; // note this isn't necessarily aligned
+            let u8_ptr_to_next = unsafe { baseptr.add(offset_of_next) };
             debug_assert!(u8_ptr_to_next.is_aligned_to(SINGLEWORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
             let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
             let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
-            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
+            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire);
             //debugln!("continuing to pop (loaded next) / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---, nextindexplus1: {}/---", areanum, smallslabnum, firstindexplus1, nextindexplus1);
 
             let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
@@ -580,8 +642,8 @@ impl Smalloc {
             if flh.compare_exchange_weak(
                 flhdword,
                 newflhdword,
-                Ordering::AcqRel, // YYY AcqRel
-                Ordering::Acquire // YYY Acquire
+                Ordering::AcqRel,
+                Ordering::Acquire
             ).is_ok() {
                 //debugln!("POPPED / areanum: {}, smallslabnum: {}, firstindexplus1: {}/---, nextindexplus1: {}/---", areanum, smallslabnum, firstindexplus1, nextindexplus1);
 
@@ -614,7 +676,7 @@ impl Smalloc {
 
         let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
         loop {
-            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let flhdword: u64 = flh.load(Ordering::Acquire);
             let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             // debug_assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32, "firstindexplus1: {}", firstindexplus1); // alloc
             debug_assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32); // noalloc
@@ -635,7 +697,7 @@ impl Smalloc {
             debug_assert!(u8_ptr_to_next.is_aligned_to(SINGLEWORDSIZE)); // need 4-byte alignment for atomic ops (on at least some/most platforms)
             let u32_ptr_to_next = u8_ptr_to_next.cast::<u32>();
             let nextentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_next) };
-            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire); // YYY Acquire
+            let nextindexplus1: u32 = nextentry.load(Ordering::Acquire);
             //debugln!("continuing to pop (loaded next) / largeslabnum: {}, firstindexplus1: {}/{:?}, nextindexplus1: {}/{:?}", largeslabnum, firstindexplus1, self.lssp1_p(largeslabnum, firstindexplus1), nextindexplus1, self.lssp1_p(largeslabnum, nextindexplus1));
 
             let newflhdword = ((counter as u64 + 1) << 32) | nextindexplus1 as u64;
@@ -683,12 +745,12 @@ impl Smalloc {
         let newentry = unsafe { AtomicU32::from_ptr(u32_ptr_to_new) };
 
         loop {
-            let flhdword: u64 = flh.load(Ordering::Acquire); // YYY Acquire
+            let flhdword: u64 = flh.load(Ordering::Acquire);
             let firstindexplus1: u32 = (flhdword & u32::MAX as u64) as u32;
             debug_assert!(firstindexplus1 < maxindex + 1);
             let counter: u32 = (flhdword >> 32) as u32;
 
-            newentry.store(firstindexplus1, Ordering::Release); // YYY Release
+            newentry.store(firstindexplus1, Ordering::Release);
             //debugln!("trying to push / new_index+1: {}/{:?} ahead of firstindexplus1: {}/--- (stored first into new)", new_index+1, u8_ptr_to_new, firstindexplus1);
 
             let newflhdword = ((counter as u64 + 1) << 32) | (new_index+1) as u64;
@@ -832,7 +894,7 @@ impl Smalloc {
         } else {
             let eac: usize = self.increment_eac(
                 self.get_large_eac(largeslabnum),
-                if largeslabnum == HUGE_SLABNUM { NUM_SLOTS_HUGE } else { NUM_SLOTS_O }
+                num_large_slots(largeslabnum)
             );
             if eac < num_large_slots(largeslabnum) {
                 // xxx add unit test of this case
@@ -850,7 +912,10 @@ impl Smalloc {
         }
     }
 
-    /// Returns the newly allocated SlotLocation. if it was able to allocate a slot, else returns None (in which case alloc/realloc needs to satisfy the request by falling back to sys_alloc())
+    /// Returns the newly allocated SlotLocation. if it was able to
+    /// allocate a slot, else returns None (in which case
+    /// alloc/realloc needs to satisfy the request by falling back to
+    /// sys_alloc())
     // this is `pub` solely so I can benchmark it with Criterion. :-/
     pub fn inner_alloc(&self, layout: Layout) -> Option<SlotLocation> {
         let size = layout.size();
@@ -860,7 +925,6 @@ impl Smalloc {
             (alignment & (alignment - 1)) == 0,
             "alignment must be a power of two"
         );
-        debug_assert!(alignment <= MAX_ALIGNMENT); // We don't guarantee larger alignments than 4096
 
         // Round up size to the nearest multiple of alignment in order to get a slot that is aligned on that size.
         let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
@@ -924,7 +988,6 @@ fn get_thread_areanum() -> usize {
 // xxx can i get the Rust typechecker to tell me if I'm accidentally adding a slot number to an offset ithout multiplying it by a slot size first?
 //XXX learn about Constant Parameters and consider using them in here
 unsafe impl GlobalAlloc for Smalloc {
-    /// I require `layout`'s `align` to be <= MAX_ALIGNMENT.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let baseptr = self.idempotent_init();
 
@@ -933,7 +996,6 @@ unsafe impl GlobalAlloc for Smalloc {
         let alignment = layout.align();
         debug_assert!(alignment > 0);
         debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
-        debug_assert!(alignment <= MAX_ALIGNMENT); // We don't guarantee larger alignments than 4096
 
         // Allocate a slot
         match self.inner_alloc(layout) {
@@ -942,7 +1004,7 @@ unsafe impl GlobalAlloc for Smalloc {
                 let offset = sl.offset();
                 let p = unsafe { baseptr.add(offset) };
                 debug_assert!(if sl.slotsize().is_power_of_two() {
-                    p.is_aligned_to(min(sl.slotsize(), MAX_ALIGNMENT))
+                    p.is_aligned_to(sl.slotsize())
                 } else {
                     true
                 });
@@ -960,10 +1022,12 @@ unsafe impl GlobalAlloc for Smalloc {
         match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
             Some(sl) => {
                 self.push_flh(sl);
+                // XXX here we should, if the slot is a HUGE slot and the freed space frees up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (don't forget about the 8-byte next-link for the intrusive free list)(mach_vm_behavior_set()/madvise()/some-Windows-equivalent)
             }
             None => {
                 // No slot -- this allocation must have come from falling back to `sys_alloc()`.
                 sys_dealloc(ptr, layout);
+                // XXX here we should madvise to tell the kernel it can unmap/uncommit the vm pages
             }
         }
     }
@@ -978,7 +1042,6 @@ unsafe impl GlobalAlloc for Smalloc {
             "alignment must be a power of two"
         );
         debug_assert!(newsize > 0);
-        debug_assert!(oldalignment <= MAX_ALIGNMENT); // We don't guarantee larger alignments than 4096
 
         let baseptr = self.get_baseptr();
 
@@ -1008,7 +1071,7 @@ unsafe impl GlobalAlloc for Smalloc {
                             let slotsize = newsl.slotsize();
                             let p = unsafe { baseptr.add(offset) };
                             debug_assert!(if slotsize.is_power_of_two() {
-                                p.is_aligned_to(min(newsl.slotsize(), MAX_ALIGNMENT))
+                                p.is_aligned_to(newsl.slotsize())
                             } else {
                                 true
                             });
@@ -1030,6 +1093,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
                     // Free the old slot
                     self.push_flh(cursl);
+                    // XXX here we should, if the freed slot is a HUGE slot and the freed space frees up at least 16 KiB (one entire memory page on xnu/Macos/iOS, or 4 entire memory pages on Linux) (when not in huge-pages mode), advise the kernel it can unmap/uncommit the vm pages (don't forget about the 8-byte next-link for the intrusive free list)(mach_vm_behavior_set()/madvise()/some-Windows-equivalent)
 
                     newptr
                 }
@@ -1047,6 +1111,7 @@ unsafe impl GlobalAlloc for Smalloc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp::min;
 
     const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
     const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];

@@ -17,14 +17,13 @@ impl fmt::Display for AllocFailed {
 pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
     // xxx add tests?
     let size = layout.size();
-    assert!(size > 0);
+    debug_assert!(size > 0);
     let alignment = layout.align();
-    assert!(alignment > 0);
-    assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
-    assert!(alignment <= 4096); // We can't guarantee larger alignments than 4096
+    debug_assert!(alignment > 0);
+    debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
 
     let ptr = vendor::sys_alloc(size)?;
-    assert!(ptr.is_aligned_to(alignment));
+    debug_assert!(ptr.is_aligned_to(alignment));
 
     Ok(ptr)
 }
@@ -32,25 +31,25 @@ pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
 pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
     // xxx add tests?
     let size = layout.size();
-    assert!(size > 0);
+    debug_assert!(size > 0);
     let alignment = layout.align();
-    assert!(alignment > 0);
-    assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
+    debug_assert!(alignment > 0);
+    debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
 
     vendor::sys_dealloc(ptr, size)
 }
 
 pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
     // xxx add tests?
-    assert!(newsize > 0);
+    debug_assert!(newsize > 0);
     let oldsize = oldlayout.size();
-    assert!(oldsize > 0);
+    debug_assert!(oldsize > 0);
     let oldalignment = oldlayout.align();
-    assert!(oldalignment > 0);
-    assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
+    debug_assert!(oldalignment > 0);
+    debug_assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
 
     let new_ptr = vendor::sys_realloc(ptr, oldsize, newsize);
-    assert!(new_ptr.is_aligned_to(oldalignment));
+    debug_assert!(new_ptr.is_aligned_to(oldalignment));
 
     new_ptr
 }
@@ -133,17 +132,17 @@ pub mod vendor {
     }
 
     pub fn sys_dealloc(p: *mut u8, size: usize) {
-        assert!(size_of::<usize>() == size_of::<u64>());
-        assert!(size_of::<*mut u8>() == size_of::<u64>());
+        debug_assert!(size_of::<usize>() == size_of::<u64>());
+        debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
 
         unsafe {
             let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
-            assert!(retval == KERN_SUCCESS);
+            debug_assert!(retval == KERN_SUCCESS);
         }
     }
 
     pub fn sys_realloc(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
-        assert!(size_of::<*mut u8>() == size_of::<u64>());
+        debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
 
         let mut newaddress: mach_vm_address_t = 0;
         let task: mach_port_t = unsafe { mach_task_self() };
@@ -163,7 +162,7 @@ pub mod vendor {
                 &mut max_prot,
                 VM_INHERIT_NONE,
             );
-            assert!(retval == KERN_SUCCESS);
+            debug_assert!(retval == KERN_SUCCESS);
         }
 
         newaddress as *mut u8

@@ -204,7 +204,6 @@ fn bench_alloc(c: &mut Criterion) {
     c.bench_function("alloc", |b| b.iter(|| {
         let l = reqs[i % reqs.len()];
         black_box(unsafe { SM.alloc(l) });
-        //unsafe { SM.dealloc(p, l) };
         i += 1
     }));
 }
