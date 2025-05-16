@@ -80,7 +80,9 @@ exclusively for that memory allocation until it is `free()`'ed[^1].
 
 [^1]: Except for calls to `malloc()` or `realloc()` for sizes that are
     too big to fit into even the biggest of `smalloc`'s slots, which
-    `smalloc` instead satisfies by falling back to `mmap()`.
+    `smalloc` instead satisfies by falling back to the system
+    allocation, i.e. `mmap()` on Linux, `vm_mach_allocate()` on Macos,
+    etc.
 
 There are two types of slots: small and large. The small slots are in
 11 slabs, and have these sizes:
@@ -633,7 +635,7 @@ compare-and-exchange. This prevents ABA bugs in the updates of the
 2. If the result is `> 219,999,999` (or, for the huge-slots slab, `>
    19,999,999`), meaning that the slab was already full, then
    fetch-and-add -1. (This `malloc()`/`realloc()` will then be
-   satisfied by falling back to `mmap` instead.)
+   satisfied by falling back to the system allocator instead.)
 
 Now you've thread-safely incremented `eac`.
 
@@ -668,7 +670,7 @@ slot from the slab with 4 MiB slots (large-slots slab 9, a.k.a. the
 huge-slots slab).
 
 (As always, if the requested size doesn't fit into 4 MiB, then fall
-back to `mmap()`.)
+back to the system allocator.)
 
 ## Algorithms, More Detail -- Overflowers
 
@@ -713,8 +715,8 @@ next larger slab. (Thanks to Nate Wilcox for suggesting this technique
 to me.)
 
 If all of the slabs you could overflow to are full, then fall back to
-using the system allocator (e.g. `mmap()`) to request more memory from
-the operating system and return the pointer to that.
+using the system allocator to request more memory from the operating
+system and return the pointer to that.
 
 ## The Nitty-Gritty
 
