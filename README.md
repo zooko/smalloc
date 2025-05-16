@@ -61,98 +61,109 @@ exclusively for that memory allocation until it is `free()`'ed [*].
 too big to fit into even the biggest of `smalloc`'s slots, which
 `smalloc` instead satisfies by falling back to `mmap()`.)
 
-There are three types of slots: small, large, and huge. The small
-slots are in 11 slabs, and have these sizes:
+There are two types of slots: small and large. The small slots are in
+11 slabs, and have these sizes:
 
 small slots:
-slabnum:      size:     numslots:
---------   --------     ---------
-       0       1  B   440,000,000
-       1       2  B   440,000,000
-       2       3  B   440,000,000
-       3       4  B   440,000,000
-       4       5  B   440,000,000
-       5       6  B   440,000,000
-       6       8  B   440,000,000
-       7       9  B   440,000,000
-       8      10  B   440,000,000
-       9      16  B   440,000,000
-      10      32  B   440,000,000
+slabnum:       size:     numslots:
+--------    --------     ---------
+       0       1   B   220,000,000
+       1       2   B   220,000,000
+       2       3   B   220,000,000
+       3       4   B   220,000,000
+       4       5   B   220,000,000
+       5       6   B   220,000,000
+       6       8   B   220,000,000
+       7       9   B   220,000,000
+       8      10   B   220,000,000
+       9      16   B   220,000,000
+      10      32   B   220,000,000
 
-The large slots are in 7 slabs, and have these sizes:
+The large slots are in 10 slabs, and have these sizes:
 
 large slots:
-slabnum:      size:     numslots:
---------   --------     ---------
-       0     64   B   440,000,000
-       1    128   B   440,000,000
-       2    256   B   440,000,000
-       3    512   B   440,000,000
-       4   1024   B   440,000,000
-       5   2048   B   440,000,000
-       6      4 MiB    20,000,000
+slabnum:       size:     numslots:
+--------    --------     ---------
+       0      64   B   220,000,000
+       1     128   B   220,000,000
+       2     256   B   220,000,000
+       3     512   B   220,000,000
+       4    1024   B   220,000,000
+       5    2048   B   220,000,000
+       6    4096   B   220,000,000
+       7    8192   B   220,000,000
+       8   16384   B   220,000,000
+       9       4 MiB    20,000,000 <-- the "huge-slots" slab
 
-With the exception of the "huge-slot" slab (large slabnum 6), all
-slabs have 440,000,000 slots. They are 0-indexed, so the largest slot
-number in each slab is 439,999,999.
+With the exception of the "huge-slots" slab (large slabnum 9), all
+slabs have 220,000,000 slots. They are 0-indexed, so the largest slot
+number in each slab is 219,999,999.
 
 The "huge-slot" slab has slots that are 4,194,304 bytes (4 MiB) in
-size. It has only 20,000,000 slots instead of 440,000,000. The largest
+size. It has only 20,000,000 slots instead of 220,000,000. The largest
 slot number in the huge-slots slab is slot number 19,999,999.
 
-In Figure 1, `[data]` means an span of memory (of that slab's
+In Figure 1, `[data]` means a span of memory (of that slab's
 slot-size), a pointer to which can be returned from `malloc()` or
 `realloc()` for use by the caller:
 
 ```
 Figure 1. Organization of data slots.
 
-        slot # -> slot 0      slot 1      ... slot 439,999,999
+        slot # -> slot 0      slot 1      ... slot 219,999,999
                   ------      ------          ----------------
 small slots:
 slab #  slot size
 ------  ---------
                   .---------. .---------.     .---------. 
-     0       1  B | [data]  | | [data]  | ... | [data]  |
+     0      1   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------. 
-     1       2  B | [data]  | | [data]  | ... | [data]  |
+     1      2   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------. 
-     2       3  B | [data]  | | [data]  | ... | [data]  |
+     2      3   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     3       4  B | [data]  | | [data]  | ... | [data]  |
+     3      4   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     4       5  B | [data]  | | [data]  | ... | [data]  |
+     4      5   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     5       6  B | [data]  | | [data]  | ... | [data]  |
+     5      6   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     6       8  B | [data]  | | [data]  | ... | [data]  |
+     6      8   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     7       9  B | [data]  | | [data]  | ... | [data]  |
+     7      9   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     8      10  B | [data]  | | [data]  | ... | [data]  |
+     8     10   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     9      16  B | [data]  | | [data]  | ... | [data]  |
+     9     16   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-    10      32  B | [data]  | | [data]  | ... | [data]  |
+    10     32   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
 
+        slot # -> slot 0      slot 1      ... slot 219,999,999
+                  ------      ------          ----------------
 large slots:
 slab #  slot size
 ------  ---------
                   .---------. .---------.     .---------.
-     0      64  B | [data]  | | [data]  | ... | [data]  |
+     0     64   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     1     128  B | [data]  | | [data]  | ... | [data]  |
+     1    128   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     2     256  B | [data]  | | [data]  | ... | [data]  |
+     2    256   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     3     512  B | [data]  | | [data]  | ... | [data]  |
+     3    512   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     4    1024  B | [data]  | | [data]  | ... | [data]  |
+     4   1024   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     5    2048  B | [data]  | | [data]  | ... | [data]  |
+     5   2048   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
-     6   4 MiB  B | [data]  | | [data]  | ... <-- only 20M slots
+     6   4096   B | [data]  | | [data]  | ... | [data]  |
+                  .---------. .---------.     .---------.
+     7   8192   B | [data]  | | [data]  | ... | [data]  |
+                  .---------. .---------.     .---------.
+     8  16384   B | [data]  | | [data]  | ... | [data]  |
+                  .---------. .---------.     .---------.
+     9      4 MiB | [data]  | | [data]  | ... <-- only 20M slots
                   .---------. .---------.
 ```
 
@@ -198,11 +209,9 @@ slab #        variable
               .-----. .-----.
      1        | flh | | eac |
               .-----. .-----.
-     2        | flh | | eac |
-              .-----. .-----.
    ...          ...     ...
               .-----. .-----.
-     6        | flh | | eac |
+     9        | flh | | eac |
               .-----. .-----.
 ```
 
@@ -299,7 +308,7 @@ Figure 4. Separate free list slots associated with data slots for slabs 0, 1, an
 small slots:
 slab #     data slots
 ------     ----------
-           slot 0         slot 1         ... slot 439,999,999
+           slot 0         slot 1         ... slot 219,999,999
            .------------. .------------.     .------------.
      0     | [data]     | | [data]     | ... | [data]     |
            .------------. .------------.     .------------.
@@ -313,7 +322,7 @@ slab #     data slots
 small slots:
 slab #     separate free list space
 ------     ------------------------
-           slot 0         slot 1         ... slot 439,999,999
+           slot 0         slot 1         ... slot 219,999,999
            .------------. .------------.     .------------.
      0     | next slot# | | next slot# | ... | next slot# |
            .------------. .------------.     .------------.
@@ -358,7 +367,7 @@ slab #     data/free-list slots
 ------     --------------------
 
 small slots:
-           slot 0                    slot 1                    ... slot 439,999,999
+           slot 0                    slot 1                    ... slot 219,999,999
            .-----------------------. .-----------------------.     .-----------------------.
      6     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
            .-----------------------. .-----------------------.     .-----------------------.
@@ -377,7 +386,7 @@ large slots:
            .-----------------------. .-----------------------.     .-----------------------.
     ...               ...                       ...                           ...
            .-----------------------. .-----------------------.     .-----------------------.
-     6     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
+     9     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
            .-----------------------. .-----------------------.     .-----------------------.
 ```
 
@@ -415,7 +424,7 @@ Figure 6. Organization of data slots including areas.
 
                 area 0                                         area 1                              ... areas 2-62 ...   area 63
             /------------------------------------------\   /------------------------------------------\     |       /------------------------------------------\
-            slot 0      slot 1      ... slot 439,999,999   slot 0      slot 1      ... slot 439,999,999     |       slot 0      slot 1      ... slot 439,999,999
+            slot 0      slot 1      ... slot 219,999,999   slot 0      slot 1      ... slot 219,999,999     |       slot 0      slot 1      ... slot 219,999,999
             ------      ------          ----------------   ------      ------          ----------------     |       ------      ------          ----------------
 small slots:                                                                                                v
 slab #
@@ -444,7 +453,7 @@ slab #
     10      | [data]  | | [data]  | ... | [data]  |        | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
             .---------. .---------.     .---------.        .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
           
-            slot 0      slot 1      ... slot 439,999,999
+            slot 0      slot 1      ... slot 219,999,999
             ------      ------          ----------------
 large slots:
 slab #
@@ -462,7 +471,13 @@ slab #
             .---------. .---------.     .---------.
      5      | [data]  | | [data]  | ... | [data]  |
             .---------. .---------.     .---------.
-     6      | [data]  | | [data]  | ... <-- only 20M slots
+     6      | [data]  | | [data]  | ... | [data]  |
+            .---------. .---------.     .---------.
+     7      | [data]  | | [data]  | ... | [data]  |
+            .---------. .---------.     .---------.
+     8      | [data]  | | [data]  | ... | [data]  |
+            .---------. .---------.     .---------.
+     9      | [data]  | | [data]  | ... <-- only 20M slots
             .---------. .---------.
 ```
 
@@ -503,7 +518,7 @@ large slots:
               .-----. .-----.
    ...          ...     ...
               .-----. .-----.
-     6        | flh | | eac |
+     9        | flh | | eac |
               .-----. .-----.
 ```
 
@@ -514,7 +529,7 @@ area # ->      area 0                                             area 1        
            /------------------------------------------------\ /------------------------------------------------\   |     /------------------------------------------------\
 slab #     free list space                                                                                         |
 ------     ---------------                                                                                         |
-           slot 0         slot 1         ... slot 439,999,999 slot 0         slot 1         ... slot 439,999,999   v     slot 0         slot 1         ... slot 439,999,999
+           slot 0         slot 1         ... slot 219,999,999 slot 0         slot 1         ... slot 219,999,999   v     slot 0         slot 1         ... slot 219,999,999
            .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
      0     | next slot# | | next slot# | ... | next slot# |   | next slot# | | next slot# | ... | next slot# |    ...    | next slot# | | next slot# | ... | next slot# |
            .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
@@ -580,14 +595,20 @@ Now you've thread-safely popped the head of the free list into
 
 Now you've thread-safely pushed `i` onto the free list.
 
+### To prevent ABA bugs in updates to the free list head
+
+Store a counter in the most-significant 32-bits of the (64-bit) flh
+word. Increment that counter each time you attempt a
+compare-and-exchange. This prevents ABA bugs in the updates of the
+`flh`.
+
 #### To increment `eac`:
 
 1. Fetch-and-add 1 to the value of `eac`.
-2. If the result is `> 439,999,999` (or, for the huge-slots slab, `>
+2. If the result is `> 219,999,999` (or, for the huge-slots slab, `>
    19,999,999`), meaning that the slab was already full, then
    fetch-and-add -1. (This `malloc()`/`realloc()` will then be
-   satisfied by falling back to the system allocation (e.g. "mmap")
-   instead.)
+   satisfied by falling back to `mmap` instead.)
 
 Now you've thread-safely incremented `eac`.
 
@@ -612,12 +633,13 @@ new size still fits within the current slot that the data is already
 occupying, then just be lazy and consider this `realloc()` a success
 and return the current pointer as the return value.
 
-If the new requested size doesn't fit into the current slot, and if it
-is less than or equal to 64 bytes, allocate from the slab with 64 byte
-slots (large-slots slab 0).
+If the new requested size doesn't fit into the current slot, then
+choose the smallest of the following list that can hold the new
+requested size: 64 B (large-slots slab 0, 4096 B (large-slots slab 6),
+or 16384 B (large-slots slab 8).
 
-If the new requested size doesn't fit into 64 bytes, then allocate
-from the slab with 4 MiB slots (large-slots slab 6, a.k.a. the
+If the new requested size doesn't fit into 16384 bytes, then use a
+slot from the slab with 4 MiB slots (large-slots slab 9, a.k.a. the
 huge-slots slab).
 
 (As always, if the requested size doesn't fit into 4 MiB, then fall
@@ -627,13 +649,47 @@ back to `mmap()`.)
 
 Suppose the user calls `malloc()` or `realloc()` and the slab we
 choose to allocate from is full. That means the free list is empty,
-and the ever-allocated-count is greater than or equal to 439,999,999
+and the ever-allocated-count is greater than or equal to 219,999,999
 (or 19,999,999 for the huge-slots slab) -- the total number of slots
 in this slab. This could happen only if there were that many
 allocations from one slab alive simultaneously.
 
-In that case, just fall back to using `mmap()` to request more memory
-from the operating system and just return the pointer to that.
+In that case, if this is a small-slots slab, then find the area whose
+slab of this same slab number has the lowest `eac`. Loop over each
+other area, checking its `eac` and remembering the lowest one you've
+found so far. In order check its `eac` you actually have to
+`fetch_add(1)` to it so that if another thread is changing the `eac`
+at the same time, you'll actually have reserved that slot. This also
+means you have to either use that slot or push it onto that slab's
+free list before you forget about it.
+
+If you find a slab with `eac` 0, short-circuit the loop and use that
+area.
+
+Once you've either reserved slot 0 in a slab, or else completed the
+traversal of all the areas and found the lowest-`eac` and reserved a
+slot in it, then set your `THREAD_AREANUM` to that area number, and
+that slot of that area to satisfy this request.
+
+When doing this, traverse the areas in a permutation by adding 31 mod
+64 instead of adding 1 mod 64, in order to reduce the chance of your
+search overlapping with operations of any other threads whose first
+allocation was after your thread's first allocation (since they got
+`THREAD_AREANUM`'s incrementally higher than yours).
+
+If you've searched all areas and you weren't able to allocate any slot
+-- meaning that all slabs of this slab number in all areas were full
+-- then increase the slab number and try again. If this was already
+the largest small-slots slab, then switch to the smallest large-slots
+slab.
+
+If the this is a large-slots slab and it is full, then overflow to the
+next larger slab. (Thanks to Nate Wilcox for suggesting this technique
+to me.)
+
+If all of the slabs you could overflow to are full, then fall back to
+using the system allocator (e.g. `mmap()`) to request more memory from
+the operating system and return the pointer to that.
 
 ## The Nitty-Gritty
 
@@ -686,7 +742,7 @@ in order to guarantee that all of the alignment requirements hold.
    memory pages and to satisfy requested alignments (see below).
 
 4. The huge-slots slab is additionally aligned to 4 MiB to satisfy
-   requested alignments (see below).
+   larger requested alignments (see below).
 
 5. Requested alignments: Sometimes the caller of `malloc()` requires
    an alignment for the resulting memory, meaning that the pointer
@@ -694,6 +750,10 @@ in order to guarantee that all of the alignment requirements hold.
    of that alignment. Such caller-required alignments are always a
    power of 2. Because of the alignments of the data slabs, slots
    whose sizes are powers of 2 are always aligned to their own size.
+
+In order to start `smalloc`'s base pointer with 4 MiB alignment, we
+over-allocate 4 MiB - 1 byte and the scoot forward the base pointer to
+the first 4 MiB boundary.
 
 Okay, now you know everything there is to know about `smalloc`'s data
 model and memory layout. Given this information, you can calculate the
@@ -707,7 +767,7 @@ The sentinel value is actually `0` so you have to add 1 to an index
 value before storing it in `flh` and subtract 1 from `flh` before
 using it as an index.
 
-# Rationale / Philosophy -- Why `smalloc` is beautiful (in my eyes)
+# Philosophy -- Why `smalloc` is beautiful (in my eyes)
 
 "Allocating" virtual memory (as it is called in Unix terminology)
 doesn't prevent any other code (in this process or any other process)
@@ -729,12 +789,16 @@ have completely separate address spaces which aren't affected by
 allocations in this process.)
 
 Therefore, it can be useful to reserve one huge span of address space
-and then use only a small part of it. This technique is used
-occasionally in scientific computing, such as to compute over large
-sparse matrices, and a limited form of it is used in some of the best
-modern memory managers like `mimalloc` and `rpmalloc`, but I'm not
-aware of this technique being exploited to the hilt in a memory
-manager before.
+and then use only a small part of it, because then you know memory at
+those addresses space is available to you without dynamically
+allocating more and having to track and maintain the resulting
+separate address spaces.
+
+This technique is used occasionally in scientific computing, such as
+to compute over large sparse matrices, and a limited form of it is
+used in some of the best modern memory managers like `mimalloc` and
+`rpmalloc`, but I'm not aware of this technique being exploited to the
+hilt like this in a memory manager before.
 
 So, if you accept that "avoiding reserving too much virtual address
 space" is not an important goal for a memory manager, what *are* the
@@ -979,6 +1043,12 @@ written here in roughly descending order of importance:
    has recently called `malloc()`, `free()`, or `realloc()` for an
    allocation of this size class, then the `flh` and `eac` for this
    slab will already be in cache.
+
+   It also does not count the potential-cache-miss of using a lookup
+   table instead of a computation to map back and forth between
+   areas/slabs/slots and addresses. (The current implementation of
+   `smalloc` does indeed use such lookup tables because benchmarking
+   shows it is faster than computation of the same mapping.)
    
 4. Be *consistently* efficient.
 
@@ -1008,8 +1078,13 @@ written here in roughly descending order of importance:
    never has to "rebalance" or re-arrange its data structures, or do
    any "deferred accounting" like some other memory managers do, which
    nicely eliminates some sources of intermittent performance
-   degradation.
-    
+   degradation. (See [this blog
+   post](https://pwy.io/posts/mimalloc-cigarette/) for a cautionary
+   tale of how deferred accounting, while it can nicely improve
+   performance in the common "hot paths", can also give rise to edge
+   cases that can occasionally degrade performance in a way that
+   causes problems.)
+
    There are no locks in `smalloc`[^1], so it will hopefully handle
    heavy multi-processing contention (i.e. many separate cores
    allocating and freeing memory simultaneously) with consistent
@@ -1060,6 +1135,142 @@ written here in roughly descending order of importance:
    I am hopeful that `smalloc` may achieve all five of these goals. If
    so, it may turn out to be a very useful tool!
 
+# Rationales for Specific Design Decisions
+
+## Rationale for Slot Sizes, Growers, and Overflowers
+
+small slots:
+             worst-case number
+             that fit into one
+                     cacheline
+slabnum:      size:     (64B):
+--------   --------   --------
+       0       1  B         64
+       1       2  B         32
+       2       3  B         20
+       3       4  B         16
+       4       5  B         12
+       5       6  B         10
+       6       8  B          8
+       7       9  B          6
+       8      10  B          5
+       9      16  B          4
+      10      32  B          2
+
+Rationale for the sizes of small slots: These were chosen by
+calculating how many objects of this size would fit into the
+least-well-packed 64-byte cache line when we lay out objects of these
+size end-to-end over many successive 64-byte cache lines. If that
+makes sense. The worst-case number of objects that can be packed into
+a cache line can be up 2 fewer than the best-case, since the first
+object in this cache line might cross the cache line boundary and only
+the last part of the object is in this cache line, and the last object
+in this cache line might similarly be unable to fit entirely in and
+only the first part of it might be in this cache line. So this "how
+many fit" number below counts only the ones that entirely fit in, even
+when we are laying out objects of this size one after another (with no
+padding) across many cache lines. So it can be 0, 1, or 2 fewer than
+you get from just diving 64 by the size of the slot. (We also excluded
+sizes which are smaller but still can't fit more -- in the worst case
+-- than a larger size.)
+
+large slots:
+               number that fit
+                      into one
+           virtual memory page
+slabnum:      size:    (4KiB):
+--------   --------   --------
+       0     64   B         64
+       1    128   B         32
+       2    256   B         16
+       3    512   B          8
+       4   1024   B          4
+       5   2048   B          2
+       6   4096   B          1
+       7   8192   B          0
+       8  16384   B          0
+       9      4 MiB          0
+
+Rationale for the sizes of large slots: 
+
+* Large-slot slab numbers 0-5 are chosen so you can fit multiple of
+  them into a 4 KiB memory page (which is the default on Linux,
+  Windows, and Android), while having a simple power-of-2 distribution
+  that is easy to compute.
+
+* Large-slot slab number 6, the 4096 byte slots, to hold some realloc
+  growers that aren't ever going to exceed 4096 bytes, and to cheaply
+  copy their data out (without touching more than one memory page on
+  4096-byte memory page systems) when and if they do exceeed 4096
+  bytes.
+
+* Large-slab slab number 7 -- 8192 bytes -- because you can fit two
+  slots into a memory page on a 16 KiB memory page system.
+
+* Large-slab slab number 8 -- 16,384 bytes -- with the same rationale
+  as for the 4096-byte slots, but in this case it helps if your system
+  has 16 KiB memory pages. (Or, I suppose if you have
+  hugepages/superpages enabled.)
+
+* Another motivation to include large-slots slab numbers 6, 7, and 8,
+  is that we can fit only 20 million huge slots into our virtual
+  address space limitations, and the user code could conceivable
+  allocate more than 20 million allocations too big to fit into the
+  smaller slots.
+  
+* The 4 MiB "huge" slots, because according to profiling the Zcash
+  "zebrad" server, allocations of 2 MiB, 3 MiB, and even 4 MiB are not
+  uncommon.
+
+It's interesting to consider that, aside from the reasons above, there
+are no other benefits to having more slabs with slots smaller than
+"huge". That is, if a slot is too large to fit more than one into a
+memory page, and if it isn't likely that we're going to need to copy
+the entire contents out for a realloc-grow, then whether the slot is,
+say, 128 KiB, or 8 MiB makes no difference to the behavior of the
+system! The only difference in the behavior of the system is how the
+virtual memory pages get touched, which is determined by the user
+code's memory access patterns, not by the memory manager's
+code. Except per the reasons listed above. If I'm wrong about that
+please let me know.
+
+Well, there is one more potential reason: if the user code has
+billions of live large allocations and/or trillions of live small
+allocations, you'll need to overflow allocations to other slabs, and
+if all of the sufficiently-large slabs are full then you'll have to
+fall back to the system allocator.
+
+When running benchmarks on Macos 15.4.1 on arm64, before I implemented
+the Overflowers feature, I accidentally did this. It turns out the
+system allocator is substantially slower (at least on this machine),
+and it eventually crashed the operating system with:
+
+```panic(cpu 0 caller 0xfffffe004c83ec30): zalloc[3]: zone map exhausted while allocating from zone [VM map entries], likely due to memory leak in zone [VM map entries] (13G, 180906506 elements allocated) @zalloc.c:4560```
+
+In practice this seems unlikely to occur in real systems, unless there
+is a memory leak (i.e. allocations that are then forgotten about
+rather than freed), in which case the Overflowers feature and the
+additional slot sizes only delay rather than prevent the problem. (But
+I suppose that could be good enough if the program finishes its work
+before it crashes.)
+
+But, in any case, in order to prevent or at least delay a slowdown or
+a crash in this (rather extreme) case is the rationale for including
+the Overflowers feature.
+
+Rationale for promoting growers to 64-byte slots: that *might* be
+sufficient -- they might stop growing before exceeding 64 bytes. And
+if not, then it is going to require only a single cache line access to
+copy the data out to the next location.
+
+Rationale for promoting growers to 4096-byte slots: that *might* be
+sufficient, and if not then it is going to touch only a single memory
+page to copy the data out to the next location.
+
+Rationale for promoting growers to 16,384-byte slots: and we don't
+have as many huge slots as we do non-huge slots, and we don't want to
+the huge-slots slab to fill up.
+
 # Open Issues / Future Work
 
 * Port to Cheri, add capability-safety
@@ -1082,7 +1293,7 @@ written here in roughly descending order of importance:
 
 * And llvm-cov's Modified Condition/Decision Coverage analysis. :-)
 
-* The whole overflow algorithm turned out to be complicated to
+* xyz1 xxx The whole overflow algorithm turned out to be complicated to
   implement in source code. Or, to put it another way the simpler
   algorithm that just overflows straight to the system allocator was
   *substantially* simpler to implement. So... XXX come back to this
@@ -1131,17 +1342,19 @@ written here in roughly descending order of importance:
   `smalloc` tuned to larger virtual memory pages. Notably virtual
   memory pages on modern MacOS and iOS are 16 KiB.
 
-* If we could allocate even more virtual memory space, `smalloc` could
-  more scalable (eg huge slots could be larger than 4 mebibytes, the
-  number of per-thread areas could be greater than 64), it could be
-  even simpler (eg remove the special-casing of the number of slots
-  for the huge slots slab), and you could have more than one `smalloc`
-  heap in a single process. Larger (than 48-bit) virtual memory
-  addresses are already supported on some platforms/configurations,
-  especially server-oriented ones, but are not widely supported on
-  desktop and smartphone platforms. We could consider creating a
-  variant of `smalloc` that works only platforms with larger (than
-  48-bit) virtual memory addresses and offers these advantages.
+* If we could allocate even more virtual memory address space,
+  `smalloc` could more scalable (eg huge slots could be larger than 4
+  mebibytes, the number of per-thread areas could be greater than 64),
+  it could be even simpler (eg remove the (quite complex!) overflow
+  algorithm, and the special-casing of the number of slots for the
+  huge slots slab), and you could have more than one `smalloc` heap in
+  a single process. Larger (than 48-bit) virtual memory addresses are
+  already supported on some platforms/configurations, especially
+  server-oriented ones, but are not widely supported on desktop and
+  smartphone platforms. We could consider creating a variant of
+  `smalloc` that works only platforms with larger (than 48-bit)
+  virtual memory addresses and offers these advantages. TODO: make an
+  even simpler smalloc ("ssmalloc"??) for 5-level-page-table systems.
 
 * I looked into the `RDPID` instruction on x86 and the `MPIDR`
   instruction on ARM as a way to get a differentiating number/ID for
@@ -1168,7 +1381,23 @@ written here in roughly descending order of importance:
 
 * CI for benchmarks? 🤔
 
+* Nate's idea to make the sentinel value be a large value, initialized
+  upon first eac, instead of being 0. <3
+
 * Benchmark no-pub, all-const, native arch, lto, no-idempotent-init
+
+* the 4-byte slots can already be intrusive-free-list :-o
+
+* add support for the new experimental alloc API
+
+* add initialized-to-zero alloc alternative, relying on kernel
+  0-initialization when coming from eac
+
+* make it usable as the implementation `malloc()`, `free()`, and
+  `realloc()` for native code. :-) (Nate's suggestion.)
+
+* reimplement it in the Odin programming language
+
 
 Notes:
 
