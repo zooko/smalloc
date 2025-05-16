@@ -1,6 +1,8 @@
 #![feature(pointer_is_aligned_to)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+#![doc = include_str!("../README.md")]
+
 // Map of the following offsets and sizes:
 
 // 1. Base Pointer -- 4 MiB alignment

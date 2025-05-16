@@ -35,12 +35,33 @@ use smalloc::Smalloc;
 static SMALLOC: Smalloc = Smalloc::new();
 ```
 
-See `src/bin/hellosmalloc.rs` for a test program that demonstrates how
-to do this.
+See `./src/bin/hellosmalloc.rs` for a test program that demonstrates
+how to do this.
 
 That's it! There are no other features you could consider using, no
 other changes you need to make, no configuration options, no tuning
 options, no nothing.
+
+# Tests and Benchmarks
+
+Tests and benchmarks are run using the `nextest` runner.
+
+To run the tests:
+
+```text
+cargo nextest run tests::
+```
+
+And look at stdout to see the test results.
+
+To run the benchmarks:
+
+```text
+cargo nextest run --release benches:: --test-threads 1
+```
+
+And open the `index.html` files in `./target/criterion/*/report/` to
+view the benchmark results.
 
 # How it works
 
@@ -55,15 +76,16 @@ All memory managed by `smalloc` is organized into "slabs". A slab is a
 fixed-length array of fixed-length "slots" of bytes. Every pointer
 returned by a call to `smalloc`'s `malloc()` or `free()` is a pointer
 to the beginning of one of those slots, and that slot is used
-exclusively for that memory allocation until it is `free()`'ed [*].
+exclusively for that memory allocation until it is `free()`'ed[^1].
 
-([*] Except for calls to `malloc()` or `realloc()` for sizes that are
-too big to fit into even the biggest of `smalloc`'s slots, which
-`smalloc` instead satisfies by falling back to `mmap()`.)
+[^1]: Except for calls to `malloc()` or `realloc()` for sizes that are
+    too big to fit into even the biggest of `smalloc`'s slots, which
+    `smalloc` instead satisfies by falling back to `mmap()`.
 
 There are two types of slots: small and large. The small slots are in
 11 slabs, and have these sizes:
 
+```text
 small slots:
 slabnum:       size:     numslots:
 --------    --------     ---------
@@ -78,9 +100,11 @@ slabnum:       size:     numslots:
        8      10   B   220,000,000
        9      16   B   220,000,000
       10      32   B   220,000,000
+```
 
 The large slots are in 10 slabs, and have these sizes:
 
+```text
 large slots:
 slabnum:       size:     numslots:
 --------    --------     ---------
@@ -94,6 +118,7 @@ slabnum:       size:     numslots:
        7    8192   B   220,000,000
        8   16384   B   220,000,000
        9       4 MiB    20,000,000 <-- the "huge-slots" slab
+```
 
 With the exception of the "huge-slots" slab (large slabnum 9), all
 slabs have 220,000,000 slots. They are 0-indexed, so the largest slot
@@ -107,7 +132,7 @@ In Figure 1, `[data]` means a span of memory (of that slab's
 slot-size), a pointer to which can be returned from `malloc()` or
 `realloc()` for use by the caller:
 
-```
+```text
 Figure 1. Organization of data slots.
 
         slot # -> slot 0      slot 1      ... slot 219,999,999
@@ -137,7 +162,7 @@ slab #  slot size
      9     16   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
     10     32   B | [data]  | | [data]  | ... | [data]  |
-                  .---------. .---------.     .---------.
+                  '---------' '---------'     '---------'
 
         slot # -> slot 0      slot 1      ... slot 219,999,999
                   ------      ------          ----------------
@@ -162,9 +187,9 @@ slab #  slot size
      7   8192   B | [data]  | | [data]  | ... | [data]  |
                   .---------. .---------.     .---------.
      8  16384   B | [data]  | | [data]  | ... | [data]  |
-                  .---------. .---------.     .---------.
+                  .---------. .---------.     '---------'
      9      4 MiB | [data]  | | [data]  | ... <-- only 20M slots
-                  .---------. .---------.
+                  '---------' '---------'
 ```
 
 ### Variables
@@ -180,7 +205,7 @@ slots in that slab have ever been allocated (i.e. has a pointer ever
 been returned by `malloc()` or `realloc()` that points to that slot).
 `flh` and `eac` are each 8 bytes in size.
 
-```
+```text
 Figure 2. Organization of variables.
 
  * "flh" is "free-list head"
@@ -195,11 +220,11 @@ slab #        variable
      1        | flh | | eac |
               .-----. .-----.
      2        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
    ...          ...     ...
               .-----. .-----.
     10        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
 
 large slots:
 slab #        variable
@@ -208,11 +233,11 @@ slab #        variable
      0        | flh | | eac |
               .-----. .-----.
      1        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
    ...          ...     ...
               .-----. .-----.
      9        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
 ```
 
 ### Separate Free List Spaces (for Small-Slot Slabs [0-5])
@@ -222,7 +247,7 @@ large enough to hold 440,000,000 slot indexes, each slot index being 4
 bytes in size. (We'll describe to how to manage the free lists for the
 other slabs later.)
 
-```
+```text
 Figure 3. Organization of separate free list spaces for small-slot slabs [0-5]
 
 small slots:
@@ -235,11 +260,11 @@ slab #     separate free list space
      1     | next slot# | | next slot# | ... | next slot# |
            .------------. .------------.     .------------.
      2     | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
    ...          ...            ...                ...
            .------------. .------------.     .------------.
      5     | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
 ```
 
 That's it! Those are all the data elements in `smalloc`!
@@ -302,7 +327,7 @@ space -- if the data slot is currently freed, then the associated free
 list slot contains the index of the *next* free slot (or the sentinel
 value if there is no next free slot).
 
-```
+```text
 Figure 4. Separate free list slots associated with data slots for slabs 0, 1, and 2
 
 small slots:
@@ -313,11 +338,11 @@ slab #     data slots
      0     | [data]     | | [data]     | ... | [data]     |
            .------------. .------------.     .------------.
      1     | [data]     | | [data]     | ... | [data]     |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
    ...          ...            ...                ...
            .------------. .------------.     .------------.
      5     | [data]     | | [data]     | ... | [data]     |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
 
 small slots:
 slab #     separate free list space
@@ -327,11 +352,11 @@ slab #     separate free list space
      0     | next slot# | | next slot# | ... | next slot# |
            .------------. .------------.     .------------.
      1     | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
    ...          ...            ...                ...
            .------------. .------------.     .------------.
      5     | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'
 ```
 
 So to pop the head of the free list, for `malloc()`, for slab 0, 1, 2,
@@ -360,7 +385,7 @@ This technique is known as an "intrusive free list". Thanks to Andrew
 Reece and Sam Smith, my colleagues at Shielded Labs, for explaining
 this to me.
 
-```
+```text
 Figure 5. Intrusive free lists for slabs with slots big enough to hold links
 
 slab #     data/free-list slots
@@ -372,22 +397,22 @@ small slots:
      6     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
            .-----------------------. .-----------------------.     .-----------------------.
      7     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
-           .-----------------------. .-----------------------.     .-----------------------.
+           '-----------------------' '-----------------------'     '-----------------------'
     ...               ...                       ...                           ...
            .-----------------------. .-----------------------.     .-----------------------.
     10     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
-           .-----------------------. .-----------------------.     .-----------------------.
+           '-----------------------' '-----------------------'     '-----------------------'
 
 large slots:
            .-----------------------. .-----------------------.     .-----------------------.
      0     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
            .-----------------------. .-----------------------.     .-----------------------.
      1     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
-           .-----------------------. .-----------------------.     .-----------------------.
-    ...               ...                       ...                           ...
-           .-----------------------. .-----------------------.     .-----------------------.
-     9     | [data or next slot #] | | [data or next slot #] | ... | [data or next slot #] |
-           .-----------------------. .-----------------------.     .-----------------------.
+           '-----------------------' '-----------------------'     '-----------------------'
+    ...               ...                       ...
+           .-----------------------. .-----------------------.
+     9     | [data or next slot #] | | [data or next slot #] | ... <-- only 20M slots
+           '-----------------------' '-----------------------'
 ```
 
 So for these slabs, to satisfy a `malloc()` or `realloc()` by popping
@@ -419,7 +444,7 @@ identical "areas" that'll each be (typically) accessed by a different
 thread. This is not necessary for correctness, it is just a
 performance optimization.
 
-```
+```text
 Figure 6. Organization of data slots including areas.
 
                 area 0                                         area 1                              ... areas 2-62 ...   area 63
@@ -451,7 +476,7 @@ slab #
      9      | [data]  | | [data]  | ... | [data]  |        | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
             .---------. .---------.     .---------.        .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
     10      | [data]  | | [data]  | ... | [data]  |        | [data]  | | [data]  | ... | [data]  |         ...      | [data]  | | [data]  | ... | [data]  |
-            .---------. .---------.     .---------.        .---------. .---------.     .---------.                  .---------. .---------.     .---------. 
+            '---------' '---------'     '---------'        '---------' '---------'     '---------'                  '---------' '---------'     '---------' 
           
             slot 0      slot 1      ... slot 219,999,999
             ------      ------          ----------------
@@ -476,16 +501,16 @@ slab #
      7      | [data]  | | [data]  | ... | [data]  |
             .---------. .---------.     .---------.
      8      | [data]  | | [data]  | ... | [data]  |
-            .---------. .---------.     .---------.
+            .---------. .---------.     '---------'
      9      | [data]  | | [data]  | ... <-- only 20M slots
-            .---------. .---------.
+            '---------' '---------'
 ```
 
 And add space for each area for the variables for the small-slot
 slabs, and the separate free list spaces for the first 6 small-slot
 slabs:
 
-```
+```text
 Figure 7. Organization of variables including areas.
 
  * "flh" is "free-list head"
@@ -502,27 +527,27 @@ slab #        variable
      1        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
      2        | flh | | eac |  | flh | | eac | ... | flh | | eac |
-              .-----. .-----.  .-----. .-----.     .-----. .-----.
+              '-----' '-----'  '-----' '-----'     '-----' '-----'
    ...          ...     ...      ...     ...         ...     ...
               .-----. .-----.  .-----. .-----.     .-----. .-----.
      9        | flh | | eac |  | flh | | eac | ... | flh | | eac |
               .-----. .-----.  .-----. .-----.     .-----. .-----.
     10        | flh | | eac |  | flh | | eac | ... | flh | | eac |
-              .-----. .-----.  .-----. .-----.     .-----. .-----.
+              '-----' '-----'  '-----' '-----'     '-----' '-----'
           
 large slots:
               .-----. .-----.
      0        | flh | | eac |
               .-----. .-----.
      1        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
    ...          ...     ...
               .-----. .-----.
      9        | flh | | eac |
-              .-----. .-----.
+              '-----' '-----'
 ```
 
-```
+```text
 Figure 8. Organization of separate free list spaces for small-slot slabs [0-5] including areas.
 
 area # ->      area 0                                             area 1                                  ... areas 2-62 ... area 63
@@ -534,11 +559,11 @@ slab #     free list space                                                      
      0     | next slot# | | next slot# | ... | next slot# |   | next slot# | | next slot# | ... | next slot# |    ...    | next slot# | | next slot# | ... | next slot# |
            .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
      1     | next slot# | | next slot# | ... | next slot# |   | next slot# | | next slot# | ... | next slot# |    ...    | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'   '------------' '------------'     '------------'           '------------' '------------'     '------------'
    ...          ...            ...                ...              ...            ...                ...                      ...            ...                ...
            .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
      5     | next slot# | | next slot# | ... | next slot# |   | next slot# | | next slot# | ... | next slot# |    ...    | next slot# | | next slot# | ... | next slot# |
-           .------------. .------------.     .------------.   .------------. .------------.     .------------.           .------------. .------------.     .------------.
+           '------------' '------------'     '------------'   '------------' '------------'     '------------'           '------------' '------------'     '------------'
 ```
 
 There is a global static variable named `GLOBAL_THREAD_AREANUM`,
@@ -1065,16 +1090,10 @@ written here in roughly descending order of importance:
    The story sketched out above about user code allocating small
    allocations on one thread and then handing them out to other
    threads to access is an example of how user code behavior could
-   trigger a performance degradation in `smalloc`. There is one other
-   such scenario I can think of: there are only 64 allocation areas,
-   so if the user code has more than 64 threads that perform
-   allocation, then some of them will have to share an area. If two
-   threads that are sharing an area were then to allocate multiple
-   small allocations simultaneously, those allocations would then
-   share cache lines. This could lead, again, to false-sharing.
+   trigger a performance degradation in `smalloc`.
 
    On the bright side, I can't think of any *other* "worst case
-   scenarios" for `smalloc` beyond these two. In particular, `smalloc`
+   scenarios" for `smalloc` beyond that one. In particular, `smalloc`
    never has to "rebalance" or re-arrange its data structures, or do
    any "deferred accounting" like some other memory managers do, which
    nicely eliminates some sources of intermittent performance
@@ -1085,7 +1104,7 @@ written here in roughly descending order of importance:
    cases that can occasionally degrade performance in a way that
    causes problems.)
 
-   There are no locks in `smalloc`[^1], so it will hopefully handle
+   There are no locks in `smalloc`[^2], so it will hopefully handle
    heavy multi-processing contention (i.e. many separate cores
    allocating and freeing memory simultaneously) with consistent
    performance.
@@ -1102,12 +1121,12 @@ written here in roughly descending order of importance:
    (possibly-suspended) thread to release a lock, nor can they suffer
    from priority inversion.
 
-    [^1] ... except in the initialization function that acquires the
+    [^2]: ... except in the initialization function that acquires the
     lock only one time -- the first time `alloc()` is called.
     
-   So with the possible exception of the two "worst-case scenarios"
-   described above, I optimistically expect that `smalloc` will show
-   excellent and extremely consistent performance.
+   So with the possible exception of the (hopefully rare) "worst-case
+   scenario" described above, I optimistically expect that `smalloc`
+   will show excellent and extremely consistent performance.
 
 5. Efficiently support using `realloc()` to extend
    vectors. `smalloc`'s initial target user is Rust code, and Rust
@@ -1121,16 +1140,14 @@ written here in roughly descending order of importance:
    order to enlarge a Vector, then fill it with data until it was full
    again, and then enlarge it again, and so on. This can result in the
    underlying memory manager having to copy the contents of the Vector
-   over and over (in fact, in the worst case, this results in O(N^2)
-   running time when appending N bytes to the Vector). `smalloc()`
-   optimizes out almost all of that copying of data, with the simple
-   expedient of jumping to a much larger slot size whenever
-   `realloc()`'ing an allocation to a larger size (see "Algorithms,
-   More Detail -- Growers", above). My profiling results indicate that
-   this technique would indeed eliminate at least 90% of the
-   memory-copying when extending Vectors, making it almost costless to
-   extend a Vector any number of times (as long as the new size
-   doesn't exceed the size of `smalloc`'s large slots: 4 MiB).
+   over and over. `smalloc()` optimizes out almost all of that copying
+   of data, with the simple expedient of jumping to a much larger slot
+   size whenever `realloc()`'ing an allocation to a larger size (see
+   "Algorithms, More Detail -- Growers", above). My profiling results
+   indicate that this technique would indeed eliminate at least 90% of
+   the memory-copying when extending Vectors, making it almost
+   costless to extend a Vector any number of times (as long as the new
+   size doesn't exceed the size of `smalloc`'s large slots: 4 MiB).
 
    I am hopeful that `smalloc` may achieve all five of these goals. If
    so, it may turn out to be a very useful tool!
@@ -1139,6 +1156,7 @@ written here in roughly descending order of importance:
 
 ## Rationale for Slot Sizes, Growers, and Overflowers
 
+```text
 small slots:
              worst-case number
              that fit into one
@@ -1156,6 +1174,7 @@ slabnum:      size:     (64B):
        8      10  B          5
        9      16  B          4
       10      32  B          2
+```
 
 Rationale for the sizes of small slots: These were chosen by
 calculating how many objects of this size would fit into the
@@ -1174,6 +1193,7 @@ you get from just diving 64 by the size of the slot. (We also excluded
 sizes which are smaller but still can't fit more -- in the worst case
 -- than a larger size.)
 
+```text
 large slots:
                number that fit
                       into one
@@ -1190,6 +1210,7 @@ slabnum:      size:    (4KiB):
        7   8192   B          0
        8  16384   B          0
        9      4 MiB          0
+```
 
 Rationale for the sizes of large slots: 
 
@@ -1245,7 +1266,9 @@ the Overflowers feature, I accidentally did this. It turns out the
 system allocator is substantially slower (at least on this machine),
 and it eventually crashed the operating system with:
 
-```panic(cpu 0 caller 0xfffffe004c83ec30): zalloc[3]: zone map exhausted while allocating from zone [VM map entries], likely due to memory leak in zone [VM map entries] (13G, 180906506 elements allocated) @zalloc.c:4560```
+```text
+panic(cpu 0 caller 0xfffffe004c83ec30): zalloc[3]: zone map exhausted while allocating from zone [VM map entries], likely due to memory leak in zone [VM map entries] (13G, 180906506 elements allocated) @zalloc.c:4560
+```
 
 In practice this seems unlikely to occur in real systems, unless there
 is a memory leak (i.e. allocations that are then forgotten about
@@ -1396,23 +1419,13 @@ the huge-slots slab to fill up.
 * make it usable as the implementation `malloc()`, `free()`, and
   `realloc()` for native code. :-) (Nate's suggestion.)
 
-* reimplement it in the Odin programming language
-
-
-Notes:
-
-Our variables need to be 4-byte aligned (for performance and
-correctness of atomic operations, on some/all architectures). They
-always will be, because the variables are laid out at the beginning of
-the mmap'ed region, which is always page-aligned.
-
-
+* Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the
+  programming language, not for the rewrite.)
 
 Things `smalloc` does not currently attempt to do:
 
 * Try to mitigate malicious exploitation after a memory-usage bug in
   the user code.
-
 
 # Acknowledgments
 
@@ -1434,9 +1447,9 @@ Things `smalloc` does not currently attempt to do:
 
 * Thanks to pioneers/competitors/colleagues from whom I have learned
   much: the makers of dlmalloc, jemalloc, mimalloc, snmalloc,
-  rsbmalloc, ferroc, scudo, rpmalloc, ... and Michael & Scott
-  (https://web.archive.org/web/20241122100644/https://www.cs.rochester.edu/research/synchronization/pseudocode/queues.html),
-  and Leo (the Brave Web Browser AI) for extensive and mostly correct
-  answers to stupid Rust questions.
+  rsbmalloc, ferroc, scudo, rpmalloc, ... and
+  [Michael
+  & Scott](https://web.archive.org/web/20241122100644/https://www.cs.rochester.edu/research/synchronization/pseudocode/queues.html), and Leo (the Brave Web Browser AI) for extensive and
+  mostly correct answers to stupid Rust questions.
 
 * Thanks to fluidvanadium for the first PR from a contributor. :-)
