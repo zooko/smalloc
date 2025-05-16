@@ -1613,8 +1613,6 @@ mod benches {
     }
 }
 
-// xyz10 write common setup hook to create Smalloc instance and idempotent call_init on it
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2563,14 +2561,12 @@ mod tests {
         } else {
             panic!("Should have been a large slot.");
         }
-        eprintln!("sl1: {sl1:?}");
         assert_eq!(slotnum1, i);
         i += 1;
         
         // Step 2: allocate all the rest of the slots in this slab except the last one:
         while i < NUM_SLOTS_O - 1 {
             sm.alloc_slot(l).unwrap();
-
             i += 1
         }
 
@@ -2586,11 +2582,22 @@ mod tests {
             panic!("Should have been a large slot.");
         }
 
-        eprintln!("sl2: {sl2:?}");
         // Assert some things about the two stored slot locations:
         assert_eq!(largeslabnum1, largeslabnum2);
         assert_eq!(slotnum1, orig_i);
         assert_eq!(slotnum2, NUM_SLOTS_O - 1);
-    }
 
+        // Step 4: allocate another slot from this slab and store it in a local variable:
+        let sl3 = sm.alloc_slot(l).unwrap();
+        let largeslabnum3: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl3 {
+            largeslabnum3 = largeslabnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        // Assert that this alloc overflowed to a different slab.
+        assert_ne!(largeslabnum1, largeslabnum3);
+    }
 }
