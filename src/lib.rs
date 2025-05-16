@@ -2533,7 +2533,6 @@ mod tests {
         assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::Relaxed));
     }
 
-    // xyz2 add overflower test for large-slots O and for large-slots huge
     // and for small slots overflowing to large slots
     // and for small slots overflowing to large slots and then overflowing again
 
@@ -2612,5 +2611,77 @@ mod tests {
     /// the subsequent allocations come from large-slots slab 9.
     fn overflowers_large_slab_8() {
         help_test_overflowers_large(8);
+    }
+
+    #[test]
+    /// If we've allocated all of the slots from large-slots slab 9 --
+    /// the huge-slots slab -- the subsequent allocations come from
+    /// falling back to the system allocator.
+    fn overflowers_huge_slots_slab() {
+        const LARGESLABNUM: usize = NUM_LARGE_SLABS - 1;
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[LARGESLABNUM], 1).unwrap();
+
+        let orig_i = NUM_SLOTS_HUGE - 3;
+        let mut i = orig_i;
+        _help_set_large_slab_eac(&sm, LARGESLABNUM, i);
+
+        // Step 1: allocate a slot and store it in a local variable:
+        let sl1 = sm.alloc_slot(l).unwrap();
+        let largeslabnum1: usize;
+        let slotnum1: usize;
+        
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl1 {
+            largeslabnum1 = largeslabnum;
+            slotnum1 = slotnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+        assert_eq!(largeslabnum1, LARGESLABNUM);
+        assert_eq!(slotnum1, i);
+        i += 1;
+        
+        // Step 2: allocate all the rest of the slots in this slab except the last one:
+        while i < NUM_SLOTS_HUGE - 1 {
+            sm.alloc_slot(l).unwrap();
+            i += 1
+        }
+
+        // Step 3: allocate the last slot in this slab and store it in a local variable:
+        let sl2 = sm.alloc_slot(l).unwrap();
+        let largeslabnum2: usize;
+        let slotnum2: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl2 {
+            largeslabnum2 = largeslabnum;
+            slotnum2 = slotnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        // Assert some things about the two stored slot locations:
+        assert_eq!(largeslabnum1, largeslabnum2);
+        assert_eq!(slotnum1, orig_i);
+        assert_eq!(slotnum2, NUM_SLOTS_HUGE - 1);
+
+        // Step 4: allocate another slot from this slab and store it in a local variable:
+        let sl3 = sm.alloc_slot(l);
+        assert!(sl3.is_none()); // no slots available
+
+        // Step 5: invoke the global `alloc()`
+        let alloced_ptr = unsafe { sm.alloc(l) };
+        assert!(!alloced_ptr.is_null());
+
+        let osl = SlotLocation::new_from_ptr(sm.get_baseptr(), alloced_ptr);
+        assert!(osl.is_none()); // it's not pointing to one of our slots
+
+        // I don't believe in sweeping the floors right before razing
+        // the house. This call to `sys_dealloc()` is just to exercise
+        // more code in case something (like valgrind for example)
+        // could find a bug in smalloc this way.
+        sys_dealloc(alloced_ptr, l);
     }
 }
