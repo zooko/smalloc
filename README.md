@@ -6,8 +6,8 @@ built-in memory allocator, `dlmalloc`, `jemalloc`, `mimalloc`,
 `snmalloc`, `rpmalloc`, etc.
 
 `smalloc` offers performance properties comparable to the other memory
-managers, while being simpler. The current implementation is only 809
-lines of Rust code (excluding comments, tests, and benchmarks).
+managers, while being simpler. The current implementation is only 907
+lines of Rust code (excluding comments, tests, benchmarks, etc).
 
 # Caveats
 
