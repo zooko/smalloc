@@ -544,7 +544,7 @@ impl Smalloc {
             let flhdword: u64 = flh.load(Ordering::Acquire);
             let firstindexplus1: u32 = (flhdword & (u32::MAX as u64)) as u32;
             debug_assert!(firstindexplus1 <= NUM_SLOTS_O as u32);
-            debug_assert!(firstindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst));
+            debug_assert!(firstindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed));
 
             let counter: u32 = (flhdword >> 32) as u32;
             if firstindexplus1 == 0 {
@@ -573,7 +573,7 @@ impl Smalloc {
             ).is_ok() {
                 // These constraints must be true considering that the POP succeeded.
                 debug_assert!(nextindexplus1 <= NUM_SLOTS_O as u32);
-                debug_assert!(nextindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::SeqCst));
+                debug_assert!(nextindexplus1 as u64 <= self.get_small_eac(areanum, smallslabnum).load(Ordering::Relaxed));
 
                 break firstindexplus1
             }
@@ -601,7 +601,7 @@ impl Smalloc {
         debug_assert!(u8_ptr_to_flh.is_aligned_to(DOUBLEWORDSIZE)); // need 8-byte alignment for atomic ops (on at least some/most platforms)
         let u64_ptr_to_flh = u8_ptr_to_flh.cast::<u64>();
         let flh = unsafe { AtomicU64::from_ptr(u64_ptr_to_flh) };
-        debug_assert!(flh.load(Ordering::SeqCst) & (u32::MAX as u64) <= num_large_slots(largeslabnum) as u64, "{}", flh.load(Ordering::SeqCst));
+        debug_assert!(flh.load(Ordering::Relaxed) & (u32::MAX as u64) <= num_large_slots(largeslabnum) as u64, "{}", flh.load(Ordering::Relaxed));
         flh
     }
 
@@ -617,7 +617,7 @@ impl Smalloc {
             let flhdword: u64 = flh.load(Ordering::Acquire);
             let firstindexplus1: u32 = (flhdword & (u32::MAX as u64)) as u32;
             debug_assert!(firstindexplus1 <= num_large_slots(largeslabnum) as u32);
-            debug_assert!(firstindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst));
+            debug_assert!(firstindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::Relaxed));
 
             let counter: u32 = (flhdword >> 32) as u32;
 
@@ -644,7 +644,7 @@ impl Smalloc {
             ).is_ok() {
                 // These constraints must be true considering that the POP succeeded.
                 debug_assert!(nextindexplus1 <= num_large_slots(largeslabnum) as u32);
-                debug_assert!(nextindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::SeqCst));
+                debug_assert!(nextindexplus1 as u64 <= self.get_large_eac(largeslabnum).load(Ordering::Relaxed));
 
                 break firstindexplus1
             }
@@ -1675,7 +1675,7 @@ mod tests {
     /// Make the next test fast and less non-deterministic by poking the eac directly.
     fn _help_set_large_slab_eac(sm: &Smalloc, largeslabnum: usize, new_eac: usize) {
         let eac = sm.get_large_eac(largeslabnum); // slab NUM_LARGE_SLABS-1 holds the biggest (4 MiB slots)
-        eac.store(new_eac as u64, Ordering::SeqCst);
+        eac.store(new_eac as u64, Ordering::Relaxed);
     }
 
     #[test] // commented-out because it takes too long to run
@@ -2405,7 +2405,7 @@ mod tests {
         let orig_i = NUM_SLOTS_O - 3;
         let mut i = orig_i;
         let eac = sm.get_small_eac(orig_this_thread_areanum, 6); // slab 6 holds 8-byte things
-        eac.store(i as u64, Ordering::SeqCst);
+        eac.store(i as u64, Ordering::Relaxed);
 
         // Step 1: allocate a slot and store it in a local variable:
         let sl1 = sm.alloc_slot(l).unwrap();
@@ -2490,7 +2490,7 @@ mod tests {
 
         // We've now allocated two slots from this new area:
         let second_area_eac = sm.get_small_eac(new_this_thread_areanum, 6); // slab 6 holds 8-byte things
-        let second_area_eac_orig_val = second_area_eac.load(Ordering::SeqCst);
+        let second_area_eac_orig_val = second_area_eac.load(Ordering::Relaxed);
         assert_eq!(second_area_eac_orig_val, 2);
 
         // Step 6: If we allocate a slot from the *original* area --
@@ -2514,7 +2514,7 @@ mod tests {
 
         // It landed in the third area.
         // But along the way, it incremented the `eac` of the second area:
-        assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::SeqCst));
+        assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::Relaxed));
 
         // And it pushed that slot onto that slab's free list, so now if we alloc from that slab, this will not increment its eac:
         let sl6 = sm.small_alloc_with_overflow(areanum4, 6).unwrap();
@@ -2530,25 +2530,22 @@ mod tests {
 
         assert_eq!(areanum6, areanum4);
         assert_eq!(smallslabnum6, smallslabnum1);
-        assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::SeqCst));
+        assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::Relaxed));
     }
 
     // xyz2 add overflower test for large-slots O and for large-slots huge
     // and for small slots overflowing to large slots
     // and for small slots overflowing to large slots and then overflowing again
 
-    #[test]
-    /// If we've allocated all of the slots from a large-slots slab,
-    /// the subsequent allocations come from different slabs.
-    fn overflowers_large() {
+    fn help_test_overflowers_large(largeslabnum: usize) {
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        let l = Layout::from_size_align(64, 1).unwrap();
+        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum], 1).unwrap();
 
         let orig_i = NUM_SLOTS_O - 3;
         let mut i = orig_i;
-        _help_set_large_slab_eac(&sm, 0, i);
+        _help_set_large_slab_eac(&sm, largeslabnum, i);
 
         // Step 1: allocate a slot and store it in a local variable:
         let sl1 = sm.alloc_slot(l).unwrap();
@@ -2561,6 +2558,7 @@ mod tests {
         } else {
             panic!("Should have been a large slot.");
         }
+        assert_eq!(largeslabnum1, largeslabnum);
         assert_eq!(slotnum1, i);
         i += 1;
         
@@ -2599,5 +2597,20 @@ mod tests {
 
         // Assert that this alloc overflowed to a different slab.
         assert_ne!(largeslabnum1, largeslabnum3);
+        assert_eq!(largeslabnum3, largeslabnum+1);
+    }
+
+    #[test]
+    /// If we've allocated all of the slots from large-slots slab 0,
+    /// the subsequent allocations come from large-slots slab 1.
+    fn overflowers_large_slab_0() {
+        help_test_overflowers_large(0);
+    }
+
+    #[test]
+    /// If we've allocated all of the slots from large-slots slab 8,
+    /// the subsequent allocations come from large-slots slab 9.
+    fn overflowers_large_slab_8() {
+        help_test_overflowers_large(8);
     }
 }
