@@ -12,10 +12,10 @@ lines of Rust code (excluding comments, tests, benchmarks, etc).
 # Caveats
 
 No warranty! Not supported. Never been security audited. First time
-Rust project (and since it is a low-level memory allocator, Jack
-O'Connor gave it the award for "worst choice ever for a first-time
-Rust project"). There is no security contact information nor anyone
-you can contact for help using this code.
+Rust project (and Jack O'Connor told me, laughing, that a low-level
+memory manager was "worst choice ever for a first-time Rust
+project"). There is no security contact information nor anyone you can
+contact for help using this code.
 
 Also, it doesn't really have complete unit tests yet, hasn't been
 subjected to code coverage analysis, hasn't been used in production,
