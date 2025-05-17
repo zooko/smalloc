@@ -1075,7 +1075,10 @@ written here in roughly descending order of importance:
    table instead of a computation to map back and forth between
    areas/slabs/slots and addresses. (The current implementation of
    `smalloc` does indeed use such lookup tables because benchmarking
-   shows it is faster than computation of the same mapping.)
+   shows it is faster than computation of the same mapping.) Those are
+   also shared by all calls to `malloc()`, `free()`, and `realloc()`
+   (for requests of that size class -- either large or small), and so
+   will also often be in cache.
    
 4. Be *consistently* efficient.
 
@@ -1253,9 +1256,8 @@ the entire contents out for a realloc-grow, then whether the slot is,
 say, 128 KiB, or 8 MiB makes no difference to the behavior of the
 system! The only difference in the behavior of the system is how the
 virtual memory pages get touched, which is determined by the user
-code's memory access patterns, not by the memory manager's
-code. Except per the reasons listed above. If I'm wrong about that
-please let me know.
+code's memory access patterns, not by the memory manager. Except per
+the reasons listed above. If I'm wrong about that please let me know.
 
 Well, there is one more potential reason: if the user code has
 billions of live large allocations and/or trillions of live small
@@ -1300,33 +1302,11 @@ the huge-slots slab to fill up.
 
 * Port to Cheri, add capability-safety
 
-* Implement this load-balancing feature: If the resulting
-  `THREAD_AREANUM` > 63, then scan all the areas, inspecting the `eac`
-  of this slab in each area and choose the area with the lowest `eac`
-  for this slab and set this thread's `areanum` equal to that.
-
-* See if you can prove whether jumping straight to large slots on the
-  first resize is or isn't a performance regression compared to the
-  current technique of first jumping to the 32-byte slot size and only
-  then jumping to the large slot size. If you can't prove that the
-  current technique is substantially better in some real program, then
-  switch to the "straight to large slots" alternative for simplicity.
-
 * Try adding a dose of quint, VeriFast, *and* Miri! :-D
 
 * And Loom! |-D
 
 * And llvm-cov's Modified Condition/Decision Coverage analysis. :-)
-
-* xyz1 xxx The whole overflow algorithm turned out to be complicated to
-  implement in source code. Or, to put it another way the simpler
-  algorithm that just overflows straight to the system allocator was
-  *substantially* simpler to implement. So... XXX come back to this
-  and see if we can enlarge the NUM_SLOTS a more to further reduce the
-  chances of that overflow ever happening in practice? Or see if after
-  having implemented the simpler algorithm, we can see a nice way to
-  implement the original overflow algorithm. XXX enlarge small slabs
-  to NUM_SLOTS = 2^31 or so
 
 * See if the "tiny" slots (1-, 2-, and 3-byte slots) give a
   substantial performance improvement in any real program and measure
@@ -1349,71 +1329,46 @@ the huge-slots slab to fill up.
   contention).
 
 * The current design and implementation of `smalloc` is "tuned" to
-  64-byte cache lines and 4096-bit virtal memory pages.
-
-  The current version of `smalloc` works correctly with larger cache
-  lines but there might be a performance improvement from a variant of
-  `smalloc` tuned for 128-bit cache lines. Notably the new Apple ARM64
-  chips have 128-bit cache lines in some cases, and modern Intel chips
-  have a hardware cache prefetcher that sometimes fetches the next
-  64-bit cache line.
+  64-byte cache lines and 4096-bit virtal memory pages, but with
+  "tunings" that hopefully also make it perform well for 128-byte
+  cache lines and 16 KiB pages.
 
   It works correctly with larger page tables but there might be
   performance problems with extremely large ones -- I'm not
   sure. Notably "huge pages" of 2 MiB or 1 GiB are sometimes
   configured in Linux especially in "server"-flavored configurations.
 
-  There might also be a performance improvement from a variant of
-  `smalloc` tuned to larger virtual memory pages. Notably virtual
-  memory pages on modern MacOS and iOS are 16 KiB.
-
 * If we could allocate even more virtual memory address space,
   `smalloc` could more scalable (eg huge slots could be larger than 4
   mebibytes, the number of per-thread areas could be greater than 64),
-  it could be even simpler (eg remove the (quite complex!) overflow
-  algorithm, and the special-casing of the number of slots for the
-  huge slots slab), and you could have more than one `smalloc` heap in
-  a single process. Larger (than 48-bit) virtual memory addresses are
-  already supported on some platforms/configurations, especially
-  server-oriented ones, but are not widely supported on desktop and
-  smartphone platforms. We could consider creating a variant of
-  `smalloc` that works only platforms with larger (than 48-bit)
-  virtual memory addresses and offers these advantages. TODO: make an
-  even simpler smalloc ("ssmalloc"??) for 5-level-page-table systems.
-
-* I looked into the `RDPID` instruction on x86 and the `MPIDR`
-  instruction on ARM as a way to get a differentiating number/ID for
-  the current core without the overhead of an operating system call
-  and without having to load the current thread number from memory,
-  but using `MPIDR` resulted in an illegal instruction exception on
-  MacOS on Apple M4, so I gave up on that approach. The current
-  implementation assigns a unique integer "thread number" to each
-  thread the first time it calls `malloc()`, which is stored in
-  thread-local storage. It might be nice if we could figure out a way
-  to get any kind of differentiating number/ID for different cores
-  with a CPU instruction instead of by reading it from thread-local
-  memory, which incurs a potential-cache-miss. Also, of course, we
-  ought to benchmark whether it is actually more efficient to use one
-  of these CPU instructions or to just load the thread number from
-  thread-local storage. :-)
+  it could be even simpler (eg maybe just remove the (quite complex!)
+  overflow algorithm, and the special-casing of the number of slots
+  for the huge-slots slab), and you could have more than one `smalloc`
+  heap in a single process. Larger (than 48-bit) virtual memory
+  addresses are already supported on some platforms/configurations,
+  especially server-oriented ones, but are not widely supported on
+  desktop and smartphone platforms. We could consider creating a
+  variant of `smalloc` that works only platforms with larger (than
+  48-bit) virtual memory addresses and offers these advantages. TODO:
+  make an even simpler smalloc ("ssmalloc"??) for 5-level-page-table
+  systems.
 
 * Define some kind of Rust type to manage the add-1/sub-1 on the
   indexes of the free list? (Nate's suggestion)
 
-* Rewrite it in Zig. :-)
-
-* need more huge slots
-
-* CI for benchmarks? 🤔
-
 * Nate's idea to make the sentinel value be a large value, initialized
   upon first eac, instead of being 0. <3
+
+* Rewrite it in Zig. :-)
+
+* CI for benchmarks? 🤔
 
 * Benchmark no-pub, all-const, native arch, lto, no-idempotent-init
 
 * the 4-byte slots can already be intrusive-free-list :-o
 
-* add support for the new experimental alloc API
+* add support for the [new experimental Rust Allocator
+  API](https://doc.rust-lang.org/nightly/std/alloc/trait.Allocator.html)
 
 * add initialized-to-zero alloc alternative, relying on kernel
   0-initialization when coming from eac
@@ -1428,6 +1383,8 @@ Things `smalloc` does not currently attempt to do:
 
 * Try to mitigate malicious exploitation after a memory-usage bug in
   the user code.
+
+* Shrink the lookup tables!
 
 # Acknowledgments
 
