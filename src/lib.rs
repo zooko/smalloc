@@ -1094,6 +1094,15 @@ unsafe impl GlobalAlloc for Smalloc {
         }
     }
 
+    // fn advise_decommit(ptr: *mut u8, size: usize) {
+    //     // Trim the span to 4 KiB alignment and size because
+    //     // a. I'm not 100% sure that some OS's might not *extend* the span and drop a page that contains some of our data? Prolly not, but...
+    //     // b. We might as well not bother with a syscall and bother the kernel with advice that doesn't apply to at least one whole page
+    //     // Note that pages are 4 KiB on default Linux, 16 KiB on Macos and iOS, and could be huge (2 MiB or 2 GiB or something) on non-default Linux or other unixes...
+
+    //     xxx
+    // }
+    
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
             Some(sl) => {
@@ -1103,7 +1112,6 @@ unsafe impl GlobalAlloc for Smalloc {
             None => {
                 // No slot -- this allocation must have come from falling back to `sys_alloc()`.
                 sys_dealloc(ptr, layout);
-                // XXX here we should madvise to tell the kernel it can unmap/uncommit the vm pages
             }
         }
     }
@@ -1409,29 +1417,64 @@ mod benches {
     }
 
     #[test]
-    fn pop_small_flh() {
+    fn pop_small_flh_empty() {
         let mut c = Criterion::default();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        const NUM_LINKS: usize = 50_000;
-        let mut sls = Vec::with_capacity(NUM_LINKS);
-        while sls.len() < NUM_LINKS {
-            let osl = sm.small_alloc_with_overflow(0, 0);
-            if osl.is_none() {
-                break;
-            }
+        c.bench_function("pop_small_flh_empty", |b| b.iter(|| {
+            black_box(sm.pop_small_flh(0, 0));
+        }));
+    }
 
-            sls.push(osl.unwrap());
+    #[test]
+    fn pop_small_flh_nonempty_lifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
         }
 
-        for sl in sls {
+        for sl in sls.into_iter() {
             sm.push_flh(sl);
         }
 
-        c.bench_function("pop_small_flh", |b| b.iter(|| {
-            black_box(sm.pop_small_flh(0, 0));
+        c.bench_function("pop_small_flh_nonempty_lifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 0));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    use rand::seq::SliceRandom;
+    #[test]
+    fn pop_small_flh_nonempty_random() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
+        }
+
+        let mut r = StdRng::seed_from_u64(0);
+        sls.shuffle(&mut r);
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_small_flh_nonempty_random", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 0));
+            debug_assert_ne!(sflh, 0);
         }));
     }
 
@@ -1572,6 +1615,7 @@ mod benches {
 
         let mut r = StdRng::seed_from_u64(0);
         let mut reqs = Box::new(Vec::new());
+        reqs.reserve(NUM_NON_RENEWABLE_ARGS);
         while reqs.len() < NUM_NON_RENEWABLE_ARGS {
             let l = Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap();
             reqs.push((unsafe { sm.alloc(l) }, l));
