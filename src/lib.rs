@@ -1503,7 +1503,6 @@ mod benches {
         }));
     }
 
-    // xyz16 remove unnecessary benchmarks
     #[test]
     fn pop_small_flh_intrusive_empty() {
         let mut c = Criterion::default();
@@ -2748,6 +2747,35 @@ mod tests {
         assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::Relaxed));
     }
 
+    #[test]
+    /// If we've allocated all of the slots from all of the
+    /// small-slots slabs, the subsequent allocations come from a
+    /// large-slot slab.
+    fn overflowers_small_to_large() {
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let l = Layout::from_size_align(32, 1).unwrap();
+
+        // Step 0: reach into each area's slab's `eac` and set it to the max slot number.
+        for slabareanum in 0..NUM_SMALL_SLAB_AREAS {
+            let eac = sm.get_small_eac(slabareanum, 10); // slab 10 holds 32-byte things
+            eac.store(NUM_SLOTS_O as u64, Ordering::Relaxed);
+        }
+
+        // Step 1: Allocate another slot and store it in a local variable:
+        let sl1 = sm.alloc_slot(l).unwrap();
+        let largeslabnum1: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl1 {
+            largeslabnum1 = largeslabnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        assert_eq!(largeslabnum1, 0);
+    }
+
     // and for small slots overflowing to large slots
     // and for small slots overflowing to large slots and then overflowing again
 
@@ -2812,6 +2840,94 @@ mod tests {
         // Assert that this alloc overflowed to a different slab.
         assert_ne!(largeslabnum1, largeslabnum3);
         assert_eq!(largeslabnum3, largeslabnum+1);
+    }
+
+    #[test]
+    /// If the slab you're overflowing to is itself full, overflow to the next slab.
+    fn multiple_overflows_large() {
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let largeslabnum = 0;
+
+        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum], 1).unwrap();
+
+        let orig_i = NUM_SLOTS_O - 3;
+        let mut i = orig_i;
+        _help_set_large_slab_eac(&sm, largeslabnum, i);
+
+        // Step 1: allocate a slot and store it in a local variable:
+        let sl1 = sm.alloc_slot(l).unwrap();
+        let largeslabnum1: usize;
+        let slotnum1: usize;
+        
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl1 {
+            largeslabnum1 = largeslabnum;
+            slotnum1 = slotnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+        assert_eq!(largeslabnum1, largeslabnum);
+        assert_eq!(slotnum1, i);
+        i += 1;
+
+        // Step 2: allocate all the rest of the slots in this slab except the last one:
+        while i < NUM_SLOTS_O - 1 {
+            sm.alloc_slot(l).unwrap();
+            i += 1
+        }
+
+        // Step 3: allocate the last slot in this slab and store it in a local variable:
+        let sl2 = sm.alloc_slot(l).unwrap();
+        let largeslabnum2: usize;
+        let slotnum2: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl2 {
+            largeslabnum2 = largeslabnum;
+            slotnum2 = slotnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        // Assert some things about the two stored slot locations:
+        assert_eq!(largeslabnum1, largeslabnum2);
+        assert_eq!(slotnum1, orig_i);
+        assert_eq!(slotnum2, NUM_SLOTS_O - 1);
+
+        // Step 4: allocate another slot from this slab and store it in a local variable:
+        let sl3 = sm.alloc_slot(l).unwrap();
+        let largeslabnum3: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl3 {
+            largeslabnum3 = largeslabnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        // Assert that this alloc overflowed to a different slab.
+        assert_ne!(largeslabnum1, largeslabnum3);
+        assert_eq!(largeslabnum3, largeslabnum+1);
+
+        // Step 5: set the overflow slab to be full
+        _help_set_large_slab_eac(&sm, largeslabnum+1, NUM_SLOTS_O);
+
+        let sl4 = sm.alloc_slot(l).unwrap();
+        let largeslabnum4: usize;
+
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl4 {
+            largeslabnum4 = largeslabnum;
+        } else {
+            panic!("Should have been a large slot.");
+        }
+
+        // Assert that this alloc overflowed to a different slab from the first slab.
+        assert_ne!(largeslabnum4, largeslabnum1);
+
+        // Assert that this alloc overflowed to a different slab from the second slab.
+        assert_ne!(largeslabnum4, largeslabnum3);
+
+        // Assert that this alloc overflowed to next next slab.
+        assert_eq!(largeslabnum4, largeslabnum3+1);
     }
 
     #[test]
