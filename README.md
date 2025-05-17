@@ -1363,8 +1363,6 @@ the huge-slots slab to fill up.
 
 * CI for benchmarks? 🤔
 
-* Benchmark no-pub, all-const, native arch, lto, no-idempotent-init
-
 * the 4-byte slots can already be intrusive-free-list :-o
 
 * add support for the [new experimental Rust Allocator
