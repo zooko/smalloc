@@ -1361,7 +1361,7 @@ mod benches {
     use std::alloc::GlobalAlloc;
 
     const NUM_ARGS: usize = 50_000;
-    const NUM_NON_RENEWABLE_ARGS: usize = 256_000_000;
+    const NUM_NON_RENEWABLE_ARGS: usize = 220_000_000;
 
     use criterion::{Criterion, black_box};
 
@@ -1417,19 +1417,19 @@ mod benches {
     }
 
     #[test]
-    fn pop_small_flh_empty() {
+    fn pop_small_flh_separate_empty() {
         let mut c = Criterion::default();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_small_flh_empty", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_separate_empty", |b| b.iter(|| {
             black_box(sm.pop_small_flh(0, 0));
         }));
     }
 
     #[test]
-    fn pop_small_flh_nonempty_lifo() {
+    fn pop_small_flh_separate_nonempty_lifo() {
         let mut c = Criterion::default();
 
         let sm = Smalloc::new();
@@ -1445,7 +1445,32 @@ mod benches {
             sm.push_flh(sl);
         }
 
-        c.bench_function("pop_small_flh_nonempty_lifo", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_separate_nonempty_lifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 0));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_small_flh_separate_nonempty_fifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
+        }
+
+        sls.reverse();
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_small_flh_separate_nonempty_fifo", |b| b.iter(|| {
             let sflh = black_box(sm.pop_small_flh(0, 0));
             debug_assert_ne!(sflh, 0);
         }));
@@ -1453,7 +1478,7 @@ mod benches {
 
     use rand::seq::SliceRandom;
     #[test]
-    fn pop_small_flh_nonempty_random() {
+    fn pop_small_flh_separate_nonempty_random() {
         let mut c = Criterion::default();
 
         let sm = Smalloc::new();
@@ -1472,36 +1497,182 @@ mod benches {
             sm.push_flh(sl);
         }
 
-        c.bench_function("pop_small_flh_nonempty_random", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_separate_nonempty_random", |b| b.iter(|| {
             let sflh = black_box(sm.pop_small_flh(0, 0));
             debug_assert_ne!(sflh, 0);
         }));
     }
 
+    // xyz16 remove unnecessary benchmarks
     #[test]
-    fn pop_large_flh() {
+    fn pop_small_flh_intrusive_empty() {
         let mut c = Criterion::default();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        const NUM_LINKS: usize = 50_000;
-        let mut sls = Vec::with_capacity(NUM_LINKS);
-        while sls.len() < NUM_LINKS {
-            let osl = sm.inner_large_alloc(0);
-            if osl.is_none() {
-                break;
-            }
+        c.bench_function("pop_small_flh_intrusive_empty", |b| b.iter(|| {
+            black_box(sm.pop_small_flh(0, 6));
+        }));
+    }
 
-            sls.push(osl.unwrap());
+    #[test]
+    fn pop_small_flh_intrusive_nonempty_lifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
         }
 
-        for sl in sls {
+        for sl in sls.into_iter() {
             sm.push_flh(sl);
         }
 
-        c.bench_function("pop_large_flh", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 6));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_nonempty_fifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
+        }
+
+        sls.reverse();
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_small_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 6));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_nonempty_random() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
+        }
+
+        let mut r = StdRng::seed_from_u64(0);
+        sls.shuffle(&mut r);
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_small_flh_intrusive_nonempty_random", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_small_flh(0, 6));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_empty() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        c.bench_function("pop_large_flh_intrusive_empty", |b| b.iter(|| {
             black_box(sm.pop_large_flh(0));
+        }));
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_nonempty_lifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.large_alloc_with_overflow(0).unwrap());
+        }
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_large_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_large_flh(0));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_nonempty_fifo() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.large_alloc_with_overflow(0).unwrap());
+        }
+
+        sls.reverse();
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_large_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_large_flh(0));
+            debug_assert_ne!(sflh, 0);
+        }));
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_nonempty_random() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let mut sls = Box::new(Vec::new());
+        sls.reserve(NUM_NON_RENEWABLE_ARGS);
+        while sls.len() < NUM_NON_RENEWABLE_ARGS {
+            sls.push(sm.large_alloc_with_overflow(0).unwrap());
+        }
+
+        let mut r = StdRng::seed_from_u64(0);
+        sls.shuffle(&mut r);
+
+        for sl in sls.into_iter() {
+            sm.push_flh(sl);
+        }
+
+        c.bench_function("pop_large_flh_intrusive_nonempty_random", |b| b.iter(|| {
+            let sflh = black_box(sm.pop_large_flh(0));
+            debug_assert_ne!(sflh, 0);
         }));
     }
 
