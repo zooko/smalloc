@@ -25,11 +25,6 @@
 //   a. Large Slabs excluding the huge-slots slab -- 16 KiB alignment
 //   b. Large Slabs, the huge-slots slab -- 4 MiB alignment
 
-// This is the size of virtual memory pages on modern XNU (Macos, iOS,
-// etc.), and conveniently it is a nice multiple of 4 times the
-// default size of virtual memory pages on Linux.
-const FOURKB_PAGE_ALIGNMENT: usize = 2usize.pow(14);
-
 // This is the largest alignment we can guarantee for data slots.
 const MAX_ALIGNMENT: usize = 2usize.pow(22);
 
@@ -68,7 +63,7 @@ const fn large_slab_alignment(largeslabnum: usize) -> usize {
     if largeslabnum == NUM_LARGE_SLABS-1 {
         SIZE_OF_HUGE_SLOTS
     } else {
-        FOURKB_PAGE_ALIGNMENT
+        PAGE_SIZE
     }
 }
 
@@ -108,16 +103,16 @@ const fn offset_of_large_eac(largeslabnum: usize) -> usize {
 const CACHELINE_SIZE: usize = 64;
 
 // Align the beginning of the separate free lists region, and the
-// beginning of each individual separate free list, to
-// FOURKB_PAGE_ALIGNMENT in order to minimize having (the in-use part
-// of) the free list span more memory pages than necessary. (As well
-// as to make the items in the free list, starting with the first one,
-// pack nicely into cachelines.)
-const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(FOURKB_PAGE_ALIGNMENT);
+// beginning of each individual separate free list, to PAGE_SIZE
+// alignment in order to minimize having (the in-use part of) the free
+// list span more memory pages than necessary. (As well as to make the
+// items in the free list, starting with the first one, pack nicely
+// into cachelines.)
+const SEPARATE_FREELISTS_BASE_OFFSET: usize = VARIABLES_SPACE.next_multiple_of(PAGE_SIZE);
 
 // The calls to next_multiple_of() on a SEPARATE_FREELIST_SPACE are to
 // start the *next* separate free list on an alignment boundary.
-const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * SINGLEWORDSIZE).next_multiple_of(FOURKB_PAGE_ALIGNMENT); // Size of each of the separate free lists
+const SEPARATE_FREELIST_SPACE: usize = (NUM_SLOTS_O * SINGLEWORDSIZE).next_multiple_of(PAGE_SIZE); // Size of each of the separate free lists
 const NUM_SEPARATE_FREELISTS: usize = 6; // Number of separate free lists for slabs whose slots are too small to hold a 4-byte-aligned 4-byte word (slab numbers 0, 1, 2, 3, 4, and 5)
 
 const SEPARATE_FREELISTS_SPACE_REGION: usize =
@@ -137,9 +132,9 @@ const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS + 1] {
     while slabnum < NUM_SMALL_SLABS {
         sum += small_slabnum_to_slotsize(slabnum) * NUM_SLOTS_O;
         // Add padding to align the beginning of the next small data
-        // slab to FOURKB_PAGE_ALIGNMENT, so that the first few slots
+        // slab to PAGE_SIZE alignment, so that the first few slots
         // will touch only one page.
-        sum = sum.next_multiple_of(FOURKB_PAGE_ALIGNMENT);
+        sum = sum.next_multiple_of(PAGE_SIZE);
         slabnum += 1;
         lut[slabnum] = sum;
     }
@@ -158,7 +153,7 @@ const fn sum_small_slab_sizes(numslabs: usize) -> usize {
 // themselves will consist of small slabs that are aligned, is the
 // same size as the first small slab area, we need to pad the
 // SMALL_SLAB_AREA_SPACE to the alignment.
-const SMALL_SLAB_AREA_SPACE: usize = sum_small_slab_sizes(NUM_SMALL_SLABS).next_multiple_of(FOURKB_PAGE_ALIGNMENT);
+const SMALL_SLAB_AREA_SPACE: usize = sum_small_slab_sizes(NUM_SMALL_SLABS).next_multiple_of(PAGE_SIZE);
 const SMALL_SLAB_AREAS_REGION_SPACE: usize = SMALL_SLAB_AREA_SPACE * NUM_SMALL_SLAB_AREAS;
 
 // Aligning LARGE_SLAB_REGION_BASE_OFFSET to 4 MiB so that it is easy
@@ -175,7 +170,7 @@ const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
         sum += large_slabnum_to_slotsize(index) * num_large_slots(index);
 
         // Add padding to align the beginning of the next large data
-        // slab. The non-huge-slots one to FOURKB_PAGE_ALIGNMENT, so
+        // slab. The non-huge-slots one to PAGE_SIZE alignment, so
         // that the first few slots will touch only one page, and so
         // that each slot will be aligned to its own size. The
         // huge-slots slab is aligned to MAX_ALIGNMENT so that the
@@ -183,7 +178,7 @@ const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
         if index+1 == NUM_LARGE_SLABS-1 {
             sum = sum.next_multiple_of(SIZE_OF_HUGE_SLOTS);
         } else if index < NUM_LARGE_SLABS-1 {
-            sum = sum.next_multiple_of(FOURKB_PAGE_ALIGNMENT);
+            sum = sum.next_multiple_of(PAGE_SIZE);
         }
 
         index += 1;
@@ -308,13 +303,13 @@ impl SlotLocation {
             });
             let slotnum = withinslaboffset / slotsize;
             debug_assert!(if slotnum == 0 {
-                ioffset as usize % FOURKB_PAGE_ALIGNMENT == 0
+                ioffset as usize % PAGE_SIZE == 0
             } else {
                 true
             }, "ioffset: {ioffset}, ptr: {ptr:?}, baseptr: {baseptr:?}");
 
             debug_assert!(if slotnum == 0 {
-                ptr.is_aligned_to(FOURKB_PAGE_ALIGNMENT)
+                ptr.is_aligned_to(PAGE_SIZE)
             } else {
                 true
             }, "ptr: {ptr:?}");
@@ -348,7 +343,7 @@ impl SlotLocation {
             debug_assert!(withinslaboffset.is_multiple_of(slotsize)); // ptr must point to the beginning of a slot.
             let slotnum = withinslaboffset / slotsize;
             debug_assert!(if slotnum == 0 {
-                ptr.is_aligned_to(FOURKB_PAGE_ALIGNMENT)
+                ptr.is_aligned_to(PAGE_SIZE)
             } else {
                 true
             });
@@ -392,9 +387,9 @@ const fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
     // Count past the bytes of any earlier slabs before this slab:
     offset += sum_large_slab_sizes(largeslabnum);
 
-    // The beginning of each large slab is aligned with
-    // FOURKB_PAGE_ALIGNMENT, except for the huge-slots slab which is
-    // aligned with MAX_ALIGNMENT.
+    // The beginning of each large slab is aligned with PAGE_SIZE,
+    // except for the huge-slots slab which is aligned with
+    // MAX_ALIGNMENT.
     debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
 
     offset
@@ -412,8 +407,8 @@ const fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
     // The beginning of this slab within the large slabs region:
     offset += within_region_offset_of_large_slot_slab(largeslabnum);
 
-    // The beginning of each large slab is aligned with
-    // FOURKB_PAGE_ALIGNMENT.
+    // The beginning of each large slab is aligned with PAGE_SIZE
+    // alignment.
     debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
 
     // Count past the bytes of any earlier slots in this slab:
@@ -443,6 +438,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 mod platformalloc;
 use platformalloc::{sys_alloc, sys_dealloc, sys_realloc};
+use platformalloc::vendor::PAGE_SIZE;
 use std::ptr::{copy_nonoverlapping, null_mut};
 
 pub struct Smalloc {

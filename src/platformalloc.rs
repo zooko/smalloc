@@ -54,8 +54,19 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
     new_ptr
 }
 
+// /// Advise the kernel that this span can be unmapped/uncommitted, as
+// /// we're no longer currently using it.
+// pub fn sys_uncommit(ptr: *mut u8, size: usize) {
+//     debug_assert!(!ptr.is_null());
+//     debug_assert!(size > 0);
+
+// xyz12
+// }
+
 #[cfg(target_os = "linux")]
 pub mod vendor {
+    pub const PAGE_SIZE: usize = 4096;
+
     use crate::platformalloc::AllocFailed;
     use rustix::mm::{MapFlags, MremapFlags, ProtFlags, mmap_anonymous, mremap, munmap};
     use std::ffi::c_void;
@@ -104,6 +115,8 @@ pub mod vendor {
 
 #[cfg(target_vendor = "apple")]
 pub mod vendor {
+    pub const PAGE_SIZE: usize = 16384;
+
     use crate::platformalloc::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
