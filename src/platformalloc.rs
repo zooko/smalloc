@@ -54,15 +54,6 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
     new_ptr
 }
 
-// /// Advise the kernel that this span can be unmapped/uncommitted, as
-// /// we're no longer currently using it.
-// pub fn sys_uncommit(ptr: *mut u8, size: usize) {
-//     debug_assert!(!ptr.is_null());
-//     debug_assert!(size > 0);
-
-// xyz12
-// }
-
 #[cfg(target_os = "linux")]
 pub mod vendor {
     pub const PAGE_SIZE: usize = 4096;
@@ -121,12 +112,13 @@ pub mod vendor {
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
     use mach_sys::traps::mach_task_self;
-    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
+    use mach_sys::vm::{mach_vm_behavior_set, mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
     use mach_sys::vm_inherit::VM_INHERIT_NONE;
     use mach_sys::vm_prot::vm_prot_t;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use std::mem::size_of;
+    use mach_sys::vm_behavior::{VM_BEHAVIOR_REUSABLE, VM_BEHAVIOR_REUSE};
 
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
         let task: mach_port_t = unsafe { mach_task_self() };
@@ -165,7 +157,7 @@ pub mod vendor {
             let retval = mach_vm_remap(
                 task,
                 &mut newaddress,
-                u64::try_from(newsize).unwrap(),
+                newsize as u64,
                 0, // mask
                 VM_FLAGS_ANYWHERE,
                 task,
@@ -179,6 +171,34 @@ pub mod vendor {
         }
 
         newaddress as *mut u8
+    }
+
+    pub fn sys_advise_decommit(ptr: *mut u8, size: usize) {
+        debug_assert!(!ptr.is_null());
+        debug_assert!(size >= PAGE_SIZE);
+        debug_assert!(ptr.is_aligned_to(PAGE_SIZE));
+
+        let retval = unsafe { mach_vm_behavior_set(
+            mach_task_self(),
+            ptr as u64,
+            size as u64,
+            VM_BEHAVIOR_REUSABLE
+        ) };
+        debug_assert!(retval == KERN_SUCCESS);
+    }
+
+    pub fn sys_advise_recommit(ptr: *mut u8, size: usize) {
+        debug_assert!(!ptr.is_null());
+        debug_assert!(size >= PAGE_SIZE);
+        debug_assert!(ptr.is_aligned_to(PAGE_SIZE));
+
+        let retval = unsafe { mach_vm_behavior_set(
+            mach_task_self(),
+            ptr as u64,
+            size as u64,
+            VM_BEHAVIOR_REUSE
+        ) };
+        debug_assert!(retval == KERN_SUCCESS);
     }
 
     // Hm, looking at https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_map.c and ./bsd/kern/kern_mman.c and vm_map.c ...

@@ -202,7 +202,7 @@ const fn sum_large_slab_sizes(numslabs: usize) -> usize {
 
 const LARGE_SLAB_REGION_SPACE: usize = sum_large_slab_sizes(NUM_LARGE_SLABS);
 
-// Pad with an added MAX_ALIGNMENT - 1 bytes so that we can "scoot
+// Pad with an added MAX_ALIGNMENT - 1 bytes so that we can "slide
 // forward" the base pointer to the first 4 MiB boundary in order to
 // align the base pointer to 4 MiB.
 const TOTAL_VIRTUAL_MEMORY: usize =
@@ -438,7 +438,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 mod platformalloc;
 use platformalloc::{sys_alloc, sys_dealloc, sys_realloc};
-use platformalloc::vendor::PAGE_SIZE;
+use platformalloc::vendor::{PAGE_SIZE, sys_advise_decommit, sys_advise_recommit};
 use std::ptr::{copy_nonoverlapping, null_mut};
 
 pub struct Smalloc {
@@ -490,9 +490,6 @@ impl Smalloc {
 
         p = self.baseptr.load(Ordering::Acquire);
         if p.is_null() {
-            // Add 4 MiB - 1 padding so that we are assured of being
-            // able to "scoot forward" the base pointee to a 4 MiB
-            // boundary.
             let sysbaseptr = sys_alloc(layout)?;
             debug_assert!(!sysbaseptr.is_null());
 
@@ -500,9 +497,8 @@ impl Smalloc {
             let alipad = if addrp.is_multiple_of(MAX_ALIGNMENT) {
                 0
             } else {
-                addrp - (addrp % MAX_ALIGNMENT)
+                MAX_ALIGNMENT - (addrp % MAX_ALIGNMENT)
             };
-            //eprintln!("TOTAL_VIRTUAL_MEMORY: {}", TOTAL_VIRTUAL_MEMORY.separate_with_commas());
 
             p = unsafe { sysbaseptr.add(alipad) };
             debug_assert!(p.is_aligned_to(MAX_ALIGNMENT));
@@ -683,19 +679,19 @@ impl Smalloc {
         }
     }
 
-    fn push_flh(&self, newsl: SlotLocation) {
+    fn push_flh(&self, newsl: &SlotLocation) {
         match newsl {
             SlotLocation::SmallSlot {
                 areanum,
                 smallslabnum,
                 slotnum,
             } => {
-                debug_assert!(slotnum < NUM_SLOTS_O);
+                debug_assert!(*slotnum < NUM_SLOTS_O);
 
                 self.inner_push_flh(
-                    self.get_small_flh(areanum, smallslabnum),
-                    offset_of_small_free_list_entry(areanum, smallslabnum, slotnum),
-                    slotnum as u32,
+                    self.get_small_flh(*areanum, *smallslabnum),
+                    offset_of_small_free_list_entry(*areanum, *smallslabnum, *slotnum),
+                    *slotnum as u32,
                     NUM_SLOTS_O as u32
                 );
             }
@@ -703,14 +699,14 @@ impl Smalloc {
                 largeslabnum,
                 slotnum,
             } => {
-                debug_assert!(slotnum < num_large_slots(largeslabnum));
+                debug_assert!(*slotnum < num_large_slots(*largeslabnum));
 
                 // Intrusive free list -- the free list entry is stored in the data slot.
                 self.inner_push_flh(
-                    self.get_large_flh(largeslabnum),
-                    offset_of_large_slot(largeslabnum, slotnum),
-                    slotnum as u32,
-                    num_large_slots(largeslabnum) as u32
+                    self.get_large_flh(*largeslabnum),
+                    offset_of_large_slot(*largeslabnum, *slotnum),
+                    *slotnum as u32,
+                    num_large_slots(*largeslabnum) as u32
                 );
             }
         }
@@ -801,8 +797,6 @@ impl Smalloc {
 
     /// Search for another area that has a good slot in the same slab number.
     fn search_for_small_overflow_area_this_slabnum(&self, startareanum: usize, smallslabnum: usize) -> Option<SlotLocation> {
-        // xyz2 add unit tests
-
         //  These two local variables hold the best candidate we've
         //  found so far (or default values if we haven't yet found
         //  one).
@@ -943,14 +937,118 @@ impl Smalloc {
         }
     }
 
+    fn advise_decommit_generic(&self, sl: &SlotLocation, ptr: *mut u8) {
+        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
+        // the intrusive free list. (Not bothering to check for whether
+        // this is the tail node in the free list, so that we could also
+        // decommit the first page, since it isn't using its
+        // next-pointer. That would allow decommit at most 2 or 3 pages
+        // total in the entire life of the process (depending on page
+        // size), which isn't worth the CPU cycles and the source code.)
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
+            let siz = large_slabnum_to_slotsize(*largeslabnum);
+            if siz >= 2 * PAGE_SIZE {
+                sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
+            }
+        }
+    }
+
+    // The conditional compilation for platform, and the test of
+    // largeslabnum, is just nano-optimization. Benchmark it.
+    #[cfg(target_os = "linux")]
+    /// If we just freed up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (mach_vm_behavior_set()/madvise()/some-Windows-equivalent).
+    fn advise_decommit_nanooptimized(&self, sl: &SlotLocation, ptr: *mut u8) {
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
+            if largeslabnum >= 7 {
+                let siz = large_slabnum_to_slotsize(largeslabnum);
+                if siz >= 2 * PAGE_SIZE {
+                    sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_vendor = "apple")]
+    /// If we just freed up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (mach_vm_behavior_set()/madvise()/some-Windows-equivalent).
+    fn advise_decommit_nanooptimized(&self, sl: &SlotLocation, ptr: *mut u8) {
+        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
+            if *largeslabnum == 9 {
+                let siz = large_slabnum_to_slotsize(*largeslabnum);
+                if siz >= 2 * PAGE_SIZE {
+                    sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
+                }
+            }
+        }
+    }
+
+    fn advise_recommit_generic(&self, sl: &SlotLocation) {
+        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
+        // the intrusive free list. (Not bothering to check for whether
+        // this is the tail node in the free list, so that we could also
+        // decommit the first page, since it isn't using its
+        // next-pointer. That would allow decommit at most 2 or 3 pages
+        // total in the entire life of the process (depending on page
+        // size), which isn't worth the CPU cycles and the source code.)
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
+            let siz = large_slabnum_to_slotsize(*largeslabnum);
+            if siz >= 2 * PAGE_SIZE {
+                let offset = offset_of_large_slot(*largeslabnum, *slotnum) + PAGE_SIZE;
+                let ptr = unsafe { self.get_baseptr().add(offset) };
+                sys_advise_recommit(ptr, siz - PAGE_SIZE)
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn advise_recommit_nanooptimized(&self, sl: &SlotLocation) {
+        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
+        // the intrusive free list. (Not bothering to check for whether
+        // this is the tail node in the free list, so that we could also
+        // decommit the first page, since it isn't using its
+        // next-pointer. That would allow decommit at most 2 or 3 pages
+        // total in the entire life of the process (depending on page
+        // size), which isn't worth the CPU cycles and the source code.)
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
+            if largeslabnum >= 7 {
+                let siz = large_slabnum_to_slotsize(largeslabnum);
+                if siz >= 2 * PAGE_SIZE {
+                    let offset = offset_of_large_slot(largeslabnum, slotnum) + PAGE_SIZE;
+                    let ptr = unsafe { self.get_baseptr().add(offset) };
+                    sys_advise_recommit(ptr, siz - PAGE_SIZE)
+                }
+            }
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    fn advise_recommit_nanooptimized(&self, sl: &SlotLocation) {
+        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
+        // the intrusive free list. (Not bothering to check for whether
+        // this is the tail node in the free list, so that we could also
+        // decommit the first page, since it isn't using its
+        // next-pointer. That would allow decommit at most 2 or 3 pages
+        // total in the entire life of the process (depending on page
+        // size), which isn't worth the CPU cycles and the source code.)
+        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
+            if *largeslabnum == 9 {
+                let siz = large_slabnum_to_slotsize(*largeslabnum);
+                if siz >= 2 * PAGE_SIZE {
+                    let offset = offset_of_large_slot(*largeslabnum, *slotnum) + PAGE_SIZE;
+                    let ptr = unsafe { self.get_baseptr().add(offset) };
+                    sys_advise_recommit(ptr, siz - PAGE_SIZE)
+                }
+            }
+        }
+    }
+
     fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
         let flhplus1 = self.pop_large_flh(largeslabnum);
         if flhplus1 != 0 {
-            // xxx add unit test of this case
             let sl = SlotLocation::LargeSlot {
                 largeslabnum,
                 slotnum: (flhplus1 - 1) as usize,
             };
+            self.advise_recommit_nanooptimized(&sl);
             Some(sl)
         } else {
             let eac: usize = self.increment_eac(
@@ -958,14 +1056,12 @@ impl Smalloc {
                 num_large_slots(largeslabnum)
             );
             if eac < num_large_slots(largeslabnum) {
-                // xxx add unit test of this case
                 let sl = SlotLocation::LargeSlot {
                     largeslabnum,
                     slotnum: eac,
                 };
                 Some(sl)
             } else {
-                // xyz4 add unit test of this case
                 // The slab is full!
                 None
             }
@@ -1090,20 +1186,11 @@ unsafe impl GlobalAlloc for Smalloc {
         }
     }
 
-    // fn advise_decommit(ptr: *mut u8, size: usize) {
-    //     // Trim the span to 4 KiB alignment and size because
-    //     // a. I'm not 100% sure that some OS's might not *extend* the span and drop a page that contains some of our data? Prolly not, but...
-    //     // b. We might as well not bother with a syscall and bother the kernel with advice that doesn't apply to at least one whole page
-    //     // Note that pages are 4 KiB on default Linux, 16 KiB on Macos and iOS, and could be huge (2 MiB or 2 GiB or something) on non-default Linux or other unixes...
-
-    //     xxx
-    // }
-    
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
             Some(sl) => {
-                self.push_flh(sl);
-                // XXX here we should, if the slot is a HUGE slot and the freed space frees up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (don't forget about the 8-byte next-link for the intrusive free list)(mach_vm_behavior_set()/madvise()/some-Windows-equivalent)
+                self.push_flh(&sl);
+                self.advise_decommit_nanooptimized(&sl, ptr);
             }
             None => {
                 // No slot -- this allocation must have come from falling back to `sys_alloc()`.
@@ -1173,8 +1260,8 @@ unsafe impl GlobalAlloc for Smalloc {
                     }
 
                     // Free the old slot
-                    self.push_flh(cursl);
-                    // XXX here we should, if the freed slot is a HUGE slot and the freed space frees up at least 16 KiB (one entire memory page on xnu/Macos/iOS, or 4 entire memory pages on Linux) (when not in huge-pages mode), advise the kernel it can unmap/uncommit the vm pages (don't forget about the 8-byte next-link for the intrusive free list)(mach_vm_behavior_set()/madvise()/some-Windows-equivalent)
+                    self.push_flh(&cursl);
+                    self.advise_decommit_nanooptimized(&cursl, ptr);
 
                     newptr
                 }
@@ -1349,7 +1436,7 @@ pub fn dev_print_virtual_bytes_map() -> usize {
 
 #[cfg(test)]
 mod benches {
-    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots};
+    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, NUM_SLOTS_HUGE, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots};
 
     use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
@@ -1438,7 +1525,7 @@ mod benches {
         }
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_separate_nonempty_lifo", |b| b.iter(|| {
@@ -1463,7 +1550,7 @@ mod benches {
         sls.reverse();
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_separate_nonempty_fifo", |b| b.iter(|| {
@@ -1490,7 +1577,7 @@ mod benches {
         sls.shuffle(&mut r);
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_separate_nonempty_random", |b| b.iter(|| {
@@ -1525,7 +1612,7 @@ mod benches {
         }
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
@@ -1550,7 +1637,7 @@ mod benches {
         sls.reverse();
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
@@ -1576,7 +1663,7 @@ mod benches {
         sls.shuffle(&mut r);
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_small_flh_intrusive_nonempty_random", |b| b.iter(|| {
@@ -1611,7 +1698,7 @@ mod benches {
         }
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_large_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
@@ -1636,7 +1723,7 @@ mod benches {
         sls.reverse();
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_large_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
@@ -1662,7 +1749,7 @@ mod benches {
         sls.shuffle(&mut r);
 
         for sl in sls.into_iter() {
-            sm.push_flh(sl);
+            sm.push_flh(&sl);
         }
 
         c.bench_function("pop_large_flh_intrusive_nonempty_random", |b| b.iter(|| {
@@ -1710,6 +1797,24 @@ mod benches {
         c.bench_function("inner_large_alloc", |b| b.iter(|| {
             black_box(sm.inner_large_alloc(black_box(reqs[i % reqs.len()])));
             i += 1
+        }));
+    }
+
+    #[test]
+    fn inner_alloc_then_dealloc_huge() {
+        let mut c = Criterion::default();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let l = Layout::from_size_align(4_000_000, 1).unwrap();
+
+        let mut oldptr = black_box(unsafe { sm.alloc(black_box(l)) });
+        c.bench_function("inner_alloc_then_dealloc_huge", |b| b.iter(|| {
+            unsafe { sm.dealloc(black_box(black_box(oldptr)), black_box(l)) };
+            let ptr = black_box(unsafe { sm.alloc(black_box(l)) });
+            assert_eq!(oldptr, ptr);
+            oldptr = ptr;
         }));
     }
 
@@ -1809,7 +1914,7 @@ mod benches {
             if r.random::<bool>() {
                 // Free
                 if !ps.is_empty() {
-//xxx don't do this inside the timing loop
+//xxx xyz21 don't do this inside the timing loop
                     let i = r.random_range(0..ps.len());
                     let (p, l2) = ps.remove(i);
                     unsafe { sm.dealloc(p, l2) };
@@ -2022,7 +2127,7 @@ mod tests {
         };
 
         // Now free the middle one.
-        sm.push_flh(sl2);
+        sm.push_flh(&sl2);
 
         // And allocate another one.
         let sl4 = help_alloc_slot(sm, reqsize, reqalign);
@@ -2050,7 +2155,7 @@ mod tests {
         };
 
         // Now free the middle one.
-        sm.push_flh(sl2);
+        sm.push_flh(&sl2);
 
         // And allocate another one.
         let sl4 = help_alloc_slot(sm, reqsize, reqalign);

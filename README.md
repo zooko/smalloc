@@ -1157,6 +1157,28 @@ written here in roughly descending order of importance:
    I am hopeful that `smalloc` may achieve all five of these goals. If
    so, it may turn out to be a very useful tool!
 
+# Things `smalloc` does not currently attempt to do:
+
+* Try to mitigate malicious exploitation after a memory-usage bug in
+  the user code.
+
+* "Give memory back to the operating system." I don't think that's a
+  real thing. You can't "Give memory back to the operating
+  system.". The thing you *can* do, that I think people are getting at
+  when they say that, is mark virtual memory pages as unneeded so that
+  the operating system can (a) choose those pages first when looking
+  for pages to unmap to free up physical memory, and (b) skip the step
+  of swapping out the contents of those pages to persistent
+  storage. (Also, on XNU/Macos, the operating system can (c) skip the
+  step of zero'ing out those pages when and if you later start using
+  them again.) I implemented this in `smalloc` and benchmarked the
+  time it took to `alloc()` and then `dealloc()` a huge slot. This
+  feature of marking virtual memory pages as unmappable increased the
+  "upper bound mean" time as reported by Criterion from 8.4 ns to 1.8
+  μs -- 200X worse latency. That seems like too high a cost to pay on
+  every single call to `alloc()` or `dealloc()` a huge slot, for the
+  benefit of *occasionally* avoiding an unnecessary swap of ~4 MiB.
+
 # Rationales for Specific Design Decisions
 
 ## Rationale for Slot Sizes, Growers, and Overflowers
@@ -1376,11 +1398,6 @@ the huge-slots slab to fill up.
 
 * Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the
   programming language, not for the rewrite.)
-
-Things `smalloc` does not currently attempt to do:
-
-* Try to mitigate malicious exploitation after a memory-usage bug in
-  the user code.
 
 * Shrink the lookup tables!
 
