@@ -438,7 +438,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 mod platformalloc;
 use platformalloc::{sys_alloc, sys_dealloc, sys_realloc};
-use platformalloc::vendor::{PAGE_SIZE, sys_advise_decommit, sys_advise_recommit};
+use platformalloc::vendor::PAGE_SIZE;
 use std::ptr::{copy_nonoverlapping, null_mut};
 
 pub struct Smalloc {
@@ -937,110 +937,6 @@ impl Smalloc {
         }
     }
 
-    fn advise_decommit_generic(&self, sl: &SlotLocation, ptr: *mut u8) {
-        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
-        // the intrusive free list. (Not bothering to check for whether
-        // this is the tail node in the free list, so that we could also
-        // decommit the first page, since it isn't using its
-        // next-pointer. That would allow decommit at most 2 or 3 pages
-        // total in the entire life of the process (depending on page
-        // size), which isn't worth the CPU cycles and the source code.)
-        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
-            let siz = large_slabnum_to_slotsize(*largeslabnum);
-            if siz >= 2 * PAGE_SIZE {
-                sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
-            }
-        }
-    }
-
-    // The conditional compilation for platform, and the test of
-    // largeslabnum, is just nano-optimization. Benchmark it.
-    #[cfg(target_os = "linux")]
-    /// If we just freed up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (mach_vm_behavior_set()/madvise()/some-Windows-equivalent).
-    fn advise_decommit_nanooptimized(&self, sl: &SlotLocation, ptr: *mut u8) {
-        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
-            if largeslabnum >= 7 {
-                let siz = large_slabnum_to_slotsize(largeslabnum);
-                if siz >= 2 * PAGE_SIZE {
-                    sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
-                }
-            }
-        }
-    }
-    
-    #[cfg(target_vendor = "apple")]
-    /// If we just freed up at least one entire memory page, advise the kernel it can unmap/uncommit the vm pages (mach_vm_behavior_set()/madvise()/some-Windows-equivalent).
-    fn advise_decommit_nanooptimized(&self, sl: &SlotLocation, ptr: *mut u8) {
-        if let SlotLocation::LargeSlot { largeslabnum, .. } = sl {
-            if *largeslabnum == 9 {
-                let siz = large_slabnum_to_slotsize(*largeslabnum);
-                if siz >= 2 * PAGE_SIZE {
-                    sys_advise_decommit(unsafe { ptr.add(PAGE_SIZE) }, siz - PAGE_SIZE)
-                }
-            }
-        }
-    }
-
-    fn advise_recommit_generic(&self, sl: &SlotLocation) {
-        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
-        // the intrusive free list. (Not bothering to check for whether
-        // this is the tail node in the free list, so that we could also
-        // decommit the first page, since it isn't using its
-        // next-pointer. That would allow decommit at most 2 or 3 pages
-        // total in the entire life of the process (depending on page
-        // size), which isn't worth the CPU cycles and the source code.)
-        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
-            let siz = large_slabnum_to_slotsize(*largeslabnum);
-            if siz >= 2 * PAGE_SIZE {
-                let offset = offset_of_large_slot(*largeslabnum, *slotnum) + PAGE_SIZE;
-                let ptr = unsafe { self.get_baseptr().add(offset) };
-                sys_advise_recommit(ptr, siz - PAGE_SIZE)
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    fn advise_recommit_nanooptimized(&self, sl: &SlotLocation) {
-        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
-        // the intrusive free list. (Not bothering to check for whether
-        // this is the tail node in the free list, so that we could also
-        // decommit the first page, since it isn't using its
-        // next-pointer. That would allow decommit at most 2 or 3 pages
-        // total in the entire life of the process (depending on page
-        // size), which isn't worth the CPU cycles and the source code.)
-        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
-            if largeslabnum >= 7 {
-                let siz = large_slabnum_to_slotsize(largeslabnum);
-                if siz >= 2 * PAGE_SIZE {
-                    let offset = offset_of_large_slot(largeslabnum, slotnum) + PAGE_SIZE;
-                    let ptr = unsafe { self.get_baseptr().add(offset) };
-                    sys_advise_recommit(ptr, siz - PAGE_SIZE)
-                }
-            }
-        }
-    }
-
-    #[cfg(target_vendor = "apple")]
-    fn advise_recommit_nanooptimized(&self, sl: &SlotLocation) {
-        // Skipping the first PAGE_SIZE because of the 4-byte next-link in
-        // the intrusive free list. (Not bothering to check for whether
-        // this is the tail node in the free list, so that we could also
-        // decommit the first page, since it isn't using its
-        // next-pointer. That would allow decommit at most 2 or 3 pages
-        // total in the entire life of the process (depending on page
-        // size), which isn't worth the CPU cycles and the source code.)
-        if let SlotLocation::LargeSlot { largeslabnum, slotnum } = sl {
-            if *largeslabnum == 9 {
-                let siz = large_slabnum_to_slotsize(*largeslabnum);
-                if siz >= 2 * PAGE_SIZE {
-                    let offset = offset_of_large_slot(*largeslabnum, *slotnum) + PAGE_SIZE;
-                    let ptr = unsafe { self.get_baseptr().add(offset) };
-                    sys_advise_recommit(ptr, siz - PAGE_SIZE)
-                }
-            }
-        }
-    }
-
     fn inner_large_alloc(&self, largeslabnum: usize) -> Option<SlotLocation> {
         let flhplus1 = self.pop_large_flh(largeslabnum);
         if flhplus1 != 0 {
@@ -1048,7 +944,6 @@ impl Smalloc {
                 largeslabnum,
                 slotnum: (flhplus1 - 1) as usize,
             };
-            self.advise_recommit_nanooptimized(&sl);
             Some(sl)
         } else {
             let eac: usize = self.increment_eac(
@@ -1190,7 +1085,6 @@ unsafe impl GlobalAlloc for Smalloc {
         match SlotLocation::new_from_ptr(self.get_baseptr(), ptr) {
             Some(sl) => {
                 self.push_flh(&sl);
-                self.advise_decommit_nanooptimized(&sl, ptr);
             }
             None => {
                 // No slot -- this allocation must have come from falling back to `sys_alloc()`.
@@ -1261,7 +1155,6 @@ unsafe impl GlobalAlloc for Smalloc {
 
                     // Free the old slot
                     self.push_flh(&cursl);
-                    self.advise_decommit_nanooptimized(&cursl, ptr);
 
                     newptr
                 }
@@ -1436,7 +1329,7 @@ pub fn dev_print_virtual_bytes_map() -> usize {
 
 #[cfg(test)]
 mod benches {
-    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, NUM_SLOTS_HUGE, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots};
+    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots};
 
     use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
