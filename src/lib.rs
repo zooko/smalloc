@@ -1448,8 +1448,9 @@ mod benches {
         // Criterion::default().warm_up_time(Duration::new(0, 100_000)).measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
         // Criterion::default().measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
         // Criterion::default().warm_up_time(Duration::new(0, 10_000))
-        //Criterion::<MachAbsoluteTimeMeasurement>::default().sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
-        Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
+        // Criterion::<MachAbsoluteTimeMeasurement>::default().sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
+        // Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
+        Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
     }
     
     #[test]
@@ -1542,7 +1543,7 @@ mod benches {
         sm.idempotent_init().unwrap();
         sm.push_flh(&sm.small_alloc_with_overflow(0, smallslabnum).unwrap());
 
-        const NUM_ARGS: usize = 8000;
+        const NUM_ARGS: usize = 16_000;
         let setup = || {
             // reset the free list and eac
             let eac = sm.get_small_eac(0, smallslabnum);
@@ -1623,7 +1624,7 @@ mod benches {
 
         let router = RefCell::new(StdRng::seed_from_u64(0));
 
-        const NUM_ARGS: usize = 8000;
+        const NUM_ARGS: usize = 16_000;
         let setup = || {
             let mut rinner = router.borrow_mut();
 
@@ -1746,13 +1747,14 @@ mod benches {
     fn new_from_ptr() {
         let mut c = Criterion::default();
 
-        const NUM_ARGS: usize = 50_000;
+        const NUM_ARGS: usize = 50_000_000;
 
         let mut r = StdRng::seed_from_u64(0);
         let baseptr_for_testing: *mut u8 = null_mut();
-        let mut reqptrs = [null_mut(); NUM_ARGS];
-        let mut i = 0;
-        while i < NUM_ARGS {
+        let mut reqptrs = Box::new(Vec::new());
+        reqptrs.reserve(NUM_ARGS);
+        
+        while reqptrs.len() < NUM_ARGS {
             // generate a random slot
             let sl = if r.random::<bool>() {
                 // SmallSlot
@@ -1770,11 +1772,10 @@ mod benches {
             };
 
             // put the random slot's pointer into the test set
-            reqptrs[i] = unsafe { baseptr_for_testing.add(sl.offset()) };
-
-            i += 1;
+            reqptrs.push(unsafe { baseptr_for_testing.add(sl.offset()) });
         }
 
+        let mut i = 0;
         c.bench_function("new_from_ptr", |b| b.iter(|| {
             let ptr = reqptrs[i % NUM_ARGS];
             black_box(SlotLocation::new_from_ptr(baseptr_for_testing, black_box(ptr)));
@@ -1792,7 +1793,7 @@ mod benches {
         let saved_thread_areanum = get_thread_areanum();
         let r = RefCell::new(StdRng::seed_from_u64(0));
 
-        const NUM_ARGS: usize = 10_000_000;
+        const NUM_ARGS: usize = 20_000_000;
         let reqsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
 
         let setup = || {
