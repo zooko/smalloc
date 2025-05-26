@@ -338,7 +338,7 @@ impl SlotLocation {
             });
 
             // This ptr is within this slab.
-            // XXX replace without using offset_of_large_slot () ? Table from largeslabnum to offset!
+            // XXX replace without using offset_of_large_slot_slab() ? Table from largeslabnum to offset!
             let withinslaboffset = withinregionoffset - within_region_offset_of_large_slot_slab(largeslabnum);
             debug_assert!(withinslaboffset.is_multiple_of(slotsize)); // ptr must point to the beginning of a slot.
             let slotnum = withinslaboffset / slotsize;
@@ -1329,19 +1329,100 @@ pub fn dev_print_virtual_bytes_map() -> usize {
 
 #[cfg(test)]
 mod benches {
-    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots};
+    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots, get_thread_areanum};
 
     use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
     use std::ptr::null_mut;
-    use std::alloc::GlobalAlloc;
+    use std::alloc::{GlobalAlloc, Layout};
 
-    const NUM_ARGS: usize = 50_000;
-    const NUM_NON_RENEWABLE_ARGS: usize = 220_000_000;
+    use criterion::Criterion;
+    use criterion::measurement::{Measurement, ValueFormatter};
+    use std::hint::black_box;
+    use mach_sys::mach_time::mach_absolute_time;
 
-    use criterion::{Criterion, black_box};
+    #[derive(Default)]
+    struct MachAbsoluteTimeMeasurement { }
 
-    use std::alloc::Layout;
+    struct MachAbsoluteTimeValueFormatter { }
+
+    use criterion::Throughput;
+    use std::mem::MaybeUninit;
+    use mach_sys::mach_time::mach_timebase_info;
+    use mach_sys::kern_return::KERN_SUCCESS;
+
+    impl ValueFormatter for MachAbsoluteTimeValueFormatter {
+        fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
+            let mut mtt1: MaybeUninit<mach_timebase_info> = MaybeUninit::uninit();
+            let retval = unsafe { mach_timebase_info(mtt1.as_mut_ptr()) };
+            assert_eq!(retval, KERN_SUCCESS);
+            let mtt2 = unsafe { mtt1.assume_init() };
+
+            let typical_as_nanos = typical_value * mtt2.numer as f64 / mtt2.denom as f64;
+            let (factor, unit) = if typical_as_nanos < 10f64.powi(0) {
+                (10f64.powi(3), "ps")
+            } else if typical_as_nanos < 10f64.powi(3) {
+                (10f64.powi(0), "ns")
+            } else if typical_as_nanos < 10f64.powi(6) {
+                (10f64.powi(-3), "µs")
+            } else if typical_as_nanos < 10f64.powi(9) {
+                (10f64.powi(-6), "ms")
+            } else {
+                (10f64.powi(-9), "s")
+            };
+
+            for val in values {
+                *val *= factor * mtt2.numer as f64;
+                *val /= mtt2.denom as f64;
+            }
+
+            unit
+        }
+        
+        fn scale_throughputs(
+            &self,
+            _typical: f64,
+            _throughput: &Throughput,
+            _values: &mut [f64],
+        ) -> &'static str {
+            todo!();
+        }
+
+        fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
+            // no scaling is needed
+            "ns"
+        }
+    }
+
+    impl Measurement for MachAbsoluteTimeMeasurement {
+        type Intermediate = u64;
+        type Value = u64;
+
+        fn start(&self) -> Self::Intermediate {
+            unsafe { mach_absolute_time() }
+        }
+        fn end(&self, i: Self::Intermediate) -> Self::Value {
+           ( unsafe { mach_absolute_time() } - i )
+        }
+        fn add(&self, v1: &Self::Value, v2: &Self::Value) -> Self::Value {
+            *v1 + *v2
+        }
+        fn zero(&self) -> Self::Value {
+            0
+        }
+        fn one(&self) -> Self::Value {
+            1
+        }
+        fn lt (&self, val: &Self::Value, other: &Self::Value) -> bool {
+            val < other
+        }
+        fn to_f64(&self, val: &Self::Value) -> f64 {
+            *val as f64
+        }
+        fn formatter(&self) -> &dyn ValueFormatter {
+            &MachAbsoluteTimeValueFormatter { }
+        }
+    }
 
     fn randdist_reqsiz(r: &mut StdRng) -> usize {
         // The following distribution was roughly modelled on smalloclog profiling of Zebra.
@@ -1353,14 +1434,29 @@ mod benches {
             32
         } else if randnum < 200 {
             64
+        } else if randnum < 250 {
+            r.random_range(65..16384)
         } else {
-            r.random_range(65..10_000)
+            4_000_000
         }
     }
 
+    use std::time::Duration;
+    fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
+        // Criterion::default().warm_up_time(Duration::new(0, 100_000)).measurement_time(Duration::new(7, 0)).sample_size(500).nresamples(200_000)
+        // Criterion::default()
+        // Criterion::default().warm_up_time(Duration::new(0, 100_000)).measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
+        // Criterion::default().measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
+        // Criterion::default().warm_up_time(Duration::new(0, 10_000))
+        //Criterion::<MachAbsoluteTimeMeasurement>::default().sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
+        Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
+    }
+    
     #[test]
     fn bench_sum_small_slab_sizes() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
+
+        const NUM_ARGS: usize = 50_000;
 
         let mut r = StdRng::seed_from_u64(0);
         let reqslabnums: Vec<usize> = (0..NUM_ARGS)
@@ -1377,7 +1473,9 @@ mod benches {
 
     #[test]
     fn bench_sum_large_slab_sizes() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
+
+        const NUM_ARGS: usize = 50_000;
 
         let mut r = StdRng::seed_from_u64(0);
         let reqslabnums: Vec<usize> = (0..NUM_ARGS)
@@ -1394,261 +1492,208 @@ mod benches {
 
     #[test]
     fn pop_small_flh_separate_empty() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
         c.bench_function("pop_small_flh_separate_empty", |b| b.iter(|| {
-            black_box(sm.pop_small_flh(0, 0));
-        }));
-    }
-
-    #[test]
-    fn pop_small_flh_separate_nonempty_lifo() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
-        }
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_separate_nonempty_lifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 0));
-            debug_assert_ne!(sflh, 0);
-        }));
-    }
-
-    #[test]
-    fn pop_small_flh_separate_nonempty_fifo() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
-        }
-
-        sls.reverse();
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_separate_nonempty_fifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 0));
-            debug_assert_ne!(sflh, 0);
-        }));
-    }
-
-    use rand::seq::SliceRandom;
-    #[test]
-    fn pop_small_flh_separate_nonempty_random() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 0).unwrap());
-        }
-
-        let mut r = StdRng::seed_from_u64(0);
-        sls.shuffle(&mut r);
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_separate_nonempty_random", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 0));
-            debug_assert_ne!(sflh, 0);
+            black_box(sm.pop_small_flh(black_box(0), black_box(0)));
         }));
     }
 
     #[test]
     fn pop_small_flh_intrusive_empty() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
         c.bench_function("pop_small_flh_intrusive_empty", |b| b.iter(|| {
-            black_box(sm.pop_small_flh(0, 6));
-        }));
-    }
-
-    #[test]
-    fn pop_small_flh_intrusive_nonempty_lifo() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
-        }
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 6));
-            debug_assert_ne!(sflh, 0);
-        }));
-    }
-
-    #[test]
-    fn pop_small_flh_intrusive_nonempty_fifo() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
-        }
-
-        sls.reverse();
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 6));
-            debug_assert_ne!(sflh, 0);
-        }));
-    }
-
-    #[test]
-    fn pop_small_flh_intrusive_nonempty_random() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.small_alloc_with_overflow(0, 6).unwrap());
-        }
-
-        let mut r = StdRng::seed_from_u64(0);
-        sls.shuffle(&mut r);
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_small_flh_intrusive_nonempty_random", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_small_flh(0, 6));
-            debug_assert_ne!(sflh, 0);
+            black_box(sm.pop_small_flh(black_box(0), black_box(6)));
         }));
     }
 
     #[test]
     fn pop_large_flh_intrusive_empty() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
         c.bench_function("pop_large_flh_intrusive_empty", |b| b.iter(|| {
-            black_box(sm.pop_large_flh(0));
+            black_box(sm.pop_large_flh(black_box(0)));
         }));
     }
 
-    #[test]
-    fn pop_large_flh_intrusive_nonempty_lifo() {
-        let mut c = Criterion::default();
+    use criterion::BatchSize;
+    use std::sync::atomic::Ordering;
+    use rand::seq::SliceRandom;
+
+    #[derive(PartialEq)]
+    enum DataOrder {
+        Sequential, Random
+    }
+    
+    fn help_bench_pop_small_flh_nonempty(fnname: &str, smallslabnum: usize, ord: DataOrder) {
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
+        sm.push_flh(&sm.small_alloc_with_overflow(0, smallslabnum).unwrap());
 
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.large_alloc_with_overflow(0).unwrap());
-        }
+        const NUM_ARGS: usize = 8000;
+        let setup = || {
+            // reset the free list and eac
+            let eac = sm.get_small_eac(0, smallslabnum);
+            eac.store(0, Ordering::Relaxed);
+            let flh = sm.get_small_flh(0, smallslabnum);
 
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
+            // assert that the free list hasnt't been emptied out,
+            // which would mean that during the previous batch of
+            // benchmarking, the free list ran dry and we started
+            // benchmarking the "pop from empty free list" case
+            // instead of what we're trying to benchmark here.
+            assert_ne!(flh.load(Ordering::Relaxed) & u32::MAX as u64, 0);
 
-        c.bench_function("pop_large_flh_intrusive_nonempty_lifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_large_flh(0));
-            debug_assert_ne!(sflh, 0);
-        }));
+            flh.store(0, Ordering::Relaxed);
+            
+            let mut sls = Vec::with_capacity(NUM_ARGS);
+
+            while sls.len() < NUM_ARGS {
+                sls.push(sm.small_alloc_with_overflow(0, smallslabnum).unwrap());
+            }
+
+            match ord {
+                DataOrder::Sequential => { }
+                DataOrder::Random => {
+                    let mut r = StdRng::seed_from_u64(0);
+                    sls.shuffle(&mut r)
+                }
+            }
+
+            for sl in sls.iter() {
+                sm.push_flh(sl);
+            }
+        };
+
+        let f = |()| {
+            black_box(sm.pop_small_flh(0, black_box(smallslabnum)));
+        };
+
+        c.bench_function(fnname, move |b| b.iter_batched(setup, f, BatchSize::SmallInput));
     }
 
     #[test]
-    fn pop_large_flh_intrusive_nonempty_fifo() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.large_alloc_with_overflow(0).unwrap());
-        }
-
-        sls.reverse();
-
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
-
-        c.bench_function("pop_large_flh_intrusive_nonempty_fifo", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_large_flh(0));
-            debug_assert_ne!(sflh, 0);
-        }));
+    fn pop_small_flh_separate_nonempty_sequential() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential", 0, DataOrder::Sequential)
     }
 
     #[test]
-    fn pop_large_flh_intrusive_nonempty_random() {
-        let mut c = Criterion::default();
+    fn pop_small_flh_separate_nonempty_random() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random", 0, DataOrder::Random)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_6_nonempty_sequential() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential", 6, DataOrder::Sequential)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_6_nonempty_random() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random", 6, DataOrder::Random)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_10_nonempty_sequential() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential", 10, DataOrder::Sequential)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_10_nonempty_random() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random", 10, DataOrder::Random)
+    }
+
+    fn help_bench_pop_large_flh_nonempty(fnname: &str, largeslabnum: usize, ord: DataOrder) {
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
+        sm.push_flh(&sm.large_alloc_with_overflow(largeslabnum).unwrap());
 
-        let mut sls = Box::new(Vec::new());
-        sls.reserve(NUM_NON_RENEWABLE_ARGS);
-        while sls.len() < NUM_NON_RENEWABLE_ARGS {
-            sls.push(sm.large_alloc_with_overflow(0).unwrap());
-        }
+        let router = RefCell::new(StdRng::seed_from_u64(0));
 
-        let mut r = StdRng::seed_from_u64(0);
-        sls.shuffle(&mut r);
+        const NUM_ARGS: usize = 8000;
+        let setup = || {
+            let mut rinner = router.borrow_mut();
 
-        for sl in sls.into_iter() {
-            sm.push_flh(&sl);
-        }
+            // reset the free list and eac
+            let eac = sm.get_large_eac(largeslabnum);
+            eac.store(0, Ordering::Relaxed);
+            let flh = sm.get_large_flh(largeslabnum);
 
-        c.bench_function("pop_large_flh_intrusive_nonempty_random", |b| b.iter(|| {
-            let sflh = black_box(sm.pop_large_flh(0));
-            debug_assert_ne!(sflh, 0);
-        }));
+            // assert that the free list hasnt't been emptied out,
+            // which would mean that during the previous batch of
+            // benchmarking, the free list ran dry and we started
+            // benchmarking the "pop from empty free list" case
+            // instead of what we're trying to benchmark here.
+            assert_ne!(flh.load(Ordering::Relaxed) & u32::MAX as u64, 0);
+
+            flh.store(0, Ordering::Relaxed);
+            
+            let mut sls = Vec::with_capacity(NUM_ARGS);
+
+            while sls.len() < NUM_ARGS {
+                sls.push(sm.large_alloc_with_overflow(largeslabnum).unwrap());
+            }
+
+            match ord {
+                DataOrder::Sequential => { }
+                DataOrder::Random => {
+                    sls.shuffle(&mut rinner)
+                }
+            }
+
+            for sl in sls.iter() {
+                sm.push_flh(sl);
+            }
+        };
+
+        let f = |()| {
+            sm.pop_large_flh(black_box(largeslabnum));
+        };
+
+        c.bench_function(fnname, |b| b.iter_batched(setup, f, BatchSize::SmallInput));
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_0_nonempty_random() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random", 0, DataOrder::Random);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_0_nonempty_sequential() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential", 0, DataOrder::Sequential);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_8_nonempty_random() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random", 8, DataOrder::Random);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_8_nonempty_sequential() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential", 8, DataOrder::Sequential);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_9_nonempty_random() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random", 9, DataOrder::Random);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_9_nonempty_sequential() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential", 9, DataOrder::Sequential);
     }
 
     #[test]
@@ -1657,6 +1702,8 @@ mod benches {
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
+
+        const NUM_ARGS: usize = 50_000;
 
         let mut r = StdRng::seed_from_u64(0);
         let mut reqs = Vec::with_capacity(NUM_ARGS);
@@ -1676,6 +1723,8 @@ mod benches {
     fn inner_large_alloc() {
         let mut c = Criterion::default();
 
+        const NUM_ARGS: usize = 50_000;
+
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
@@ -1694,26 +1743,10 @@ mod benches {
     }
 
     #[test]
-    fn inner_alloc_then_dealloc_huge() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let l = Layout::from_size_align(4_000_000, 1).unwrap();
-
-        let mut oldptr = black_box(unsafe { sm.alloc(black_box(l)) });
-        c.bench_function("inner_alloc_then_dealloc_huge", |b| b.iter(|| {
-            unsafe { sm.dealloc(black_box(black_box(oldptr)), black_box(l)) };
-            let ptr = black_box(unsafe { sm.alloc(black_box(l)) });
-            assert_eq!(oldptr, ptr);
-            oldptr = ptr;
-        }));
-    }
-
-    #[test]
     fn new_from_ptr() {
         let mut c = Criterion::default();
+
+        const NUM_ARGS: usize = 50_000;
 
         let mut r = StdRng::seed_from_u64(0);
         let baseptr_for_testing: *mut u8 = null_mut();
@@ -1744,80 +1777,110 @@ mod benches {
 
         c.bench_function("new_from_ptr", |b| b.iter(|| {
             let ptr = reqptrs[i % NUM_ARGS];
-            black_box(SlotLocation::new_from_ptr(black_box(baseptr_for_testing), black_box(ptr)));
+            black_box(SlotLocation::new_from_ptr(baseptr_for_testing, black_box(ptr)));
             i += 1;
         }));
     }
 
     #[test]
     pub fn alloc() {
-        let mut c = Criterion::default();
-
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        
-        let mut r = StdRng::seed_from_u64(0);
-        let mut reqs = Vec::with_capacity(NUM_ARGS);
-        while reqs.len() < NUM_ARGS {
-            reqs.push(Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap());
-        }
-
-        let mut i = 0;
-        c.bench_function("alloc", |b| b.iter(|| {
-            let l = reqs[i % reqs.len()];
-            black_box(unsafe { sm.alloc(l) });
-            i += 1;
-        }));
-    }
-
-    #[test]
-    fn free() {
-        let mut c = Criterion::default();
+        let mut c = make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        let mut r = StdRng::seed_from_u64(0);
-        let mut reqs = Box::new(Vec::new());
-        reqs.reserve(NUM_NON_RENEWABLE_ARGS);
-        while reqs.len() < NUM_NON_RENEWABLE_ARGS {
-            let l = Layout::from_size_align(randdist_reqsiz(&mut r), 1).unwrap();
-            reqs.push((unsafe { sm.alloc(l) }, l));
-        }
+        let saved_thread_areanum = get_thread_areanum();
+        let r = RefCell::new(StdRng::seed_from_u64(0));
 
-        c.bench_function("free", |b| b.iter(|| {
-            let (p, l) = reqs.pop().unwrap();
-            unsafe { sm.dealloc(p, l) };
-        }));
-    }
+        const NUM_ARGS: usize = 10_000_000;
+        let reqsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
 
-    #[test]
-    fn alloc_and_free() {
-        let mut c = Criterion::default();
+        let setup = || {
+            assert_eq!(get_thread_areanum(), saved_thread_areanum);
+            let mut reqsinnersetup = reqsouter.borrow_mut();
+            
+            let mut rinner = r.borrow_mut();
 
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-
-        let l = Layout::from_size_align(64, 1).unwrap();
-
-        let mut r = StdRng::seed_from_u64(0);
-        let mut ps = Vec::new();
-
-        c.bench_function("alloc_and_free", |b| b.iter(|| {
-            if r.random::<bool>() {
-                // Free
-                if !ps.is_empty() {
-//xxx xyz21 don't do this inside the timing loop
-                    let i = r.random_range(0..ps.len());
-                    let (p, l2) = ps.remove(i);
-                    unsafe { sm.dealloc(p, l2) };
-                }
-            } else {
-                // Malloc
-                let p = unsafe { sm.alloc(l) };
-                ps.push((p, l));
+            // reset the free lists and eacs
+            for smallslabnum in 0..NUM_SMALL_SLABS {
+                let eac = sm.get_small_eac(get_thread_areanum(), smallslabnum);
+                eac.store(0, Ordering::Relaxed);
+                let flh = sm.get_small_flh(get_thread_areanum(), smallslabnum);
+                flh.store(0, Ordering::Relaxed);
             }
-        }));
+
+            for largeslabnum in 0..NUM_LARGE_SLABS {
+                let eac = sm.get_large_eac(largeslabnum);
+                eac.store(0, Ordering::Relaxed);
+                let flh = sm.get_large_flh(largeslabnum);
+                flh.store(0, Ordering::Relaxed);
+            }
+            
+            while reqsinnersetup.len() < NUM_ARGS {
+                let l: Layout = Layout::from_size_align(randdist_reqsiz(&mut rinner), 1).unwrap();
+                reqsinnersetup.push(l);
+            }
+        };
+
+        let f = |()| {
+            let mut reqsinnerf = reqsouter.borrow_mut();
+            let l = reqsinnerf.pop().unwrap();
+            unsafe { sm.alloc(l) };
+        };
+
+        c.bench_function("alloc", |b| b.iter_batched(setup, f, BatchSize::SmallInput));
+    }
+
+    use std::cell::RefCell;
+    #[test]
+    fn dealloc() {
+        let mut c = make_criterion();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let saved_thread_areanum = get_thread_areanum();
+        let router = RefCell::new(StdRng::seed_from_u64(0));
+
+        const NUM_ARGS: usize = 15_000;
+        let allocsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
+
+        let setup = || {
+            let mut rinner = router.borrow_mut();
+            let mut allocsinnersetup = allocsouter.borrow_mut();
+
+            assert_eq!(get_thread_areanum(), saved_thread_areanum);
+
+            // reset the free lists and eacs
+            for smallslabnum in 0..NUM_SMALL_SLABS {
+                let eac = sm.get_small_eac(get_thread_areanum(), smallslabnum);
+                eac.store(0, Ordering::Relaxed);
+                let flh = sm.get_small_flh(get_thread_areanum(), smallslabnum);
+                flh.store(0, Ordering::Relaxed);
+            }
+
+            for largeslabnum in 0..NUM_LARGE_SLABS {
+                let eac = sm.get_large_eac(largeslabnum);
+                eac.store(0, Ordering::Relaxed);
+                let flh = sm.get_large_flh(largeslabnum);
+                flh.store(0, Ordering::Relaxed);
+            }
+            
+            while allocsinnersetup.len() < NUM_ARGS {
+                let l: Layout = Layout::from_size_align(randdist_reqsiz(&mut rinner), 1).unwrap();
+                allocsinnersetup.push((unsafe { sm.alloc(l) }, l));
+            }
+
+            allocsinnersetup.shuffle(&mut rinner);
+        };
+
+        let f = |()| {
+            let mut allocsinnerf = allocsouter.borrow_mut();
+            let (p, l) = allocsinnerf.pop().unwrap();
+            unsafe { sm.dealloc(p, l) };
+        };
+
+        c.bench_function("dealloc", |b| b.iter_batched(setup, f, BatchSize::SmallInput));
     }
 }
 
@@ -1825,6 +1888,7 @@ mod benches {
 mod tests {
     use super::*;
     use std::cmp::min;
+    use std::sync::Arc;
 
     const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
     const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
@@ -2139,8 +2203,6 @@ mod tests {
         
         handle1.join().unwrap();
     }
-
-    use std::sync::Arc;
 
     #[test]
     fn threads_2_simple() {
