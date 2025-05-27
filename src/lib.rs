@@ -471,7 +471,7 @@ impl Smalloc {
             return Ok(p);
         }
 
-        //debugln!("TOTAL_VIRTUAL_MEMORY: {}", TOTAL_VIRTUAL_MEMORY);
+        //eprintln!("TOTAL_VIRTUAL_MEMORY: {}", TOTAL_VIRTUAL_MEMORY);
 
         let layout =
             unsafe { Layout::from_size_align_unchecked(TOTAL_VIRTUAL_MEMORY, PAGE_SIZE) };
@@ -1173,9 +1173,13 @@ unsafe impl GlobalAlloc for Smalloc {
 // should probably be rm'ed once smalloc is finished. :-)
 
 // On MacOS on Apple M4, I could allocate more than 105 trillion bytes (105,072,079,929,344).
+//
 // On a linux machine (AMD EPYC 3151) with 32,711,276 bytes RAM, with overcommit=1, the amount I was able to mmap() varied. :-( One time I could mmap() only 95,175,252,639,744 bytes.
+// On a linux machine (Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20GHz) with 4,608,000,000 bytes RAM with overcommit = 0, the amount I was able to mmap() varied. :-( One time I could mmap() only 93,971,598,389,248 bytes.
+//
 // On a Windows 11 machine in Ubuntu in Windows Subsystem for Linux 2, the amount I was able to mmap() varied. One time I could mmap() only 93,979,814,301,696
 // According to https://learn.microsoft.com/en-us/windows/win32/memory/memory-limits-for-windows-releases a 64-bit process can access 128 TiB.
+//
 // The current settings of smalloc require 92,770,572,173,312 bytes of virtual address space
 
 pub fn dev_find_max_vm_space_allocatable() {
@@ -1190,7 +1194,7 @@ pub fn dev_find_max_vm_space_allocatable() {
             break;
         }
         //println!("trysize: {}", trysize.separate_with_commas());
-        let res_layout = Layout::from_size_align(trysize, MAX_ALIGNMENT);
+        let res_layout = Layout::from_size_align(trysize, PAGE_SIZE);
         match res_layout {
             Ok(layout) => {
                 let res_m = sys_alloc(layout);
@@ -1303,7 +1307,7 @@ pub fn dev_print_virtual_bytes_map() -> usize {
         TOTAL_VIRTUAL_MEMORY.separate_with_commas(),
         convsum(TOTAL_VIRTUAL_MEMORY)
     );
-    let res_layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, MAX_ALIGNMENT);
+    let res_layout = Layout::from_size_align(TOTAL_VIRTUAL_MEMORY, PAGE_SIZE);
     match res_layout {
         Ok(layout) => {
             let res_m = sys_alloc(layout);
@@ -1967,14 +1971,11 @@ mod tests {
         let layout = Layout::from_size_align(siz, 1).unwrap();
         let mut highestp: *mut u8 = unsafe { sm.alloc(layout) };
         i += 1;
-        //eprintln!("highestp: {:?}", highestp);
         while i < NUM_SLOTS_HUGE {
             let p = unsafe { sm.alloc(layout) };
-            //eprintln!("p: {:?}", p);
             assert!(p > highestp, "p: {p:?}, highestp: {highestp:?}");
             highestp = p;
             i += 1;
-            //eprintln!("i: {:?}", i);
         }
 
         let highest_addr = highestp.addr() + siz - 1;
