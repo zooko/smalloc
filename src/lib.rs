@@ -1342,92 +1342,36 @@ mod benches {
 
     use criterion::Criterion;
     use criterion::measurement::{Measurement, ValueFormatter};
-    use std::hint::black_box;
-    use mach_sys::mach_time::mach_absolute_time;
-
-    #[derive(Default)]
-    struct MachAbsoluteTimeMeasurement { }
-
-    struct MachAbsoluteTimeValueFormatter { }
-
     use criterion::Throughput;
-    use std::mem::MaybeUninit;
-    use mach_sys::mach_time::mach_timebase_info;
-    use mach_sys::kern_return::KERN_SUCCESS;
 
-    impl ValueFormatter for MachAbsoluteTimeValueFormatter {
-        fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
-            let mut mtt1: MaybeUninit<mach_timebase_info> = MaybeUninit::uninit();
-            let retval = unsafe { mach_timebase_info(mtt1.as_mut_ptr()) };
-            assert_eq!(retval, KERN_SUCCESS);
-            let mtt2 = unsafe { mtt1.assume_init() };
+    use std::hint::black_box;
 
-            let typical_as_nanos = typical_value * mtt2.numer as f64 / mtt2.denom as f64;
-            let (factor, unit) = if typical_as_nanos < 10f64.powi(0) {
-                (10f64.powi(3), "ps")
-            } else if typical_as_nanos < 10f64.powi(3) {
-                (10f64.powi(0), "ns")
-            } else if typical_as_nanos < 10f64.powi(6) {
-                (10f64.powi(-3), "µs")
-            } else if typical_as_nanos < 10f64.powi(9) {
-                (10f64.powi(-6), "ms")
-            } else {
-                (10f64.powi(-9), "s")
-            };
 
-            for val in values {
-                *val *= factor * mtt2.numer as f64;
-                *val /= mtt2.denom as f64;
-            }
-
-            unit
-        }
-        
-        fn scale_throughputs(
-            &self,
-            _typical: f64,
-            _throughput: &Throughput,
-            _values: &mut [f64],
-        ) -> &'static str {
-            todo!();
-        }
-
-        fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
-            // no scaling is needed
-            "ns"
+    #[cfg(target_vendor = "apple")]
+    pub mod plat {
+        use crate::benches::Criterion;
+        use criterion::MachAbsoluteTimeMeasurement;
+        pub fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
+            Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
         }
     }
 
-    impl Measurement for MachAbsoluteTimeMeasurement {
-        type Intermediate = u64;
-        type Value = u64;
-
-        fn start(&self) -> Self::Intermediate {
-            unsafe { mach_absolute_time() }
-        }
-        fn end(&self, i: Self::Intermediate) -> Self::Value {
-           ( unsafe { mach_absolute_time() } - i )
-        }
-        fn add(&self, v1: &Self::Value, v2: &Self::Value) -> Self::Value {
-            *v1 + *v2
-        }
-        fn zero(&self) -> Self::Value {
-            0
-        }
-        fn one(&self) -> Self::Value {
-            1
-        }
-        fn lt (&self, val: &Self::Value, other: &Self::Value) -> bool {
-            val < other
-        }
-        fn to_f64(&self, val: &Self::Value) -> f64 {
-            *val as f64
-        }
-        fn formatter(&self) -> &dyn ValueFormatter {
-            &MachAbsoluteTimeValueFormatter { }
+    #[cfg(target_arch = "x86_64")]
+    pub mod plat {
+        use criterion::measurement::plat_x86_64::RDTSCPMeasurement;
+        use crate::benches::{Criterion, Duration};
+        pub fn make_criterion() -> Criterion<RDTSCPMeasurement> {
+            Criterion::default().with_measurement(RDTSCPMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
         }
     }
 
+    #[cfg(not(any(target_vendor = "apple", target_arch = "x86_64")))]
+    pub mod plat {
+        fn make_criterion() -> Criterion {
+            Criterion::default().sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
+        }
+    }
+    
     fn randdist_reqsiz(r: &mut StdRng) -> usize {
         // The following distribution was roughly modelled on smalloclog profiling of Zebra.
         let randnum = r.random::<u8>();
@@ -1446,20 +1390,10 @@ mod benches {
     }
 
     use std::time::Duration;
-    fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
-        // Criterion::default().warm_up_time(Duration::new(0, 100_000)).measurement_time(Duration::new(7, 0)).sample_size(500).nresamples(200_000)
-        // Criterion::default()
-        // Criterion::default().warm_up_time(Duration::new(0, 100_000)).measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
-        // Criterion::default().measurement_time(Duration::new(10, 0)).sample_size(500).nresamples(200_000)
-        // Criterion::default().warm_up_time(Duration::new(0, 10_000))
-        // Criterion::<MachAbsoluteTimeMeasurement>::default().sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
-        // Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(115).warm_up_time(Duration::new(6, 0)).significance_level(0.0001).confidence_level(0.9999)
-        Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-    }
-    
+
     #[test]
     fn bench_sum_small_slab_sizes() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         const NUM_ARGS: usize = 50_000;
 
@@ -1478,7 +1412,7 @@ mod benches {
 
     #[test]
     fn bench_sum_large_slab_sizes() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         const NUM_ARGS: usize = 50_000;
 
@@ -1497,7 +1431,7 @@ mod benches {
 
     #[test]
     fn pop_small_flh_separate_empty() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1509,7 +1443,7 @@ mod benches {
 
     #[test]
     fn pop_small_flh_intrusive_empty() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1521,7 +1455,7 @@ mod benches {
 
     #[test]
     fn pop_large_flh_intrusive_empty() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1541,7 +1475,7 @@ mod benches {
     }
     
     fn help_bench_pop_small_flh_nonempty(fnname: &str, smallslabnum: usize, ord: DataOrder) {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1620,7 +1554,7 @@ mod benches {
     }
 
     fn help_bench_pop_large_flh_nonempty(fnname: &str, largeslabnum: usize, ord: DataOrder) {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1789,7 +1723,7 @@ mod benches {
 
     #[test]
     pub fn alloc() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
@@ -1839,7 +1773,7 @@ mod benches {
     use std::cell::RefCell;
     #[test]
     fn dealloc() {
-        let mut c = make_criterion();
+        let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
