@@ -1103,11 +1103,12 @@ written here in roughly descending order of importance:
    any "deferred accounting" like some other memory managers do, which
    nicely eliminates some sources of intermittent performance
    degradation. (See [this blog
-   post](https://pwy.io/posts/mimalloc-cigarette/) for a cautionary
-   tale of how deferred accounting, while it can nicely improve
-   performance in the common "hot paths", can also give rise to edge
-   cases that can occasionally degrade performance in a way that
-   causes problems.)
+   post](https://pwy.io/posts/mimalloc-cigarette/) and [this
+   one](https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view#jemalloc-purging-will-commence-in-ten-seconds)
+   for cautionary tales of how deferred accounting, while it can
+   nicely improve performance in the common "hot paths", can also give
+   rise to edge cases that can occasionally degrade performance or
+   cause other problems.)
 
    There are no locks in `smalloc`[^2], so it will hopefully handle
    heavy multi-processing contention (i.e. many separate cores
@@ -1384,6 +1385,8 @@ the huge-slots slab to fill up.
 * Rewrite it in Zig. :-)
 
 * CI for benchmarks? 🤔
+
+* Iai
 
 * the 4-byte slots can already be intrusive-free-list :-o
 
