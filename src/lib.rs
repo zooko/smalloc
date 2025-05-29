@@ -261,7 +261,7 @@ impl SlotLocation {
 
     /// Returns Some(SlotLocation) if the ptr pointed to a slot, else None (meaning that the pointer must have been allocated with `sys_alloc()` instead.
     fn new_from_ptr(baseptr: *mut u8, ptr: *mut u8) -> Option<SlotLocation> {
-        // If the pointer is before our base pointer or after the end of our allocated space, then it must have come from an oversized alloc where we fell back to `sys_alloc()`. (Assuming that the user code never passes anything other a pointer that it previous got from our `alloc()`, to our `dealloc().)
+        // If the pointer is before our base pointer or after the end of our allocated space, then it must have come from an oversized alloc where we fell back to `sys_alloc()`. (Assuming that the user code never passes anything to our `dealloc() other a pointer that it previous got from our `alloc()`.)
 
         // Now there is no well-specified way to compare two pointers if they aren't part of the same allocation, which this p and our baseptr might not be.
         // .addr() is our way of promising the Rust compiler that we won't round-trip these values back into pointers from usizes and use them, below. See https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance
@@ -730,7 +730,7 @@ impl Smalloc {
     /// allocated, return the max number of slots (which is 1 greater
     /// than the maximum slot number).
     fn increment_eac(&self, eac: &AtomicU64, maxnumslots: usize) -> usize {
-        let nexteac = eac.fetch_add(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
+        let nexteac = eac.fetch_add(1, Ordering::Relaxed);
         if nexteac as usize <= maxnumslots {
             nexteac as usize
         } else {
@@ -740,7 +740,7 @@ impl Smalloc {
             }
             
             // xxx add unit test that eac gets correctly decremented when the thing is full
-            eac.fetch_sub(1, Ordering::Relaxed); // XXX reconsider whether we need stronger ordering constraints
+            eac.fetch_sub(1, Ordering::Relaxed);
             
             maxnumslots
         }
@@ -967,7 +967,6 @@ impl Smalloc {
         // Round up size to the nearest multiple of alignment in order to get a slot that is aligned on that size.
         let alignedsize: usize = ((size - 1) | (alignment - 1)) + 1;
 
-        // XXX benchmark various ways to do this switch+loop...
         // This way of doing this branch+loop was informed by:
         // 1. Let's branch on small-slot vs large-slot just once and then have two (similar) code paths instead of branching on small-slot vs large-slot multiple times in one code path, and
         // 2. I profiled zebra, which showed that 32B was the most common slot size, and that < 32B was more common than > 32B, and that among > 32B slot sizes, 64B was the most common one...
@@ -1030,8 +1029,6 @@ fn set_thread_areanum(newareanum: usize) {
     })
 }
 
-// xxx can i get the Rust typechecker to tell me if I'm accidentally adding a slot number to an offset ithout multiplying it by a slot size first?
-//XXX learn about Constant Parameters and consider using them in here
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.idempotent_init() {
