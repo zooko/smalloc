@@ -31,18 +31,18 @@ const MAX_ALIGNMENT: usize = 2usize.pow(22);
 const NUM_SMALL_SLABS: usize = 11;
 const NUM_LARGE_SLABS: usize = 10;
 
-const SIZE_OF_HUGE_SLOTS: usize = 4194304; // 4 * 2^20
-const SMALL_SLABNUM_TO_SLOTSIZE: [usize; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, 32];
-const LARGE_SLABNUM_TO_SLOTSIZE: [usize; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, SIZE_OF_HUGE_SLOTS];
+const SIZE_OF_HUGE_SLOTS: u32 = 4194304; // 4 * 2^20
+const SMALL_SLABNUM_TO_SLOTSIZE: [u8; NUM_SMALL_SLABS] = [1, 2, 3, 4, 5, 6, 8, 9, 10, 16, 32];
+const LARGE_SLABNUM_TO_SLOTSIZE: [u32; NUM_LARGE_SLABS] = [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, SIZE_OF_HUGE_SLOTS];
 
 const fn small_slabnum_to_slotsize(smallslabnum: usize) -> usize {
     debug_assert!(smallslabnum < NUM_SMALL_SLABS);
-    SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum]
+    SMALL_SLABNUM_TO_SLOTSIZE[smallslabnum] as usize
 }
 
 const fn large_slabnum_to_slotsize(largeslabnum: usize) -> usize {
     debug_assert!(largeslabnum < NUM_LARGE_SLABS);
-    LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum]
+    LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum] as usize
 }
 
 // For slabs other than the largest slab:
@@ -61,7 +61,7 @@ const fn num_large_slots(largeslabnum: usize) -> usize {
 
 const fn large_slab_alignment(largeslabnum: usize) -> usize {
     if largeslabnum == NUM_LARGE_SLABS-1 {
-        SIZE_OF_HUGE_SLOTS
+        SIZE_OF_HUGE_SLOTS as usize
     } else {
         PAGE_SIZE
     }
@@ -143,7 +143,14 @@ const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS + 1] {
 
 const SUM_SMALL_SLAB_SIZES: [usize; NUM_SMALL_SLABS + 1] = gen_lut_sum_small_slab_sizes();
 
-/// The sum of the sizes of the small slabs.
+/// The sum of the sizes of the first `numslabs` small slabs. The
+/// argument `numslabs` is how many slabs to count the aggregate size
+/// of, not the index of the biggest slab. So if `numslabs` is 0 the
+/// return value is 0. If `numslabs` is 4, then the return value is
+/// the sum of the sizes of slabs 0, 1, 2, and 3. If `numslabs` is 11,
+/// then it is the sum of all the small slabs. This also means that
+/// the return value is the offset within the data slabs region of the
+/// small slab with small slab number `numslabs`.
 const fn sum_small_slab_sizes(numslabs: usize) -> usize {
     debug_assert!(numslabs <= NUM_SMALL_SLABS);
     SUM_SMALL_SLAB_SIZES[numslabs]
@@ -176,7 +183,7 @@ const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
         // huge-slots slab is aligned to MAX_ALIGNMENT so that the
         // slots themselves can be aligned to their size.
         if index+1 == NUM_LARGE_SLABS-1 {
-            sum = sum.next_multiple_of(SIZE_OF_HUGE_SLOTS);
+            sum = sum.next_multiple_of(SIZE_OF_HUGE_SLOTS as usize);
         } else if index < NUM_LARGE_SLABS-1 {
             sum = sum.next_multiple_of(PAGE_SIZE);
         }
@@ -189,12 +196,15 @@ const fn gen_lut_sum_large_slab_sizes() -> [usize; NUM_LARGE_SLABS + 1] {
 
 const SUM_LARGE_SLAB_SIZES: [usize; NUM_LARGE_SLABS + 1] = gen_lut_sum_large_slab_sizes();
 
-/// The sum of the sizes of the large slabs. The argument `numslabs`
-/// is how many slabs to count the aggregate size of, not the index of
-/// the biggest slab. So if `numslabs` is 0 the return value is 0. If
-/// `numslabs` is 4, then the return value is the sum of the sizes of
-/// slabs 0, 1, 2, and 3. If `numslabs` is 7, then it is the sum of
-/// all the slabs, including the huge-slots slab.
+/// The sum of the sizes of the first `numslabs` large slabs. The
+/// argument `numslabs` is how many slabs to count the aggregate size
+/// of, not the index of the biggest slab. So if `numslabs` is 0 the
+/// return value is 0. If `numslabs` is 4, then the return value is
+/// the sum of the sizes of slabs 0, 1, 2, and 3. If `numslabs` is 10,
+/// then it is the sum of all the slabs, including the huge-slots
+/// slab. This also means that the return value is the offset within
+/// the large slabs region of the large slab with large slab number
+/// `numslabs`.
 const fn sum_large_slab_sizes(numslabs: usize) -> usize {
     debug_assert!(numslabs <= NUM_LARGE_SLABS);
     SUM_LARGE_SLAB_SIZES[numslabs]
@@ -209,8 +219,6 @@ const TOTAL_VIRTUAL_MEMORY: usize =
     LARGE_SLAB_REGION_BASE_OFFSET + LARGE_SLAB_REGION_SPACE + MAX_ALIGNMENT - 1;
 
 use std::cmp::PartialEq;
-
-// XXX Look into this new unstable Rust trait NonZero in std::num :-)
 
 #[derive(PartialEq, Debug)]
 enum SlotLocation {
@@ -229,10 +237,10 @@ impl SlotLocation {
     fn slotsize(&self) -> usize {
         match self {
             SlotLocation::SmallSlot { smallslabnum, .. } => {
-                SMALL_SLABNUM_TO_SLOTSIZE[*smallslabnum]
+                small_slabnum_to_slotsize(*smallslabnum)
             }
             SlotLocation::LargeSlot { largeslabnum, .. } => {
-                LARGE_SLABNUM_TO_SLOTSIZE[*largeslabnum]
+                large_slabnum_to_slotsize(*largeslabnum)
             }
         }
     }
@@ -325,7 +333,7 @@ impl SlotLocation {
 
             let mut largeslabnum = 0;
             while largeslabnum < NUM_LARGE_SLABS - 1
-                && withinregionoffset >= within_region_offset_of_large_slot_slab(largeslabnum + 1)
+                && withinregionoffset >= sum_large_slab_sizes(largeslabnum + 1)
             {
                 largeslabnum += 1;
             }
@@ -338,8 +346,7 @@ impl SlotLocation {
             });
 
             // This ptr is within this slab.
-            // XXX replace without using offset_of_large_slot_slab() ? Table from largeslabnum to offset!
-            let withinslaboffset = withinregionoffset - within_region_offset_of_large_slot_slab(largeslabnum);
+            let withinslaboffset = withinregionoffset - sum_large_slab_sizes(largeslabnum);
             debug_assert!(withinslaboffset.is_multiple_of(slotsize)); // ptr must point to the beginning of a slot.
             let slotnum = withinslaboffset / slotsize;
             debug_assert!(if slotnum == 0 {
@@ -378,25 +385,7 @@ const fn offset_of_small_slot(areanum: usize, slabnum: usize, slotnum: usize) ->
     offset
 }
 
-const fn within_region_offset_of_large_slot_slab(largeslabnum: usize) -> usize {
-    //XXX replace with table
-    debug_assert!(largeslabnum < NUM_LARGE_SLABS);
-
-    let mut offset = 0;
-
-    // Count past the bytes of any earlier slabs before this slab:
-    offset += sum_large_slab_sizes(largeslabnum);
-
-    // The beginning of each large slab is aligned with PAGE_SIZE,
-    // except for the huge-slots slab which is aligned with
-    // MAX_ALIGNMENT.
-    debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
-
-    offset
-}
-
 const fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
-    //xxx replace part of this with table from largeslabnum to offset
     debug_assert!(largeslabnum < NUM_LARGE_SLABS);
     debug_assert!(slotnum < num_large_slots(largeslabnum));
 
@@ -405,10 +394,9 @@ const fn offset_of_large_slot(largeslabnum: usize, slotnum: usize) -> usize {
     let mut offset = LARGE_SLAB_REGION_BASE_OFFSET;
 
     // The beginning of this slab within the large slabs region:
-    offset += within_region_offset_of_large_slot_slab(largeslabnum);
+    offset += sum_large_slab_sizes(largeslabnum);
 
-    // The beginning of each large slab is aligned with PAGE_SIZE
-    // alignment.
+    // The beginning of each large slab is aligned.
     debug_assert!(offset.is_multiple_of(large_slab_alignment(largeslabnum)));
 
     // Count past the bytes of any earlier slots in this slab:
@@ -997,7 +985,7 @@ impl Smalloc {
             });
 
             self.small_alloc_with_overflow(get_thread_areanum(), smallslabnum)
-        } else if alignedsize <= SIZE_OF_HUGE_SLOTS {
+        } else if alignedsize <= SIZE_OF_HUGE_SLOTS as usize {
             let mut largeslabnum = 0;
             while large_slabnum_to_slotsize(largeslabnum) < alignedsize {
                 largeslabnum += 1;
@@ -2775,7 +2763,7 @@ mod tests {
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum], 1).unwrap();
+        let l = Layout::from_size_align(large_slabnum_to_slotsize(largeslabnum), 1).unwrap();
 
         let orig_i = NUM_SLOTS_O - 3;
         let mut i = orig_i;
@@ -2842,7 +2830,7 @@ mod tests {
 
         let largeslabnum = 0;
 
-        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[largeslabnum], 1).unwrap();
+        let l = Layout::from_size_align(large_slabnum_to_slotsize(largeslabnum), 1).unwrap();
 
         let orig_i = NUM_SLOTS_O - 3;
         let mut i = orig_i;
@@ -2946,7 +2934,7 @@ mod tests {
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        let l = Layout::from_size_align(LARGE_SLABNUM_TO_SLOTSIZE[LARGESLABNUM], 1).unwrap();
+        let l = Layout::from_size_align(large_slabnum_to_slotsize(LARGESLABNUM), 1).unwrap();
 
         let orig_i = NUM_SLOTS_HUGE - 3;
         let mut i = orig_i;
