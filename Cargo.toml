@@ -34,3 +34,4 @@ name = "smalloc"
 [profile.release]
 lto = "fat"
 rustflags = ["-C", "target-cpu=native"]
+debug = true
