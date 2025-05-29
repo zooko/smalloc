@@ -1318,7 +1318,7 @@ pub fn dev_print_virtual_bytes_map() -> usize {
 
 #[cfg(test)]
 mod benches {
-    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots, get_thread_areanum};
+    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots, get_thread_areanum, small_slabnum_to_slotsize, large_slabnum_to_slotsize};
 
     use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
@@ -1326,6 +1326,7 @@ mod benches {
     use std::alloc::{GlobalAlloc, Layout};
     use std::hint::black_box;
     use std::time::Duration;
+    use std::cmp::min;
 
     use criterion::Criterion;
 
@@ -1455,19 +1456,27 @@ mod benches {
         Sequential, Random
     }
     
-    fn help_bench_pop_small_flh_nonempty(fnname: &str, smallslabnum: usize, ord: DataOrder) {
+    fn help_bench_pop_small_flh_nonempty(fnname: &str, smallslabnum: usize, ord: DataOrder, readfirst: bool) {
         let mut c = plat::make_criterion();
+
+        let gtan1 = get_thread_areanum();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
-        sm.push_flh(&sm.small_alloc_with_overflow(0, smallslabnum).unwrap());
 
+        // To prime the pump for the assertion inside setup that the flh isn't empty.
+        sm.push_flh(&sm.small_alloc_with_overflow(gtan1, smallslabnum).unwrap());
+
+        const BYTES6: [u8; 8] = [1, 3, 4, 2, 5, 8, 7, 6];
         const NUM_ARGS: usize = 16_000;
         let setup = || {
+            let gtan2 = get_thread_areanum();
+            assert_eq!(gtan1, gtan2);
+
             // reset the free list and eac
-            let eac = sm.get_small_eac(0, smallslabnum);
+            let eac = sm.get_small_eac(gtan2, smallslabnum);
             eac.store(0, Ordering::Relaxed);
-            let flh = sm.get_small_flh(0, smallslabnum);
+            let flh = sm.get_small_flh(gtan2, smallslabnum);
 
             // assert that the free list hasnt't been emptied out,
             // which would mean that during the previous batch of
@@ -1481,7 +1490,13 @@ mod benches {
             let mut sls = Vec::with_capacity(NUM_ARGS);
 
             while sls.len() < NUM_ARGS {
-                sls.push(sm.small_alloc_with_overflow(0, smallslabnum).unwrap());
+                let sl = sm.small_alloc_with_overflow(gtan2, smallslabnum).unwrap();
+                if readfirst {
+                    let p = unsafe { sm.get_baseptr().add(sl.offset()) };
+                    let slotsize = small_slabnum_to_slotsize(smallslabnum);
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), p, min(BYTES6.len(), slotsize)) }
+                }
+                sls.push(sl)
             }
 
             match ord {
@@ -1498,6 +1513,25 @@ mod benches {
         };
 
         let f = |()| {
+            let gtan3 = get_thread_areanum();
+            assert_eq!(gtan1, gtan3);
+
+            // peek into flh to read the data before popping it
+            let flh = sm.get_small_flh(gtan3, smallslabnum);
+            let slotnump1 = flh.load(Ordering::Relaxed) & u32::MAX as u64;
+            assert_ne!(slotnump1, 0);
+            let slotnum = (slotnump1 - 1) as usize;
+            let sl = SlotLocation::SmallSlot{ areanum: gtan3, smallslabnum, slotnum };
+            let p = unsafe { sm.get_baseptr().add(sl.offset()) };
+            let slotsize = small_slabnum_to_slotsize(smallslabnum);
+            let siz = min(BYTES6.len(), slotsize);
+            debug_assert!(siz <= 32);
+            let mut arr: [u8; 32] = [0; 32];
+
+            if readfirst {
+                unsafe { std::ptr::copy_nonoverlapping(p, arr.as_mut_ptr(), siz) };
+            }
+
             black_box(sm.pop_small_flh(0, black_box(smallslabnum)));
         };
 
@@ -1506,43 +1540,76 @@ mod benches {
 
     #[test]
     fn pop_small_flh_separate_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential", 0, DataOrder::Sequential)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential", 0, DataOrder::Sequential, false)
+    }
+
+    #[test]
+    fn pop_small_flh_separate_nonempty_sequential_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential_preread", 0, DataOrder::Sequential, true)
     }
 
     #[test]
     fn pop_small_flh_separate_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random", 0, DataOrder::Random)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random", 0, DataOrder::Random, false)
+    }
+
+    #[test]
+    fn pop_small_flh_separate_nonempty_random_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random_preread", 0, DataOrder::Random, true)
     }
 
     #[test]
     fn pop_small_flh_intrusive_slabnum_6_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential", 6, DataOrder::Sequential)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential", 6, DataOrder::Sequential, false)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_6_nonempty_sequential_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential_preread", 6, DataOrder::Sequential, true)
     }
 
     #[test]
     fn pop_small_flh_intrusive_slabnum_6_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random", 6, DataOrder::Random)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random", 6, DataOrder::Random, false)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_6_nonempty_random_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random_preread", 6, DataOrder::Random, true)
     }
 
     #[test]
     fn pop_small_flh_intrusive_slabnum_10_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential", 10, DataOrder::Sequential)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential", 10, DataOrder::Sequential, false)
+    }
+
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_10_nonempty_sequential_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential_preread", 10, DataOrder::Sequential, true)
     }
 
     #[test]
     fn pop_small_flh_intrusive_slabnum_10_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random", 10, DataOrder::Random)
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random", 10, DataOrder::Random, false)
     }
 
-    fn help_bench_pop_large_flh_nonempty(fnname: &str, largeslabnum: usize, ord: DataOrder) {
+    #[test]
+    fn pop_small_flh_intrusive_slabnum_10_nonempty_random_preread() {
+        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random_preread", 10, DataOrder::Random, true)
+    }
+
+    fn help_bench_pop_large_flh_nonempty(fnname: &str, largeslabnum: usize, ord: DataOrder, readfirst: bool) {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
+
+        // To prime the pump for the assertion inside setup that the flh isn't empty.
         sm.push_flh(&sm.large_alloc_with_overflow(largeslabnum).unwrap());
 
         let router = RefCell::new(StdRng::seed_from_u64(0));
 
+        const BYTES7: [u8; 8] = [8, 3, 4, 2, 5, 1, 7, 6];
         const NUM_ARGS: usize = 16_000;
         let setup = || {
             let mut rinner = router.borrow_mut();
@@ -1564,7 +1631,13 @@ mod benches {
             let mut sls = Vec::with_capacity(NUM_ARGS);
 
             while sls.len() < NUM_ARGS {
-                sls.push(sm.large_alloc_with_overflow(largeslabnum).unwrap());
+                let sl = sm.large_alloc_with_overflow(largeslabnum).unwrap();
+                if readfirst {
+                    let p = unsafe { sm.get_baseptr().add(sl.offset()) };
+                    let slotsize = large_slabnum_to_slotsize(largeslabnum);
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES7.as_ptr(), p, min(BYTES7.len(), slotsize)) }
+                }
+                sls.push(sl)
             }
 
             match ord {
@@ -1580,7 +1653,23 @@ mod benches {
         };
 
         let f = |()| {
-            sm.pop_large_flh(black_box(largeslabnum));
+            // peek into flh to read the data before popping it
+            let flh = sm.get_large_flh(largeslabnum);
+            let slotnump1 = flh.load(Ordering::Relaxed) & u32::MAX as u64;
+            assert_ne!(slotnump1, 0);
+            let slotnum = (slotnump1 - 1) as usize;
+            let sl = SlotLocation::LargeSlot{ largeslabnum, slotnum };
+            let p = unsafe { sm.get_baseptr().add(sl.offset()) };
+            let slotsize = large_slabnum_to_slotsize(largeslabnum);
+            let siz = min(BYTES7.len(), slotsize);
+            debug_assert!(siz <= 32);
+            let mut arr: [u8; 32] = [0; 32];
+
+            if readfirst {
+                unsafe { std::ptr::copy_nonoverlapping(p, arr.as_mut_ptr(), siz) };
+            }
+
+            black_box(sm.pop_large_flh(black_box(largeslabnum)));
         };
 
         c.bench_function(fnname, |b| b.iter_batched(setup, f, BatchSize::SmallInput));
@@ -1588,32 +1677,62 @@ mod benches {
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_0_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random", 0, DataOrder::Random);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random", 0, DataOrder::Random, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_0_nonempty_random_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random_preread", 0, DataOrder::Random, true);
     }
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_0_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential", 0, DataOrder::Sequential);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential", 0, DataOrder::Sequential, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_0_nonempty_sequential_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential_preread", 0, DataOrder::Sequential, true);
     }
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_8_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random", 8, DataOrder::Random);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random", 8, DataOrder::Random, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_8_nonempty_random_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random_preread", 8, DataOrder::Random, true);
     }
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_8_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential", 8, DataOrder::Sequential);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential", 8, DataOrder::Sequential, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_8_nonempty_sequential_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential_preread", 8, DataOrder::Sequential, true);
     }
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_9_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random", 9, DataOrder::Random);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random", 9, DataOrder::Random, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_9_nonempty_random_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random_preread", 9, DataOrder::Random, true);
     }
 
     #[test]
     fn pop_large_flh_intrusive_slabnum_9_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential", 9, DataOrder::Sequential);
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential", 9, DataOrder::Sequential, false);
+    }
+
+    #[test]
+    fn pop_large_flh_intrusive_slabnum_9_nonempty_sequential_preread() {
+        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential_preread", 9, DataOrder::Sequential, true);
     }
 
     #[test]
