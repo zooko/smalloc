@@ -1324,18 +1324,15 @@ mod benches {
     use rand::rngs::StdRng;
     use std::ptr::null_mut;
     use std::alloc::{GlobalAlloc, Layout};
+    use std::hint::black_box;
+    use std::time::Duration;
 
     use criterion::Criterion;
-    use criterion::measurement::{Measurement, ValueFormatter};
-    use criterion::Throughput;
-
-    use std::hint::black_box;
-
 
     #[cfg(target_vendor = "apple")]
     pub mod plat {
-        use crate::benches::Criterion;
-        use criterion::MachAbsoluteTimeMeasurement;
+        use crate::benches::{Criterion, Duration};
+        use criterion::measurement::plat_apple::MachAbsoluteTimeMeasurement;
         pub fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
             Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
         }
@@ -1352,6 +1349,7 @@ mod benches {
 
     #[cfg(not(any(target_vendor = "apple", target_arch = "x86_64")))]
     pub mod plat {
+        use crate::benches::Duration;
         fn make_criterion() -> Criterion {
             Criterion::default().sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
         }
@@ -1373,8 +1371,6 @@ mod benches {
             4_000_000
         }
     }
-
-    use std::time::Duration;
 
     #[test]
     fn bench_sum_small_slab_sizes() {
