@@ -1388,6 +1388,8 @@ the huge-slots slab to fill up.
 
 * Iai
 
+* make it work with valgrind
+
 * the 4-byte slots can already be intrusive-free-list :-o
 
 * add support for the [new experimental Rust Allocator
