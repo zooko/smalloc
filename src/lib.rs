@@ -1406,37 +1406,37 @@ mod benches {
     }
 
     #[test]
-    fn pop_small_flh_separate_slabnum_0_empty() {
+    fn pop_small_flh_sep_sn_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_small_flh_separate_slabnum_0_empty", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_sep_sn_0_empty", |b| b.iter(|| {
             black_box(sm.pop_small_flh(black_box(0), black_box(0)));
         }));
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_0_empty() {
+    fn pop_small_flh_intru_sn_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_small_flh_intrusive_slabnum_0_empty", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_intru_sn_0_empty", |b| b.iter(|| {
             black_box(sm.pop_small_flh(black_box(0), black_box(6)));
         }));
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_0_empty() {
+    fn pop_large_flh_intru_sn_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_large_flh_intrusive_slabnum_0_empty", |b| b.iter(|| {
+        c.bench_function("pop_large_flh_intru_sn_0_empty", |b| b.iter(|| {
             black_box(sm.pop_large_flh(black_box(0)));
         }));
     }
@@ -1450,7 +1450,7 @@ mod benches {
         Sequential, Random
     }
     
-    fn help_bench_pop_small_flh_nonempty(fnname: &str, smallslabnum: usize, ord: DataOrder, thenwrite: bool) {
+    fn help_bench_pop_small_flh_wdata(fnname: &str, smallslabnum: usize, ord: DataOrder, thenwrite: bool) {
         let mut c = plat::make_criterion();
 
         let gtan1 = get_thread_areanum();
@@ -1520,66 +1520,66 @@ mod benches {
     }
 
     #[test]
-    fn pop_small_flh_separate_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential", 0, DataOrder::Sequential, false)
+    fn pop_small_flh_sep_wdata_sequential() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_sep_wdata_sequential", 0, DataOrder::Sequential, false)
     }
 
     #[test]
-    fn pop_small_flh_separate_nonempty_sequential_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_sequential_then_write", 0, DataOrder::Sequential, true)
+    fn pop_small_flh_sep_wdata_sequential_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_sep_wdata_sequential_then_write", 0, DataOrder::Sequential, true)
     }
 
     #[test]
-    fn pop_small_flh_separate_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random", 0, DataOrder::Random, false)
+    fn pop_small_flh_sep_wdata_random() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_sep_wdata_random", 0, DataOrder::Random, false)
     }
 
     #[test]
-    fn pop_small_flh_separate_nonempty_random_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_separate_nonempty_random_then_write", 0, DataOrder::Random, true)
+    fn pop_small_flh_sep_wdata_random_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_sep_wdata_random_then_write", 0, DataOrder::Random, true)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_6_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential", 6, DataOrder::Sequential, false)
+    fn pop_small_flh_intru_sn_6_wdata_sequential() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_6_wdata_sequential", 6, DataOrder::Sequential, false)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_6_nonempty_sequential_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_sequential_then_write", 6, DataOrder::Sequential, true)
+    fn pop_small_flh_intru_sn_6_wdata_sequential_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_6_wdata_sequential_then_write", 6, DataOrder::Sequential, true)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_6_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random", 6, DataOrder::Random, false)
+    fn pop_small_flh_intru_sn_6_wdata_random() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_6_wdata_random", 6, DataOrder::Random, false)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_6_nonempty_random_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_6_nonempty_random_then_write", 6, DataOrder::Random, true)
+    fn pop_small_flh_intru_sn_6_wdata_random_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_6_wdata_random_then_write", 6, DataOrder::Random, true)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_10_nonempty_sequential() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential", 10, DataOrder::Sequential, false)
+    fn pop_small_flh_intru_sn_10_wdata_sequential() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_10_wdata_sequential", 10, DataOrder::Sequential, false)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_10_nonempty_sequential_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_sequential_then_write", 10, DataOrder::Sequential, true)
+    fn pop_small_flh_intru_sn_10_wdata_sequential_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_10_wdata_sequential_then_write", 10, DataOrder::Sequential, true)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_10_nonempty_random() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random", 10, DataOrder::Random, false)
+    fn pop_small_flh_intru_sn_10_wdata_random() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_10_wdata_random", 10, DataOrder::Random, false)
     }
 
     #[test]
-    fn pop_small_flh_intrusive_slabnum_10_nonempty_random_then_write() {
-        help_bench_pop_small_flh_nonempty("pop_small_flh_intrusive_slabnum_10_nonempty_random_then_write", 10, DataOrder::Random, true)
+    fn pop_small_flh_intru_sn_10_wdata_random_then_write() {
+        help_bench_pop_small_flh_wdata("pop_small_flh_intru_sn_10_wdata_random_then_write", 10, DataOrder::Random, true)
     }
 
-    fn help_bench_pop_large_flh_nonempty(fnname: &str, largeslabnum: usize, ord: DataOrder, thenwrite: bool) {
+    fn help_bench_pop_large_flh_wdata(fnname: &str, largeslabnum: usize, ord: DataOrder, thenwrite: bool) {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
@@ -1645,63 +1645,63 @@ mod benches {
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_0_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random", 0, DataOrder::Random, false);
+    fn pop_large_flh_intru_sn_0_wdata_random() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_0_wdata_random", 0, DataOrder::Random, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_0_nonempty_random_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_random_then_write", 0, DataOrder::Random, true);
+    fn pop_large_flh_intru_sn_0_wdata_random_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_0_wdata_random_then_write", 0, DataOrder::Random, true);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_0_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential", 0, DataOrder::Sequential, false);
+    fn pop_large_flh_intru_sn_0_wdata_sequential() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_0_wdata_sequential", 0, DataOrder::Sequential, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_0_nonempty_sequential_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_0_nonempty_sequential_then_write", 0, DataOrder::Sequential, true);
+    fn pop_large_flh_intru_sn_0_wdata_sequential_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_0_wdata_sequential_then_write", 0, DataOrder::Sequential, true);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_8_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random", 8, DataOrder::Random, false);
+    fn pop_large_flh_intru_sn_8_wdata_random() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_8_wdata_random", 8, DataOrder::Random, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_8_nonempty_random_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_random_then_write", 8, DataOrder::Random, true);
+    fn pop_large_flh_intru_sn_8_wdata_random_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_8_wdata_random_then_write", 8, DataOrder::Random, true);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_8_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential", 8, DataOrder::Sequential, false);
+    fn pop_large_flh_intru_sn_8_wdata_sequential() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_8_wdata_sequential", 8, DataOrder::Sequential, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_8_nonempty_sequential_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_8_nonempty_sequential_then_write", 8, DataOrder::Sequential, true);
+    fn pop_large_flh_intru_sn_8_wdata_sequential_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_8_wdata_sequential_then_write", 8, DataOrder::Sequential, true);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_9_nonempty_random() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random", 9, DataOrder::Random, false);
+    fn pop_large_flh_intru_sn_9_wdata_random() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_9_wdata_random", 9, DataOrder::Random, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_9_nonempty_random_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_random_then_write", 9, DataOrder::Random, true);
+    fn pop_large_flh_intru_sn_9_wdata_random_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_9_wdata_random_then_write", 9, DataOrder::Random, true);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_9_nonempty_sequential() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential", 9, DataOrder::Sequential, false);
+    fn pop_large_flh_intru_sn_9_wdata_sequential() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_9_wdata_sequential", 9, DataOrder::Sequential, false);
     }
 
     #[test]
-    fn pop_large_flh_intrusive_slabnum_9_nonempty_sequential_then_write() {
-        help_bench_pop_large_flh_nonempty("pop_large_flh_intrusive_slabnum_9_nonempty_sequential_then_write", 9, DataOrder::Sequential, true);
+    fn pop_large_flh_intru_sn_9_wdata_sequential_then_write() {
+        help_bench_pop_large_flh_wdata("pop_large_flh_intru_sn_9_wdata_sequential_then_write", 9, DataOrder::Sequential, true);
     }
 
     #[test]
