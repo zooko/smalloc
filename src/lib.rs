@@ -507,11 +507,6 @@ impl Smalloc {
         p
     }
 
-    // /// For testing/debugging.
-    // fn sl_to_ptr(&self, sl: &SlotLocation) -> *mut u8 {
-    //     unsafe { self.get_baseptr().add(sl.offset()) }
-    // }
-
     /// Pop the head of the free list and return it. Returns 0 if the
     /// free list is empty, or returns the one greater than the index
     /// of the former head of the free list. See "Thread-Safe State
