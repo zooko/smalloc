@@ -1406,37 +1406,37 @@ mod benches {
     }
 
     #[test]
-    fn pop_small_flh_separate_empty() {
+    fn pop_small_flh_separate_slabnum_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_small_flh_separate_empty", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_separate_slabnum_0_empty", |b| b.iter(|| {
             black_box(sm.pop_small_flh(black_box(0), black_box(0)));
         }));
     }
 
     #[test]
-    fn pop_small_flh_intrusive_empty() {
+    fn pop_small_flh_intrusive_slabnum_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_small_flh_intrusive_empty", |b| b.iter(|| {
+        c.bench_function("pop_small_flh_intrusive_slabnum_0_empty", |b| b.iter(|| {
             black_box(sm.pop_small_flh(black_box(0), black_box(6)));
         }));
     }
 
     #[test]
-    fn pop_large_flh_intrusive_empty() {
+    fn pop_large_flh_intrusive_slabnum_0_empty() {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        c.bench_function("pop_large_flh_intrusive_empty", |b| b.iter(|| {
+        c.bench_function("pop_large_flh_intrusive_slabnum_0_empty", |b| b.iter(|| {
             black_box(sm.pop_large_flh(black_box(0)));
         }));
     }
