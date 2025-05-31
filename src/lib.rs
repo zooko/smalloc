@@ -1313,7 +1313,7 @@ pub fn dev_print_virtual_bytes_map() -> usize {
 
 #[cfg(test)]
 mod benches {
-    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, sum_small_slab_sizes, sum_large_slab_sizes, SlotLocation, num_large_slots, get_thread_areanum};
+    use crate::{Smalloc, NUM_SMALL_SLABS, NUM_LARGE_SLABS, NUM_SMALL_SLAB_AREAS, NUM_SLOTS_O, SlotLocation, num_large_slots, get_thread_areanum};
 
     use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
@@ -1365,44 +1365,6 @@ mod benches {
         } else {
             4_000_000
         }
-    }
-
-    #[test]
-    fn bench_sum_small_slab_sizes() {
-        let mut c = plat::make_criterion();
-
-        const NUM_ARGS: usize = 50_000;
-
-        let mut r = StdRng::seed_from_u64(0);
-        let reqslabnums: Vec<usize> = (0..NUM_ARGS)
-            .map(|_| r.random_range(0..=NUM_SMALL_SLABS))
-            .collect();
-        let mut i = 0;
-
-        c.bench_function("bench_sum_small_slab_sizes", |b| b.iter(|| {
-            black_box(sum_small_slab_sizes(reqslabnums[i % NUM_ARGS]));
-
-            i += 1;
-        }));
-    }
-
-    #[test]
-    fn bench_sum_large_slab_sizes() {
-        let mut c = plat::make_criterion();
-
-        const NUM_ARGS: usize = 50_000;
-
-        let mut r = StdRng::seed_from_u64(0);
-        let reqslabnums: Vec<usize> = (0..NUM_ARGS)
-            .map(|_| r.random_range(0..=NUM_LARGE_SLABS))
-            .collect();
-        let mut i = 0;
-
-        c.bench_function("bench_sum_large_slab_sizes", |b| b.iter(|| {
-            black_box(sum_large_slab_sizes(black_box(reqslabnums[i % NUM_ARGS])));
-
-            i += 1;
-        }));
     }
 
     #[test]
