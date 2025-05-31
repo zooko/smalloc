@@ -1,19 +1,29 @@
 [profile.default]
 leak-timeout = "200ms"
 
+# We don't want benchmarks to be run in parallel with one another
+# because that changes the results. You could pass `--test-threads 1`
+# on the command-line to `cargo nextest`, which works (I've done it),
+# but this is a hack to attempt to prevent nextest from running
+# multiple benchmarks in parallel if you omit that command-line
+# argument.
 [[profile.default.overrides]]
-filter = 'test(/^tests::test_threads_2_::/)'
+filter = 'test(/^benches::/)'
+threads-required = 1000000000
+
+[[profile.default.overrides]]
+filter = 'test(/^tests::test_threads_2_/)'
 threads-required = 2
 
 [[profile.default.overrides]]
-filter = 'test(/^tests::test_threads_12_::/)'
+filter = 'test(/^tests::test_threads_12_/)'
 threads-required = 12
 
 [[profile.default.overrides]]
-filter = 'test(/^tests::test_threads_32_::/)'
+filter = 'test(/^tests::test_threads_32_/)'
 threads-required = 32
 
 [[profile.default.overrides]]
-filter = 'test(/^tests::test_threads_1000_::/)'
+filter = 'test(/^tests::test_threads_1000_/)'
 threads-required = 1000
 

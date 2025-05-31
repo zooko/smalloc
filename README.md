@@ -57,7 +57,7 @@ And look at stdout to see the test results.
 To run the benchmarks:
 
 ```text
-cargo nextest run --release benches:: --test-threads 1
+cargo nextest run --release benches::
 ```
 
 And open the `index.html` files in `./target/criterion/*/report/` to
