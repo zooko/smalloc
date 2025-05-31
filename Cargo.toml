@@ -18,6 +18,7 @@ cargo-nextest = "0.9.96"
 # criterion = { version = "0.6.0", git = "https://github.com/zooko/criterion.rs" }
 criterion = { version = "0.6.0", path = "../criterion.rs" }
 criterion-macro = "0.4.0"
+gcd = "2.3.0"
 
 [target.'cfg(target_vendor="apple")'.dependencies]
 mach-sys = "0.5"

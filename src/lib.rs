@@ -1852,6 +1852,173 @@ mod benches {
 
         c.bench_function("dealloc", |b| b.iter_batched(setup, f, BatchSize::SmallInput));
     }
+
+    #[test]
+    fn bench_1_1() {
+        help_bench_many_accesses("bench_1_1", 1, 1);
+    }
+
+    #[test]
+    fn bench_1_2() {
+        help_bench_many_accesses("bench_1_2", 1, 2);
+    }
+
+    #[test]
+    fn bench_1_3() {
+        help_bench_many_accesses("bench_1_3", 1, 3);
+    }
+
+    #[test]
+    fn bench_1_4() {
+        help_bench_many_accesses("bench_1_4", 1, 4);
+    }
+
+    #[test]
+    fn bench_1_5() {
+        help_bench_many_accesses("bench_1_5", 1, 5);
+    }
+
+    #[test]
+    fn bench_1_6() {
+        help_bench_many_accesses("bench_1_6", 1, 6);
+    }
+
+    #[test]
+    fn bench_1_8() {
+        help_bench_many_accesses("bench_1_8", 1, 8);
+    }
+
+    #[test]
+    fn bench_1_9() {
+        help_bench_many_accesses("bench_1_9", 1, 9);
+    }
+
+    #[test]
+    fn bench_1_10() {
+        help_bench_many_accesses("bench_1_10", 1, 10);
+    }
+
+    #[test]
+    fn bench_1_16() {
+        help_bench_many_accesses("bench_1_16", 1, 16);
+    }
+
+    #[test]
+    fn bench_1_32() {
+        help_bench_many_accesses("bench_1_32", 1, 32);
+    }
+
+    #[test]
+    fn bench_1_64() {
+        help_bench_many_accesses("bench_1_64", 1, 64);
+    }
+
+    #[test]
+    fn bench_1_128() {
+        help_bench_many_accesses("bench_1_128", 1, 128);
+    }
+
+    #[test]
+    fn bench_1_256() {
+        help_bench_many_accesses("bench_1_256", 1, 256);
+    }
+
+    #[test]
+    fn bench_1_512() {
+        help_bench_many_accesses("bench_1_512", 1, 512);
+    }
+
+    #[test]
+    fn bench_1_1024() {
+        help_bench_many_accesses("bench_1_1024", 1, 1024);
+    }
+
+    #[test]
+    fn bench_1_2048() {
+        help_bench_many_accesses("bench_1_2048", 1, 2048);
+    }
+
+    #[test]
+    fn bench_1_4096() {
+        help_bench_many_accesses("bench_1_4096", 1, 4096);
+    }
+
+    #[test]
+    fn bench_1_8192() {
+        help_bench_many_accesses("bench_1_8192", 1, 8192);
+    }
+
+    #[test]
+    fn bench_1_16384() {
+        help_bench_many_accesses("bench_1_16384", 1, 16384);
+    }
+
+    #[test]
+    fn bench_1_32768() {
+        help_bench_many_accesses("bench_1_32768", 1, 32768);
+    }
+
+    use std::slice;
+    use thousands::Separable;
+    use gcd::Gcd;
+
+    /// This is intended to measure the effect of packing many allocations into few cache lines.
+    fn help_bench_many_accesses(fnname: &str, data_size: usize, alloc_size: usize) {
+        assert!(data_size <= alloc_size);
+
+        let mut c = plat::make_criterion();
+
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        // These two consts are set for my Apple M4 Max
+        const CACHE_LINE_SIZE: usize = 128;
+        const CACHE_SIZE: usize = 20 * 2usize.pow(20);
+
+        const MEM_TO_USE: usize = CACHE_SIZE * 2 + 1_000_000;
+        let num_args: usize = (MEM_TO_USE / alloc_size).next_multiple_of(CACHE_LINE_SIZE);
+        assert!(num_args <= 220_000_000);
+
+        // Okay now we need a jump which is relatively prime to
+        // num_args / CACHE_LINE_SIZE (so that we visit all the
+        // allocations in a permutation) and >= 1/2 of (num_args /
+        // CACHE_LINE_SIZE) (so that we get away from any
+        // pre-fetching). xyz lazying out on the GCD part :-/
+        let x = num_args / CACHE_LINE_SIZE;
+        let mut jump = x / 2;
+        while x.gcd(jump) != 1 {
+            jump += 1;
+        }
+        
+        const BYTE: u8 = 2;
+        let bytes: Vec<u8> = vec![BYTE; data_size];
+
+        let mut allocs = Vec::with_capacity(num_args);
+
+        //eprintln!("alloc_size: {alloc_size}");
+        let l: Layout = Layout::from_size_align(alloc_size, 1).unwrap();
+        while allocs.len() < num_args {
+            let p: *mut u8 = unsafe { sm.alloc(l) };
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, data_size) };
+            allocs.push(p);
+        };
+        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
+        
+        let mut i = 0;
+
+        c.bench_function(fnname, |b| b.iter(|| {
+            let x = allocs[i % num_args];
+            //eprintln!("{x:?}");
+            let xslice = black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
+
+            assert_eq!(black_box(xslice), bytes.as_slice());
+            i += 1;
+            if i.is_multiple_of(CACHE_LINE_SIZE) {
+                // This is an experimental attempt to avoid the processor somehow predicting where we are going to read from next.
+                i += jump;
+            }
+        }));
+    }
 }
 
 #[cfg(test)]
