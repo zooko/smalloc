@@ -1147,6 +1147,121 @@ unsafe impl GlobalAlloc for Smalloc {
     }
 }
 
+#[cfg(target_vendor = "apple")]
+pub mod plat {
+    use mach_sys::mach_time::{mach_absolute_time, mach_timebase_info};
+    use mach_sys::kern_return::KERN_SUCCESS;
+    use std::mem::MaybeUninit;
+    use thousands::Separable;
+
+    pub fn dev_measure_cache_behavior() {
+        let mut mmtt: MaybeUninit<mach_timebase_info> = MaybeUninit::uninit();
+        let retval = unsafe { mach_timebase_info(mmtt.as_mut_ptr()) };
+        assert_eq!(retval, KERN_SUCCESS);
+        let mtt = unsafe { mmtt.assume_init() };
+
+        eprintln!("hello world3");
+        const BUFSIZ: usize = 1_000_000_000;
+        let mut bs: Box<Vec<u8>> = Box::new(Vec::new());
+        bs.resize(BUFSIZ, 0);
+        eprintln!("hello world4");
+
+        let mut stride = 1;
+        while stride < 50_000 {
+            // Okay now we need to blow out the cache! To do that, we need
+            // to touch at least NUM_CACHE_LINES different cache lines
+            // that aren't the ones we want to benchmark.
+
+            // These two consts are set for my Apple M4 Max
+            const CACHE_LINE_SIZE: usize = 128;
+            const CACHE_SIZE: usize = 20 * 2usize.pow(20);
+            const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
+
+            let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
+            let mut i = 0;
+            while i < MEM_TO_USE {
+                blowoutarea[i] = b'9';
+                i += CACHE_LINE_SIZE;
+            }
+
+            i = 0;
+            let start_ticks = unsafe { mach_absolute_time() };
+            while i < BUFSIZ {
+                bs[i] = b'0';
+
+                i += stride;
+            }
+            let stop_ticks = unsafe { mach_absolute_time() };
+
+            let steps = BUFSIZ / stride;
+            let nanos = (stop_ticks - start_ticks) * (mtt.numer as u64) / (mtt.denom as u64);
+            let nanos_per_step = nanos as f64 / steps as f64;
+
+            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop_ticks - start_ticks).separate_with_commas(), nanos.separate_with_commas());
+
+            stride += 1;
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+pub mod plat {
+    use cpuid;
+    use core::arch::x86_64;
+
+    pub fn dev_measure_cache_behavior() {
+        let ofreq = cpuid::clock_frequency();
+        assert!(ofreq.is_some());
+        let freq_mhz = ofreq.unwrap();
+
+        eprintln!("hello world3");
+        const BUFSIZ: usize = 1_000_000_000;
+        let mut bs: Box<Vec<u8>> = Box::new(Vec::new());
+        bs.resize(BUFSIZ, 0);
+        eprintln!("hello world4");
+
+        let mut stride = 1;
+        while stride < 50_000 {
+            // Okay now we need to blow out the cache! To do that, we need
+            // to touch at least NUM_CACHE_LINES different cache lines
+            // that aren't the ones we want to benchmark.
+
+            // These two consts are set for my Apple M4 Max
+            const CACHE_LINE_SIZE: usize = 128;
+            const CACHE_SIZE: usize = 20 * 2usize.pow(20);
+            const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
+
+            let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
+            let mut i = 0;
+            while i < MEM_TO_USE {
+                blowoutarea[i] = b'9';
+                i += CACHE_LINE_SIZE;
+            }
+
+            i = 0;
+            let mut start_aux = 0;
+            let start_cycs = unsafe { x86_64::__rdtscp(&mut start_aux) };
+            while i < BUFSIZ {
+                bs[i] = b'0';
+
+                i += stride;
+            }
+            let mut stop_aux = 0;
+            let stop_cycs = unsafe { x86_64::__rdtscp(&mut stop_aux) };
+            assert_eq!(start_cycs, stop_cycs);
+
+            let steps = BUFSIZ / stride;
+            let nanos = (stop_cycs - start_cycs) * 1000.0 / freq_mhz as f64;
+            let nanos_per_step = nanos / steps as f64;
+
+            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop - start).separate_with_commas(), nanos.separate_with_commas());
+
+            stride += 1;
+        }
+    }
+}
+
+
 // I read in the "The Linux Programming Interface" book that glibc's malloc's default size to fall back to system allocation (mmap) -- MMAP_THRESHOLD -- is 128 KiB. But according to https://sourceware.org/glibc/wiki/MallocInternals the threshold is dynamic unless overridden.
 
 // The following are tools I used during development of smalloc, which
@@ -1959,7 +2074,6 @@ mod benches {
     }
 
     use std::slice;
-    use thousands::Separable;
     use gcd::Gcd;
 
     /// This is intended to measure the effect of packing many allocations into few cache lines.
@@ -1975,7 +2089,7 @@ mod benches {
         const CACHE_LINE_SIZE: usize = 128;
         const CACHE_SIZE: usize = 20 * 2usize.pow(20);
 
-        const MEM_TO_USE: usize = CACHE_SIZE * 2 + 1_000_000;
+        const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
         let num_args: usize = (MEM_TO_USE / alloc_size).next_multiple_of(CACHE_LINE_SIZE);
         assert!(num_args <= 220_000_000);
 
@@ -1989,30 +2103,46 @@ mod benches {
         while x.gcd(jump) != 1 {
             jump += 1;
         }
+        const STRIDE: usize = 19;
         
-        const BYTE: u8 = 2;
-        let bytes: Vec<u8> = vec![BYTE; data_size];
+        //const BYTE1: u8 = 1;
+        //let bytes1: Vec<u8> = vec![BYTE1; data_size];
+        const BYTE2: u8 = 2;
+        let bytes2: Vec<u8> = vec![BYTE2; data_size];
 
         let mut allocs = Vec::with_capacity(num_args);
 
-        //eprintln!("alloc_size: {alloc_size}");
         let l: Layout = Layout::from_size_align(alloc_size, 1).unwrap();
         while allocs.len() < num_args {
             let p: *mut u8 = unsafe { sm.alloc(l) };
-            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, data_size) };
+            //unsafe { std::ptr::copy_nonoverlapping(bytes1.as_ptr(), p, data_size) };
             allocs.push(p);
         };
-        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
-        
+//        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
+
+        // Okay now we need to blow out the cache! To do that, we need
+        // to touch at least NUM_CACHE_LINES different cache lines
+        // that aren't the ones we want to benchmark.
+        let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
         let mut i = 0;
+        while i < MEM_TO_USE {
+            blowoutarea[i] = b'9';
+            i += CACHE_LINE_SIZE;
+        }
 
         c.bench_function(fnname, |b| b.iter(|| {
             let x = allocs[i % num_args];
-            //eprintln!("{x:?}");
-            let xslice = black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
+ //           eprintln!("{x:?}");
+            //let xslice = black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
+            black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
 
-            assert_eq!(black_box(xslice), bytes.as_slice());
-            i += 1;
+            //assert_eq!(black_box(xslice), bytes1.as_slice());
+
+            unsafe { std::ptr::copy_nonoverlapping(bytes2.as_ptr(), black_box(x), data_size) };
+            unsafe { *x += 1 };
+
+            // visit these 128 allocations in a permuted order to evade the processor predicting that we're going to advance our memory accesses by a fixed offset
+            i = (i + STRIDE) % CACHE_LINE_SIZE;
             if i.is_multiple_of(CACHE_LINE_SIZE) {
                 // This is an experimental attempt to avoid the processor somehow predicting where we are going to read from next.
                 i += jump;
