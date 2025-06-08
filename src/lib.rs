@@ -881,9 +881,9 @@ impl Smalloc {
             set_thread_areanum(nextareanum);
 
             Some(SlotLocation::SmallSlot {
-                areanum: nextareanum,
+                areanum: bestareanum,
                 smallslabnum,
-                slotnum: 0
+                slotnum: besteacnum as usize
             })
         } else {
             None // all slots of this slabnum in all areas are full or in-use!
@@ -3065,6 +3065,48 @@ mod tests {
         assert_eq!(areanum6, areanum4);
         assert_eq!(smallslabnum6, smallslabnum1);
         assert_eq!(second_area_eac_orig_val + 1, second_area_eac.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    /// If we've allocated at least one slot in every small slot slab
+    /// area and then we overflow one of them, the overflower
+    /// algorithm is going to visit every one of the other slab areas
+    /// before picking the one with the lowest eac. (There was a bug
+    /// in the code handling this edge case that I just noticed, which
+    /// reminded me that there was no test of this edge case.)
+    fn overflowers_small_edge_case() {
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let l = Layout::from_size_align(1, 1).unwrap();
+
+        // Step 0: set each slab area's `eac` to 4, then set our
+        // thread's area's `eac` to max and a different area's `eac`
+        // to 2.
+        for areanum in 0..NUM_SMALL_SLAB_AREAS {
+            sm.get_small_eac(areanum, 0).store(4, Ordering::Relaxed);
+        }
+        let this_tan = get_thread_areanum();
+        let target_tan = this_tan + 1;
+        sm.get_small_eac(this_tan, 0).store(NUM_SLOTS_O as u64, Ordering::Relaxed);
+        sm.get_small_eac(target_tan, 0).store(2, Ordering::Relaxed);
+
+        // Step 1: try to allocate a slot from this area:
+        let sl1 = sm.alloc_slot(l).unwrap();
+        let areanum1: usize;
+        let smallslabnum1: usize;
+        let slotnum1: usize;
+        
+        if let SlotLocation::SmallSlot { areanum, smallslabnum, slotnum } = sl1 {
+            areanum1 = areanum;
+            smallslabnum1 = smallslabnum;
+            slotnum1 = slotnum;
+        } else {
+            panic!("Should have been a small slot.");
+        }
+        assert_eq!(areanum1, target_tan, "tan: {}, targ tan: {target_tan}, area: {areanum1}, slab: {smallslabnum1}, slot: {slotnum1}", get_thread_areanum());
+        assert_eq!(slotnum1, 2);
+        assert_eq!(smallslabnum1, 0);
     }
 
     #[test]
