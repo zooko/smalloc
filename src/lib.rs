@@ -878,7 +878,7 @@ impl Smalloc {
         if besteacnum != NUM_SLOTS_O as u64 {
             // Update our THREAD_AREANUM to point to this area from
             // now on.
-            set_thread_areanum(nextareanum);
+            set_thread_areanum(bestareanum);
 
             Some(SlotLocation::SmallSlot {
                 areanum: bestareanum,
@@ -3107,6 +3107,7 @@ mod tests {
         assert_eq!(areanum1, target_tan, "tan: {}, targ tan: {target_tan}, area: {areanum1}, slab: {smallslabnum1}, slot: {slotnum1}", get_thread_areanum());
         assert_eq!(slotnum1, 2);
         assert_eq!(smallslabnum1, 0);
+        assert_eq!(get_thread_areanum(), target_tan);
     }
 
     #[test]
