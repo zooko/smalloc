@@ -1153,6 +1153,9 @@ pub mod plat {
     use mach_sys::kern_return::KERN_SUCCESS;
     use std::mem::MaybeUninit;
     use thousands::Separable;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use rand::Rng;
 
     pub fn dev_measure_cache_behavior() {
         let mut mmtt: MaybeUninit<mach_timebase_info> = MaybeUninit::uninit();
@@ -1165,6 +1168,13 @@ pub mod plat {
         let mut bs: Box<Vec<u8>> = Box::new(Vec::new());
         bs.resize(BUFSIZ, 0);
         eprintln!("hello world4");
+
+        let mut r = StdRng::seed_from_u64(0);
+        let mut i = 0;
+        while i < bs.len() {
+            bs[i] = r.random();
+            i += 1;
+        }
 
         let mut stride = 1;
         while stride < 50_000 {
@@ -1187,7 +1197,9 @@ pub mod plat {
             i = 0;
             let start_ticks = unsafe { mach_absolute_time() };
             while i < BUFSIZ {
-                bs[i] = b'0';
+                let old = bs[i];
+                let offset: usize = ((old as usize) << 16) ^ i;
+                bs[offset % BUFSIZ] = old + offset as u8;
 
                 i += stride;
             }
