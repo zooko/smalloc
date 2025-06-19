@@ -1220,6 +1220,7 @@ pub mod plat {
 pub mod plat {
     use cpuid;
     use core::arch::x86_64;
+    use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
 
     pub fn dev_measure_cache_behavior() {
         let ofreq = cpuid::clock_frequency();
@@ -1450,6 +1451,7 @@ mod benches {
     use std::time::Duration;
 
     use criterion::Criterion;
+    use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
 
     #[cfg(target_vendor = "apple")]
     pub mod plat {
@@ -1982,183 +1984,171 @@ mod benches {
 
     #[test]
     fn bench_1_1() {
-        help_bench_many_accesses("bench_1_1", 1, 1);
+        help_bench_many_accesses("bench_1_1", 1);
     }
 
     #[test]
     fn bench_1_2() {
-        help_bench_many_accesses("bench_1_2", 1, 2);
+        help_bench_many_accesses("bench_1_2", 2);
     }
 
     #[test]
     fn bench_1_3() {
-        help_bench_many_accesses("bench_1_3", 1, 3);
+        help_bench_many_accesses("bench_1_3", 3);
     }
 
     #[test]
     fn bench_1_4() {
-        help_bench_many_accesses("bench_1_4", 1, 4);
+        help_bench_many_accesses("bench_1_4", 4);
     }
 
     #[test]
     fn bench_1_5() {
-        help_bench_many_accesses("bench_1_5", 1, 5);
+        help_bench_many_accesses("bench_1_5", 5);
     }
 
     #[test]
     fn bench_1_6() {
-        help_bench_many_accesses("bench_1_6", 1, 6);
+        help_bench_many_accesses("bench_1_6", 6);
     }
 
     #[test]
     fn bench_1_8() {
-        help_bench_many_accesses("bench_1_8", 1, 8);
+        help_bench_many_accesses("bench_1_8", 8);
     }
 
     #[test]
     fn bench_1_9() {
-        help_bench_many_accesses("bench_1_9", 1, 9);
+        help_bench_many_accesses("bench_1_9", 9);
     }
 
     #[test]
     fn bench_1_10() {
-        help_bench_many_accesses("bench_1_10", 1, 10);
+        help_bench_many_accesses("bench_1_10", 10);
     }
 
     #[test]
     fn bench_1_16() {
-        help_bench_many_accesses("bench_1_16", 1, 16);
+        help_bench_many_accesses("bench_1_16", 16);
     }
 
     #[test]
     fn bench_1_32() {
-        help_bench_many_accesses("bench_1_32", 1, 32);
+        help_bench_many_accesses("bench_1_32", 32);
     }
 
     #[test]
     fn bench_1_64() {
-        help_bench_many_accesses("bench_1_64", 1, 64);
+        help_bench_many_accesses("bench_1_64", 64);
     }
 
     #[test]
     fn bench_1_128() {
-        help_bench_many_accesses("bench_1_128", 1, 128);
+        help_bench_many_accesses("bench_1_128", 128);
     }
 
     #[test]
     fn bench_1_256() {
-        help_bench_many_accesses("bench_1_256", 1, 256);
+        help_bench_many_accesses("bench_1_256", 256);
     }
 
     #[test]
     fn bench_1_512() {
-        help_bench_many_accesses("bench_1_512", 1, 512);
+        help_bench_many_accesses("bench_1_512", 512);
     }
 
     #[test]
     fn bench_1_1024() {
-        help_bench_many_accesses("bench_1_1024", 1, 1024);
+        help_bench_many_accesses("bench_1_1024", 1024);
     }
 
     #[test]
     fn bench_1_2048() {
-        help_bench_many_accesses("bench_1_2048", 1, 2048);
+        help_bench_many_accesses("bench_1_2048", 2048);
     }
 
     #[test]
     fn bench_1_4096() {
-        help_bench_many_accesses("bench_1_4096", 1, 4096);
+        help_bench_many_accesses("bench_1_4096", 4096);
     }
 
     #[test]
     fn bench_1_8192() {
-        help_bench_many_accesses("bench_1_8192", 1, 8192);
+        help_bench_many_accesses("bench_1_8192", 8192);
     }
 
     #[test]
     fn bench_1_16384() {
-        help_bench_many_accesses("bench_1_16384", 1, 16384);
+        help_bench_many_accesses("bench_1_16384", 16384);
     }
 
     #[test]
     fn bench_1_32768() {
-        help_bench_many_accesses("bench_1_32768", 1, 32768);
+        help_bench_many_accesses("bench_1_32768", 32768);
     }
 
     use std::slice;
     use gcd::Gcd;
+    use std::cmp::min;
 
     /// This is intended to measure the effect of packing many allocations into few cache lines.
-    fn help_bench_many_accesses(fnname: &str, data_size: usize, alloc_size: usize) {
-        assert!(data_size <= alloc_size);
-
+    fn help_bench_many_accesses(fnname: &str, alloc_size: usize) {
         let mut c = plat::make_criterion();
 
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
-        // These two consts are set for my Apple M4 Max
-        const CACHE_LINE_SIZE: usize = 128;
-        const CACHE_SIZE: usize = 20 * 2usize.pow(20);
-
         const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
-        let num_args: usize = (MEM_TO_USE / alloc_size).next_multiple_of(CACHE_LINE_SIZE);
-        assert!(num_args <= 220_000_000);
-
-        // Okay now we need a jump which is relatively prime to
-        // num_args / CACHE_LINE_SIZE (so that we visit all the
-        // allocations in a permutation) and >= 1/2 of (num_args /
-        // CACHE_LINE_SIZE) (so that we get away from any
-        // pre-fetching). xyz lazying out on the GCD part :-/
+        let max_num_args = (MEM_TO_USE / alloc_size).next_multiple_of(CACHE_LINE_SIZE);
+        let max_num_slots = 220_000;
+        let num_args = min(max_num_args, max_num_slots);
+        
+        // Okay now we need a jump which is relatively prime to num_args / CACHE_LINE_SIZE (so that
+        // we visit all the allocations in a permutation) and >= 1/2 of (num_args / CACHE_LINE_SIZE)
+        // (so that we get away from any linear pre-fetching).
         let x = num_args / CACHE_LINE_SIZE;
         let mut jump = x / 2;
         while x.gcd(jump) != 1 {
             jump += 1;
         }
-        const STRIDE: usize = 19;
-        
-        //const BYTE1: u8 = 1;
-        //let bytes1: Vec<u8> = vec![BYTE1; data_size];
-        const BYTE2: u8 = 2;
-        let bytes2: Vec<u8> = vec![BYTE2; data_size];
+
+        let mut r = StdRng::seed_from_u64(0);
 
         let mut allocs = Vec::with_capacity(num_args);
 
-        let l: Layout = Layout::from_size_align(alloc_size, 1).unwrap();
+        let l = Layout::from_size_align(alloc_size, 1).unwrap();
         while allocs.len() < num_args {
-            let p: *mut u8 = unsafe { sm.alloc(l) };
-            //unsafe { std::ptr::copy_nonoverlapping(bytes1.as_ptr(), p, data_size) };
-            allocs.push(p);
-        };
-//        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
-
-        // Okay now we need to blow out the cache! To do that, we need
-        // to touch at least NUM_CACHE_LINES different cache lines
-        // that aren't the ones we want to benchmark.
-        let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
-        let mut i = 0;
-        while i < MEM_TO_USE {
-            blowoutarea[i] = b'9';
-            i += CACHE_LINE_SIZE;
-        }
-
-        c.bench_function(fnname, |b| b.iter(|| {
-            let x = allocs[i % num_args];
- //           eprintln!("{x:?}");
-            //let xslice = black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
-            black_box(unsafe { slice::from_raw_parts(black_box(x), data_size) });
-
-            //assert_eq!(black_box(xslice), bytes1.as_slice());
-
-            unsafe { std::ptr::copy_nonoverlapping(bytes2.as_ptr(), black_box(x), data_size) };
-            unsafe { *x += 1 };
-
-            // visit these 128 allocations in a permuted order to evade the processor predicting that we're going to advance our memory accesses by a fixed offset
-            i = (i + STRIDE) % CACHE_LINE_SIZE;
-            if i.is_multiple_of(CACHE_LINE_SIZE) {
-                // This is an experimental attempt to avoid the processor somehow predicting where we are going to read from next.
-                i += jump;
+            // Allocate CACHE_LINE_SIZE allocations, take their pointers, shuffle the pointers, and
+            // append them to allocs.
+            let mut batch_of_allocs = Vec::new();
+            for _x in 0..CACHE_LINE_SIZE {
+                batch_of_allocs.push(unsafe { sm.alloc(l) });
             }
+            batch_of_allocs.shuffle(&mut r);
+            allocs.extend(batch_of_allocs);
+        };
+        //        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
+
+        let mut a = 0;
+        let mut i = 0;
+        c.bench_function(fnname, |b| b.iter(|| {
+            // Now CACHE_LINE_SIZE times in a row we're going to read one byte from the allocation
+            // pointed to by each successive pointer. The theory is that when those successive
+            // allocations are packed into cache lines, we should be able to do these
+            // CACHE_LINE_SIZE reads more quickly than when those successive allocations are spread
+            // out over many cache lines.
+            
+            // get the next pointer
+            let x = allocs[i % allocs.len()];
+
+            // read a byte from it
+            let b = unsafe { *x };
+
+            // accumulate its value
+            a ^= b as usize;
+
+            // go to the next pointer
+            i += 1;
         }));
     }
 }

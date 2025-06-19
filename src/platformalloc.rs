@@ -56,7 +56,24 @@ pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
 
 #[cfg(target_os = "linux")]
 pub mod vendor {
+    // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
+    // are probably only wrong by being smaller than they should be (never larger), and being
+    // smaller than they should be is probably just a very small loss of performance. The other
+    // thing these constants are used for is to run the biggest benchmarks we can without incurring
+    // the wrath of the linux OOM-killer, so again it's not a huge problem if the constants are too
+    // small for your actual machine.
+
+    // These constants are set for my Linux Intel(R) Xeon(R) CPU E5-2698 v4. They're not *really*
+    // true of all linux products. 😂 But the default page size on all linux's that I know of is
+    // 4096. The most common exceptions are huge pages (which constitute a design issue for the
+    // entire design of `smalloc`, really.)
     pub const PAGE_SIZE: usize = 4096;
+
+    // But the cache line size is pretty much universally true of Intel, AMD, and non-Apple ARM chips.
+    pub const CACHE_LINE_SIZE: usize = 64;
+
+    // This const is set for my Linux Intel(R) Xeon(R) CPU E5-2698 v4.
+    pub const CACHE_SIZE: usize = 2usize.pow(24);
 
     use crate::platformalloc::AllocFailed;
     use rustix::mm::{MapFlags, MremapFlags, ProtFlags, mmap_anonymous, mremap, munmap};
@@ -106,7 +123,19 @@ pub mod vendor {
 
 #[cfg(target_vendor = "apple")]
 pub mod vendor {
+    // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
+    // are probably only wrong by being smaller than they should be (never larger), and being
+    // smaller than they should be is probably just a very small loss of performance. The other
+    // thing these constants are used for is to run the biggest benchmarks we can without incurring
+    // the wrath of the linux OOM-killer, so again it's not a huge problem if the constants are too
+    // small for your actual machine.
+
+    // These consts are set for my Apple M4 Max -- they're not *really* true of all Apple products.
     pub const PAGE_SIZE: usize = 16384;
+    pub const CACHE_LINE_SIZE: usize = 128;
+
+    // This const is set for my Apple M4 Max -- it's not *really* true of all Apple products.
+    pub const CACHE_SIZE: usize = 20 * 2usize.pow(20);
 
     use crate::platformalloc::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
