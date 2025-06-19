@@ -1453,28 +1453,29 @@ mod benches {
     use criterion::Criterion;
     use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
 
-    #[cfg(target_vendor = "apple")]
-    pub mod plat {
-        use crate::benches::{Criterion, Duration};
-        use criterion::measurement::plat_apple::MachAbsoluteTimeMeasurement;
-        pub fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
-            Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-        }
-    }
+    // #[cfg(target_vendor = "apple")]
+    // pub mod plat {
+    //     use crate::benches::{Criterion, Duration};
+    //     use criterion::measurement::plat_apple::MachAbsoluteTimeMeasurement;
+    //     pub fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
+    //         Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
+    //     }
+    // }
 
-    #[cfg(target_arch = "x86_64")]
-    pub mod plat {
-        use criterion::measurement::plat_x86_64::RDTSCPMeasurement;
-        use crate::benches::{Criterion, Duration};
-        pub fn make_criterion() -> Criterion<RDTSCPMeasurement> {
-            Criterion::default().with_measurement(RDTSCPMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-        }
-    }
+    // #[cfg(target_arch = "x86_64")]
+    // pub mod plat {
+    //     use criterion::measurement::plat_x86_64::RDTSCPMeasurement;
+    //     use crate::benches::{Criterion, Duration};
+    //     pub fn make_criterion() -> Criterion<RDTSCPMeasurement> {
+    //         Criterion::default().with_measurement(RDTSCPMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
+    //     }
+    // }
 
-    #[cfg(not(any(target_vendor = "apple", target_arch = "x86_64")))]
+    // #[cfg(not(any(target_vendor = "apple", target_arch = "x86_64")))]
     pub mod plat {
+        use criterion::Criterion;
         use crate::benches::Duration;
-        fn make_criterion() -> Criterion {
+        pub fn make_criterion() -> Criterion {
             Criterion::default().sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
         }
     }
