@@ -1221,6 +1221,7 @@ pub mod plat {
     use cpuid;
     use core::arch::x86_64;
     use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
+    use thousands::Separable;
 
     pub fn dev_measure_cache_behavior() {
         let ofreq = cpuid::clock_frequency();
@@ -1261,13 +1262,13 @@ pub mod plat {
             }
             let mut stop_aux = 0;
             let stop_cycs = unsafe { x86_64::__rdtscp(&mut stop_aux) };
-            assert_eq!(start_cycs, stop_cycs);
+            assert!(stop_cycs > start_cycs);
 
             let steps = BUFSIZ / stride;
-            let nanos = (stop_cycs - start_cycs) * 1000.0 / freq_mhz as f64;
-            let nanos_per_step = nanos / steps as f64;
+            let nanos = (stop_cycs - start_cycs) * 1000 / freq_mhz as u64;
+            let nanos_per_step = nanos / steps as u64;
 
-            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop - start).separate_with_commas(), nanos.separate_with_commas());
+            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop_cycs - start_cycs).separate_with_commas(), nanos.separate_with_commas());
 
             stride += 1;
         }
