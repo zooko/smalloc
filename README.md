@@ -1311,3 +1311,21 @@ as many huge slots as we do non-huge slots, and we don't want to the huge-slots 
   that he's still alive. :-)
 
 * Thanks to fluidvanadium for the first PR from a contributor. :-)
+
+# Historical notes about lines of code of older versions
+
+Smalloc v2 had the following lines counts (using tokei)
+
+* docs and comments: 1641
+* implementation loc: 779 (excluding debug_asserts)
+* tests loc: 878
+* benches loc: 507
+* tools loc: 223
+
+Smalloc v3 had the following lines counts
+
+* docs and comments: 1665
+* implementation loc: 867 (excluding debug_asserts)
+* tests loc: 1302
+* benches loc: 796
+* tools loc: 123
