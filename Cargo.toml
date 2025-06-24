@@ -2,7 +2,7 @@ cargo-features = ["profile-rustflags"]
 
 [package]
 name = "smalloc"
-version = "0.2.0"
+version = "3.0.0"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,7 @@ thousands = "0.2.0"
 cargo-nextest = "0.9.96"
 # criterion = { version = "0.6.0", git = "https://github.com/zooko/criterion.rs" }
 criterion = { version = "0.6.0", path = "../criterion.rs" }
+# criterion = { version = "0.6.0", git = "https://github.com/bheisler/criterion.rs" }
 criterion-macro = "0.4.0"
 gcd = "2.3.0"
 
@@ -35,4 +36,3 @@ name = "smalloc"
 [profile.release]
 lto = "fat"
 rustflags = ["-C", "target-cpu=native"]
-# debug = true

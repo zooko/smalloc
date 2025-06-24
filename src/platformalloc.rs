@@ -15,7 +15,7 @@ impl fmt::Display for AllocFailed {
 }
 
 pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
-    // xxx add tests?
+    // xxx add unit tests?
     let size = layout.size();
     debug_assert!(size > 0);
     let alignment = layout.align();
@@ -36,7 +36,7 @@ pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
     debug_assert!(alignment > 0);
     debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
 
-    vendor::sys_dealloc(ptr, size)
+    vendor::sys_dealloc(ptr, size);
 }
 
 pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
@@ -80,6 +80,7 @@ pub mod vendor {
     use std::ffi::c_void;
     use std::ptr;
 
+// inline
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         match unsafe {
             mmap_anonymous(
@@ -94,12 +95,14 @@ pub mod vendor {
         }
     }
 
+// inline
     pub fn sys_dealloc(p: *mut u8, size: usize) {
         unsafe {
             munmap(p as *mut c_void, size).ok();
         }
     }
 
+// inline
     pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
         unsafe {
             mremap(p as *mut c_void, oldsize, newsize, MremapFlags::MAYMOVE)
@@ -148,6 +151,7 @@ pub mod vendor {
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use std::mem::size_of;
 
+// inline
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
         let task: mach_port_t = unsafe { mach_task_self() };
         let mut address: mach_vm_address_t = 0;
@@ -164,6 +168,7 @@ pub mod vendor {
         }
     }
 
+// inline
     pub fn sys_dealloc(p: *mut u8, size: usize) {
         debug_assert!(size_of::<usize>() == size_of::<u64>());
         debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
@@ -174,8 +179,25 @@ pub mod vendor {
         }
     }
 
-    pub fn sys_realloc(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
-        debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
+    use std::ptr::copy_nonoverlapping;
+    /// Because I get `KERN_INVALID_ADDRESS` from `sys_realloc_if_vm_remap_did_what_i_want()`, I'm
+    /// instead just allocating another mapping and copying the data into it:
+    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
+        debug_assert!(p.is_aligned_to(PAGE_SIZE));
+
+        // `smalloc`'s uses `sys_realloc()` only when it needs to grow the space.
+        debug_assert!(newsize > oldsize);
+
+        let newp = sys_alloc(newsize.next_multiple_of(PAGE_SIZE)).unwrap();
+        unsafe { copy_nonoverlapping(p, newp, oldsize); }
+        sys_dealloc(p, oldsize);
+
+        newp
+    }
+            
+// inline
+    pub fn _sys_realloc_if_vm_remap_did_what_i_want(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
+        debug_assert!(p.is_aligned_to(PAGE_SIZE));
 
         let mut newaddress: mach_vm_address_t = 0;
         let task: mach_port_t = unsafe { mach_task_self() };
@@ -195,12 +217,259 @@ pub mod vendor {
                 &mut max_prot,
                 VM_INHERIT_NONE,
             );
-            debug_assert!(retval == KERN_SUCCESS);
+            debug_assert!(retval == KERN_SUCCESS, "retval: {retval}, newsize: {newsize}, newaddress: {newaddress:?}, p: {p:?}");
         }
 
         newaddress as *mut u8
     }
 }
+
+#[cfg(test)]
+mod platformtests {
+    const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+
+    //#[test]
+    fn _realloc_16kib_down_to_8kib_realloc_back_up_to_16kib_pages_1_1_1() {
+        const SIZE: usize = 2usize.pow(13);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_plus1_down_to_16kib_plus1_then_realloc_back_up_to_32kib_pages_3_2_2() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2 + 1).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_plus1_down_to_16kib_plus1_then_realloc_back_up_to_32kib_plus1_pages_3_2_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2 + 1).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2 + 1);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_48kib_down_to_32kib_then_realloc_back_up_to_48kib_pages_3_2_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 3).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 3, PAGE_SIZE * 2);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE * 2, PAGE_SIZE * 3);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_plus1_pages_2_2_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2 + 1);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_then_realloc_back_up_to_48kib_pages_2_1_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE, PAGE_SIZE * 3);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_8kib_down_to_4kib_then_realloc_back_up_to_48kib_pages_1_1_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 2, PAGE_SIZE / 4);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE / 4, PAGE_SIZE * 3);
+        assert!(!p3.is_null());
+    }
+
+    #[test]
+    fn malloc_32kib_then_realloc_to_48kib_pages_2_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE, PAGE_SIZE * 3);
+        assert!(!p2.is_null());
+    }
+
+    #[test]
+    fn malloc_4kib_then_realloc_to_48kib_pages_1_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 3);
+        assert!(!p2.is_null());
+    }
+
+    #[test]
+    fn malloc_4kib_then_realloc_to_32kib_pages_1_2() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 2);
+        assert!(!p2.is_null());
+    }
+
+    #[test]
+    fn malloc_4kib_then_realloc_to_32kib_plus1_pages_1_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 2 + 1);
+        assert!(!p2.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_48kib_pages_2_2_3() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 3);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_pages_2_2_2() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_with_write_pages_2_2_2() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(PAGE_SIZE + 1 - BYTES1.len()), min(BYTES1.len(), PAGE_SIZE + 1)) };
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    use std::cmp::min;
+
+    use std::thread;
+    use std::time::Duration;
+    
+    //#[test]
+    fn _realloc_down_realloc_back_up_16kib_plus1_with_write_and_wait_30() {
+        const SIZE: usize = 2usize.pow(13)+1;
+        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
+        assert!(!p2.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(SIZE - BYTES1.len()), min(BYTES1.len(), SIZE)) };
+        thread::sleep(Duration::from_secs(30));
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_down_realloc_back_up_16kib_plus1_with_write_and_wait_300() {
+        const SIZE: usize = 2usize.pow(13)+1;
+        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
+        assert!(!p2.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(SIZE - BYTES1.len()), min(BYTES1.len(), SIZE)) };
+        thread::sleep(Duration::from_secs(300));
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
+        assert!(!p3.is_null());
+    }
+
+    //#[test]
+    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_with_intervening_alloc_dealloc_and_write_pages_2_2_2() {
+        const PAGE_SIZE: usize = 2usize.pow(14);
+        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+
+        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p1.is_null());
+        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
+        assert!(!p2.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(PAGE_SIZE + 1 - BYTES1.len()), min(BYTES1.len(), PAGE_SIZE)) };
+        let p4 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE).ok().unwrap();
+        assert!(!p4.is_null());
+        let p5 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
+        assert!(!p5.is_null());
+        let p6 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE + 1).ok().unwrap();
+        assert!(!p6.is_null());
+        crate::platformalloc::vendor::sys_dealloc(p4, PAGE_SIZE);
+        crate::platformalloc::vendor::sys_dealloc(p5, PAGE_SIZE * 2);
+        crate::platformalloc::vendor::sys_dealloc(p6, PAGE_SIZE + 1);
+        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
+        assert!(!p3.is_null());
+    }
+}
+
+// -> mach_vm_remap(target_task, newaddress-out, newsize, anywhere, src_task, memory_address_u, ...);
+// -> mach_vm_remap_external(target_map, address, size, mask, flags, src_map, memory_address, ...);
+//     ... (target_map, address, size, mask, flags, src_map memory_address, ...)
+//       -> vm_map_remap(target_map, address, size, mask, ..., src_map, memory_address, ...);
+// vm_map.c @ 18927 vm_map_remap(target_map, address_u, size_u, ..., ..., src_map, memory_address_u, ...) {
+// vm_map_remap_sanitize() -> vm_sanitize_addr_size()
+//    src_map -> pgmask
+// results in:
+//       *addr (6th arg to vm_sanitize_addr_size which is memory_address in vm_map_remap_sanitize, which is memory_address_u in vm_map_remap) <= truncated copy of addr_u (1st argument of vm_sanitize_addr_size which is memory_address_u in vm_map_remap_sanitize, which is memory_address_u in vm_map_remap)
+//             ===> so the only effect of this part is to truncate the value in memory_address_u which doesn't matter to us because it was already page-aligned
+//       *end (7th arg of vm_sanitize_addr_size which is memory_end (arg 14) in vm_map_remap_sanitize, which is &memory_end in vm_map_remap) <- rounded-up *addr (6th arg which is memory_address in vm_map_remap_sanitize, which is vm_map_remap's memory_address_u) + size_u (2nd arg to vm_sanitize_addr_size, which is size_u (4th arg) of vm_map_remap_sanitize, which is size_u (3rd arg) of vm_map_remap)
+//             ===> so the effect of this part is the value in vm_map_remap's memory_end is set to vm_map_remap's memory_address_u rounded-up + size_u
+//             ===> and then it set size = memory_end - memory_address_u
+// vm_map_remap_sanitize() -> vm_sanitize_addr()
+//    target_map -> map
+//    address_u -> addr_u
+// results in *target_addr (11th arg of vm_map_remap_sanitize) being truncated copy of address_u (3rd arg of vm_map_remap_sanitize)
+// 
+// memory_address, memory_size <-
+// vm_sanitize_addr_size(memory_address_u, size_u
+// 
+//  -> vm_map_copy_extract(src_map, memory_address, memory_size, ...)
 
 // for Windows, check out VirtualAllocEx with MEM_RESERVE flag: https://learn.microsoft.com/en-us/windows/win32/memory/page-state
 // https://stackoverflow.com/questions/15261527/how-can-i-reserve-virtual-memory-in-linux?rq=1

@@ -16,12 +16,16 @@ filter = 'test(/^tests::test_threads_2_/)'
 threads-required = 2
 
 [[profile.default.overrides]]
-filter = 'test(/^tests::test_threads_12_/)'
-threads-required = 12
-
-[[profile.default.overrides]]
 filter = 'test(/^tests::test_threads_32_/)'
 threads-required = 32
+
+[[profile.default.overrides]]
+filter = 'test(/^tests::test_threads_64_/)'
+threads-required = 64
+
+[[profile.default.overrides]]
+filter = 'test(/^tests::test_threads_100_/)'
+threads-required = 100
 
 [[profile.default.overrides]]
 filter = 'test(/^tests::test_threads_1000_/)'
