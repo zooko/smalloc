@@ -30,11 +30,6 @@ const NUM_SMALL_SLAB_AREAS: usize = 32;
 // This is the largest alignment we can guarantee for data slots.
 const MAX_ALIGNMENT: usize = 2usize.pow(26);
 
-// How many to add to an areanum (modulo NUM_SMALL_SLAB_AREAS) to
-// visit all the area nums in a permutation that visits areanums in a
-// different order than incrementing the areanum.
-const STRIDE_AROUND_AREAS: usize = 19;
-
 
 // --- Constant values computed from the constants above ---
 
@@ -338,14 +333,6 @@ fn get_thread_areanum() -> usize {
     }) as usize
 }
 
-/// Set this thread's areanum.
-#[inline(always)]
-fn set_thread_areanum(newareanum: usize) {
-    THREAD_AREANUM.with(|cell| {
-        cell.set(Some(newareanum as u32))
-    })
-}
-
 /// Return the offset from the smalloc base pointer, or None if the pointer does not point to the
 /// beginning of one of our slots.
 #[inline(always)]
@@ -472,18 +459,6 @@ impl Smalloc {
     fn get_sm_baseptr(&self) -> *mut u8 {
         let p = self.sm_baseptr.load(Ordering::Acquire);
         debug_assert!(!p.is_null());
-
-        p
-    }
-
-    #[inline(always)]
-    fn small_slot_to_ptr(&self, smallslabnum: usize, areanum: usize, slotnum: usize) -> *mut u8 {
-        debug_assert!(smallslabnum < NUM_SMALL_SLABS);
-        debug_assert!(areanum < NUM_SMALL_SLAB_AREAS);
-        debug_assert!(slotnum < NUM_SMALL_SLOTS);
-        
-        let p = unsafe { self.get_sm_baseptr().add(small_slot_offset(smallslabnum, areanum, slotnum)) };
-        debug_assert!(p.is_aligned_to(slotsize(smallslabnum)));
 
         p
     }
@@ -640,89 +615,6 @@ impl Smalloc {
             }
         }
     }
-
-    /// Search for another area that has an available slot in the same
-    /// slab number. Return pointer to the resulting slot or null if
-    /// all slabs of this slab number in all areas are full.
-    fn search_for_small_overflow_area_this_slabnum(&self, smallslabnum: usize, startareanum: usize) -> *mut u8 {
-        debug_assert!(startareanum < NUM_SMALL_SLAB_AREAS);
-        debug_assert!(smallslabnum < NUM_SMALL_SLABS);
-
-        // These two local variables hold the best candidate we've
-        // found so far (or default values if we haven't yet found
-        // one).
-        let mut besteacnum = NUM_SMALL_SLOTS as u64;
-        let mut bestareanum = 0;
-        
-        let mut nextareanum = (startareanum + STRIDE_AROUND_AREAS) % NUM_SMALL_SLAB_AREAS;
-        
-        while nextareanum != startareanum {
-            let next_eaca = self.get_atomicu64(small_eac_offset(smallslabnum, nextareanum));
-            let loaded_eacnum = next_eaca.load(Ordering::Acquire);
-            
-            if loaded_eacnum < besteacnum {
-                // Okay this area is a candidate for our new home.
-                
-                // Increment this eac... (which reserves the slot and returns the reserved slot
-                // number)
-                let reserved_eacnum = next_eaca.fetch_add(1, Ordering::Relaxed);
-                if reserved_eacnum > NUM_SMALL_SLOTS as u64 {
-                    next_eaca.fetch_sub(1, Ordering::Relaxed);
-                } else if reserved_eacnum != loaded_eacnum {
-                    // Whoops nevermind. Some other thread incremented the eac between when we
-                    // loaded loaded_eacnum, above, and when we incremented the eac. So this is
-                    // definitely not a good candidate for our thread's new home since another
-                    // thread is currently using it. Now we have to push the slot we just allocated
-                    // onto this slab's free list and then move on with our search.
-                    self.push_onto_small_slab_freelist(smallslabnum, nextareanum, reserved_eacnum as usize);
-                } else {
-                    // Now if inced_eacnum is 0, then we're done with this search, successfully.
-                    if reserved_eacnum == 0 {
-                        // If we had reserved a previous best candidate then we need to push it onto
-                        // that slab's free list before we proceed.
-                        if besteacnum != NUM_SMALL_SLOTS as u64 {
-                            self.push_onto_small_slab_freelist(smallslabnum, bestareanum, besteacnum as usize);
-                        }
-                        
-                        // Update our THREAD_AREANUM to point to this area from now on.
-                        set_thread_areanum(nextareanum);
-
-                        return self.small_slot_to_ptr(smallslabnum, nextareanum, reserved_eacnum as usize);
-                    } else {
-                        // Okay this isn't necessarily our new home, because its eac wasn't 0, but
-                        // its eac was smaller than any other that we've seen so far, so remember it
-                        // (by keeping it in the bestareanum and besteacnum local variables) and
-                        // continue with the search.
-
-                        // If we previously had a best candidate, then we need to push the slot that
-                        // we thus reserved onto its free list before we continue the search,
-                        // because now this slot is now replacing it as our current best candidate.
-                        if besteacnum != NUM_SMALL_SLOTS as u64 {
-                            self.push_onto_small_slab_freelist(smallslabnum, bestareanum, besteacnum as usize);
-                        }
-
-                        bestareanum = nextareanum;
-                        besteacnum = reserved_eacnum;
-                    }
-                }
-            }
-
-            nextareanum = (nextareanum + STRIDE_AROUND_AREAS) % NUM_SMALL_SLAB_AREAS;
-        }
-
-        // Okay, since the while loop exited, this means we've visited all areas without finding a
-        // slot 0 and returning it. If besteacnum is not NUM_SMALL_SLOTS, then bestareanum contains
-        // the best candidate area that we found, and besteacnum contains the slot that we already
-        // reserved in that area.
-        if besteacnum != NUM_SMALL_SLOTS as u64 {
-            // Update our THREAD_AREANUM to point to this area from now on.
-            set_thread_areanum(bestareanum);
-
-            self.small_slot_to_ptr(smallslabnum, bestareanum, besteacnum as usize)
-        } else {
-            null_mut() // all slots of this slabnum in all areas are full or in-use!
-        }
-    }
 }
 
 unsafe impl GlobalAlloc for Smalloc {
@@ -748,34 +640,22 @@ unsafe impl GlobalAlloc for Smalloc {
                     let areanum = get_thread_areanum();
                     let allslabnum = size_to_allslabnum(alignedsize);
                     let slab_bp = unsafe { smbp.add(small_slab_base_offset(allslabnum, areanum)) };
+
                     let flha = self.get_atomicu64(small_flh_offset(allslabnum, areanum));
                     let eaca = self.get_atomicu64(small_eac_offset(allslabnum, areanum));
 
                     let slotsize = slotsize(allslabnum);
                     let ptr = self.inner_alloc(flha, slab_bp, eaca, slotsize, NUM_SMALL_SLOTS);
                     if !ptr.is_null() {
-                        //eprintln!("{ptr:?}");
                         return ptr;
                     }
 
-                    // The slab was full. Try overflowing to an unused slab of the same slab number
-                    // in a different area.
-                    let ptr = self.search_for_small_overflow_area_this_slabnum(allslabnum, areanum);
-                    if !ptr.is_null() {
-                        //eprintln!("{ptr:?}");
-                        return ptr;
-                    }
-
-                    // All the slabs of this slabnum in all the areas are totally full! This seems
-                    // really unlikely/rare. But we go ahead and overflow to a larger slot, by
-                    // recursively calling .alloc() with a doubled requested size. (Doubling the
-                    // requested size guarantees that the new recursive request will use a different
-                    // (larger) slabnum.)
+                    // The slab was full. Go ahead and overflow to a larger slot, by recursively
+                    // calling `.alloc()` with a doubled requested size. (Doubling the requested
+                    // size guarantees that the new recursive request will use the next larger
+                    // slabnum.)
                     let enlarged_layout = Layout::from_size_align(size * 2, alignment).unwrap();
-
-                    let newp = unsafe { self.alloc(enlarged_layout) };
-                    //eprintln!("{newp:?}");
-                    return newp;
+                    return unsafe { self.alloc(enlarged_layout) };
                 }
 
                 if alignedsize <= slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1) {
@@ -788,19 +668,15 @@ unsafe impl GlobalAlloc for Smalloc {
                     let slotsize = slotsize(allslabnum);
                     let ptr = self.inner_alloc(flha, slab_bp, eaca, slotsize, NUM_MEDIUM_SLOTS);
                     if !ptr.is_null() {
-                        //eprintln!("{ptr:?}");
                         return ptr;
                     }
 
                     // This slab is totally full! This seems really unlikely/rare. But we go ahead
-                    // and overflow to a larger slot, by recursively calling .alloc() with a doubled
-                    // requested size. (Doubling the requested size guarantees that the new
-                    // recursive request will use a different (larger) slabnum.)
+                    // and overflow to a larger slot, by recursively calling `.alloc()` with a
+                    // doubled requested size. (Doubling the requested size guarantees that the new
+                    // recursive request will use the next larger slabnum.)
                     let enlarged_layout = Layout::from_size_align(size * 2, alignment).unwrap();
-
-                    let newp = unsafe { self.alloc(enlarged_layout) };
-                    //eprintln!("{newp:?}");
-                    return newp;
+                    return unsafe { self.alloc(enlarged_layout) };
                 }
 
                 if alignedsize <= LARGE_SLOT_SIZE {
@@ -811,7 +687,6 @@ unsafe impl GlobalAlloc for Smalloc {
                     let ptr = self.inner_alloc(flha, slab_bp, eaca, LARGE_SLOT_SIZE, NUM_LARGE_SLOTS);
                     debug_assert!(ptr < unsafe { smbp.add(SMALL_SLABS_VARS_REGION_BASE) } );
                     if !ptr.is_null() {
-                        //eprintln!("{ptr:?}");
                         return ptr;
                     }
 
@@ -2445,7 +2320,7 @@ mod tests {
     use std::cmp::min;
     use std::sync::Arc;
 
-    const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+    pub const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
     const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
     const BYTES3: [u8; 8] = [0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11];
     const BYTES4: [u8; 8] = [0x12, 0x11, 0x10, 0xF, 0xE, 0xD, 0xC, 0xB];
@@ -3659,8 +3534,8 @@ mod tests {
 
     #[test]
     /// If we've allocated all of the slots from a small-slots slab, the subsequent allocations come
-    /// from a different area of the same slab number.
-    fn overflowers_small_to_new_area() {
+    /// from a larger-slots slab.
+    fn overflowers_small() {
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
         let sybp = sm.get_sys_baseptr();
@@ -3718,25 +3593,24 @@ mod tests {
         let allslabnum3 = crate::offset_to_allslabnum(p3o);
         let (areanum3, slotnum3) = small_slot(p3o, allslabnum3, crate::slotsize(allslabnum3));
 
-        // The raison d'etre for this test: Assert that the newly allocated slot is in a different
-        // area, same slab:
-        assert_ne!(areanum3, areanum1);
-        assert_eq!(allslabnum3, allslabnum);
+        // The raison d'etre for this test: Assert that the newly allocated slot is in a bigger
+        // slab, same areanum.
+        assert_eq!(areanum3, areanum1);
+        assert_ne!(allslabnum3, allslabnum);
         assert_eq!(slotnum3, 0);
 
-        // Okay now this thread should be pointing at the new thread area num.
+        // This thread should still be pointing at the same thread area num.
         let second_this_thread_areanum = get_thread_areanum();
-        assert!(first_this_thread_areanum != second_this_thread_areanum);
-        assert_eq!(second_this_thread_areanum, areanum3);
+        assert_eq!(first_this_thread_areanum, second_this_thread_areanum);
 
-        // Step 5: If we alloc_slot() again on this thread, it will come from this new area:
+        // Step 5: If we alloc_slot() again on this thread, it will come from this new slab:
         let p4 = unsafe { sm.alloc(l) };
         let p4o = offset_of_ptr(sybp, smbp, p4).unwrap();
         assert!(p4o < MEDIUM_SLABS_REGION_BASE, "should have returned a small slot");
         let allslabnum4 = crate::offset_to_allslabnum(p4o);
         let (areanum4, slotnum4) = small_slot(p4o, allslabnum4, crate::slotsize(allslabnum4));
 
-        assert_eq!(allslabnum4, allslabnum1);
+        assert_eq!(allslabnum4, allslabnum3);
         assert_eq!(areanum4, second_this_thread_areanum);
         assert_eq!(slotnum4, 1);
 
@@ -3744,107 +3618,6 @@ mod tests {
         let second_area_eaca = sm.get_atomicu64(small_eac_offset(allslabnum4, areanum4));
         let second_area_eac_orig_val = second_area_eaca.load(Ordering::Acquire);
         assert_eq!(second_area_eac_orig_val, 2);
-
-        // Step 6: If we allocate a slot from the *original* area -- the full one -- it will
-        // overflow but this time exercise different code paths in the overflow logic and different
-        // results. We'll assert that the end state is as expected...
-        set_thread_areanum(first_this_thread_areanum);
-        let p5 = unsafe { sm.alloc(l) };
-        let p5o = offset_of_ptr(sybp, smbp, p5).unwrap();
-        assert!(p5o < MEDIUM_SLABS_REGION_BASE, "should have returned a small slot");
-        let allslabnum5 = crate::offset_to_allslabnum(p5o);
-        let (areanum5, slotnum5) = small_slot(p5o, allslabnum5, crate::slotsize(allslabnum5));
-
-        assert_eq!(allslabnum5, allslabnum1); // same slabnum
-        assert!(areanum5 != areanum1); // It didn't go into the full area.
-        assert!(areanum5 != areanum4); // It didn't overflow to the same area the previous overflow did.
-        assert_eq!(slotnum5, 0); // first allocation in a fresh area
-
-        // It landed in a third area.
-        // But along the way, it incremented the `eac` of the second area:
-        eprintln!("3 {second_area_eac_orig_val} {}", second_area_eaca.load(Ordering::Acquire));
-        assert_eq!(second_area_eac_orig_val + 1, second_area_eaca.load(Ordering::Acquire));
-
-        // And it pushed that slot onto that slab's free list. So now if we alloc from that slab,
-        // this will reuse that slot.
-        set_thread_areanum(second_this_thread_areanum);
-        let p6 = unsafe { sm.alloc(l) };
-        eprintln!("4 {second_area_eac_orig_val} {}", second_area_eaca.load(Ordering::Acquire));
-        let p6o = offset_of_ptr(sybp, smbp, p6).unwrap();
-        assert!(p6o < MEDIUM_SLABS_REGION_BASE, "should have returned a small slot");
-        let allslabnum6 = crate::offset_to_allslabnum(p6o);
-        let (areanum6, slotnum6) = small_slot(p6o, allslabnum6, crate::slotsize(allslabnum6));
-
-        assert_eq!(second_area_eac_orig_val + 1, second_area_eaca.load(Ordering::Acquire));
-        assert_eq!(slotnum6, 2); // the slot we reserved but then didn't use
-
-        assert_eq!(areanum6, areanum4);
-        assert_eq!(allslabnum6, allslabnum1);
-        assert_eq!(second_area_eac_orig_val + 1, second_area_eaca.load(Ordering::Acquire));
-    }
-
-    #[test]
-    /// If we've allocated at least one slot in every small slot slab area and then we overflow one
-    /// of them, the overflower algorithm is going to visit every one of the other slab areas before
-    /// picking the one with the lowest eac. (There was a bug in the code handling this edge case
-    /// that I just noticed, which reminded me that there was no test of this edge case.)
-    fn overflowers_small_edge_case() {
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let sybp = sm.get_sys_baseptr();
-        let smbp = sm.get_sm_baseptr();
-
-        let siz = 8;
-        let l = Layout::from_size_align(siz, 1).unwrap();
-        let allslabnum = 1; // slab 1 holds 8-byte things
-        let this_tan = get_thread_areanum();
-
-        // Step 0: set each slab area's `eac` to 4, then set our thread's area's `eac` to max and a
-        // different area's `eac` to 2.
-        for areanum in 0..NUM_SMALL_SLAB_AREAS {
-            let eaca = sm.get_atomicu64(small_eac_offset(allslabnum, areanum));
-            eaca.store(4, Ordering::Release);
-        }
-        let this_eaca = sm.get_atomicu64(small_eac_offset(allslabnum, this_tan));
-        this_eaca.store(NUM_SMALL_SLOTS as u64, Ordering::Release);
-
-        let target_tan = this_tan + 1;
-        let target_eaca = sm.get_atomicu64(small_eac_offset(allslabnum, target_tan));
-        target_eaca.store(2, Ordering::Release);
-
-        // Step 1: try to allocate a slot from this area:
-        let p1 = unsafe { sm.alloc(l) };
-        let p1o = offset_of_ptr(sybp, smbp, p1).unwrap();
-        assert!(p1o < MEDIUM_SLABS_REGION_BASE, "should have returned a small slot");
-        let allslabnum1 = crate::offset_to_allslabnum(p1o);
-        assert_eq!(allslabnum1, allslabnum);
-        let (areanum1, slotnum1) = small_slot(p1o, allslabnum1, crate::slotsize(allslabnum1));
-
-        assert_eq!(areanum1, target_tan);
-        assert_eq!(slotnum1, 2);
-        assert_eq!(allslabnum1, allslabnum);
-
-        // Should have set this thread's thread_area_num to this new area.
-        assert_eq!(get_thread_areanum(), target_tan);
-        
-        // Step 2: verify that the overflower algorithm incremented the eac of the first area that
-        // it tried.
-        for areanum in 0..NUM_SMALL_SLAB_AREAS {
-            if areanum == target_tan || areanum == this_tan || areanum == this_tan + STRIDE_AROUND_AREAS {
-                continue;
-            }
-            let eaca = sm.get_atomicu64(small_eac_offset(allslabnum, areanum));
-            assert_eq!(eaca.load(Ordering::Acquire), 4);
-        }
-
-        let eaca = sm.get_atomicu64(small_eac_offset(allslabnum, this_tan));
-        assert_eq!(eaca.load(Ordering::Acquire), NUM_SMALL_SLOTS as u64);
-
-        let eaca = sm.get_atomicu64(small_eac_offset(allslabnum, this_tan + STRIDE_AROUND_AREAS));
-        assert_eq!(eaca.load(Ordering::Acquire), 5);
-
-        let eaca = sm.get_atomicu64(small_eac_offset(allslabnum, target_tan));
-        assert_eq!(eaca.load(Ordering::Acquire), 3);
     }
 
     #[test]

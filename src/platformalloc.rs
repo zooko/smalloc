@@ -226,7 +226,7 @@ pub mod vendor {
 
 #[cfg(test)]
 mod platformtests {
-    const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
+    use crate::tests::BYTES1;
 
     //#[test]
     fn _realloc_16kib_down_to_8kib_realloc_back_up_to_16kib_pages_1_1_1() {

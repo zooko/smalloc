@@ -517,30 +517,8 @@ full. That means the free list is empty, and the ever-allocated-count is greater
 the number of slots in that slab. This could happen only if there were that many allocations from
 that slab alive simultaneously.
 
-In that case, if this is a small-slots slab, then find the area whose slab of this same slab number
-has the lowest `eac`. Loop over each other area, checking its `eac` and remembering the lowest one
-you've found so far. In order check its `eac` you actually have to `fetch_add(1)` to it so that if
-another thread is changing the `eac` at the same time, you'll actually have reserved that slot. This
-also means you have to either use that slot or push it onto that slab's free list before you forget
-about it.
-
-If you find a slab with `eac` 0, short-circuit the loop and use that area.
-
-Once you've either reserved slot 0 in a slab, or else completed the traversal of all the areas and
-found the lowest-`eac` and reserved a slot in it, then set your `THREAD_AREANUM` to that area
-number, and that slot of that area to satisfy this request.
-
-When doing this, traverse the areas in a permutation by adding 19 mod 32 instead of adding 1 mod 32,
-in order to reduce the chance of your search overlapping with operations of any other threads whose
-first allocation was after your thread's first allocation (since they got `THREAD_AREANUM`'s
-incrementally higher than yours).
-
-If you've searched all areas and you weren't able to allocate any slot -- meaning that all slabs of
-this slab number in all areas were full -- then increase the slab number and try again. If this was
-already the largest small-slots slab, then switch to the smallest large-slots slab.
-
-If the this is a large-slots slab and it is full, then overflow to the next larger slab. (Thanks to
-Nate Wilcox for suggesting this technique to me.)
+In that case, overflow to the next larger slab. If this is a small-slots slab, use the same areanum
+you're currently using. (Thanks to Nate Wilcox for suggesting this technique to me.)
 
 If all of the slabs you could overflow to are full, then fall back to using the system allocator to
 request more memory from the operating system and return the pointer to that.
@@ -1192,7 +1170,8 @@ as many huge slots as we do non-huge slots, and we don't want to the huge-slots 
   * step 1: replace overflowers algorithm with simple recurse to double-size request
   * step 2: remove `eac` and replace with zero-initialized free list :-) :-)
   * step 3: change layout so that optimized bittwiddling works for decoding addresses to slots :-)
-  
+  * step 4: let's have 8 Mi slots of 8 MiB each instead of 1 Mi slots of 64 MiB each
+
 * add benchmarks of 1000-threads-colliding tests e.g. `threads_1000_large_alloc_dealloc_x()`
 
 * experiment with std::intrinsics::likely/unlikely
