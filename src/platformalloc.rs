@@ -39,22 +39,7 @@ pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
     vendor::sys_dealloc(ptr, size);
 }
 
-pub fn sys_realloc(ptr: *mut u8, oldlayout: Layout, newsize: usize) -> *mut u8 {
-    // xxx add tests?
-    debug_assert!(newsize > 0);
-    let oldsize = oldlayout.size();
-    debug_assert!(oldsize > 0);
-    let oldalignment = oldlayout.align();
-    debug_assert!(oldalignment > 0);
-    debug_assert!((oldalignment & (oldalignment - 1)) == 0); // alignment must be a power of two
-
-    let new_ptr = vendor::sys_realloc(ptr, oldsize, newsize);
-    debug_assert!(new_ptr.is_aligned_to(oldalignment));
-
-    new_ptr
-}
-
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", doc))]
 pub mod vendor {
     // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
     // are probably only wrong by being smaller than they should be (never larger), and being
@@ -103,14 +88,6 @@ pub mod vendor {
     }
 
 // inline
-    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
-        unsafe {
-            mremap(p as *mut c_void, oldsize, newsize, MremapFlags::MAYMOVE)
-                .ok()
-                .unwrap() as *mut u8
-        }
-    }
-
     // Investigating the effects of MADV_RANDOM:
     // mm/madvise.c: MADV_RANDOM -> VM_RAND_READ
     // Documentation/mm/multigen_lru.rst: VM_RAND_READ means do not assume that accesses through page tables will exhibit temporal locality. 🤔
@@ -124,7 +101,7 @@ pub mod vendor {
     // Okay I'm going to give up on this research project and just conclude that *default* behavior (not MADV_RANDOM) is probably good for smalloc's purposes. I have no idea what it would mean to exclude certain pages from an LRU policy, nor what it means to skip these vma's when walking page tables. But neither of them sound like something we really want for smalloc's allocations.
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", doc))]
 pub mod vendor {
     // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
     // are probably only wrong by being smaller than they should be (never larger), and being
@@ -144,9 +121,7 @@ pub mod vendor {
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
     use mach_sys::traps::mach_task_self;
-    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate, mach_vm_remap};
-    use mach_sys::vm_inherit::VM_INHERIT_NONE;
-    use mach_sys::vm_prot::vm_prot_t;
+    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate};
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use std::mem::size_of;
@@ -178,274 +153,6 @@ pub mod vendor {
             debug_assert!(retval == KERN_SUCCESS);
         }
     }
-
-    use std::ptr::copy_nonoverlapping;
-    /// Because I get `KERN_INVALID_ADDRESS` from `sys_realloc_if_vm_remap_did_what_i_want()`, I'm
-    /// instead just allocating another mapping and copying the data into it:
-    pub fn sys_realloc(p: *mut u8, oldsize: usize, newsize: usize) -> *mut u8 {
-        debug_assert!(p.is_aligned_to(PAGE_SIZE));
-
-        // `smalloc`'s uses `sys_realloc()` only when it needs to grow the space.
-        debug_assert!(newsize > oldsize);
-
-        let newp = sys_alloc(newsize.next_multiple_of(PAGE_SIZE)).unwrap();
-        unsafe { copy_nonoverlapping(p, newp, oldsize); }
-        sys_dealloc(p, oldsize);
-
-        newp
-    }
-            
-// inline
-    pub fn _sys_realloc_if_vm_remap_did_what_i_want(p: *mut u8, _oldsize: usize, newsize: usize) -> *mut u8 {
-        debug_assert!(p.is_aligned_to(PAGE_SIZE));
-
-        let mut newaddress: mach_vm_address_t = 0;
-        let task: mach_port_t = unsafe { mach_task_self() };
-        let mut cur_prot: vm_prot_t = 0;
-        let mut max_prot: vm_prot_t = 0;
-        unsafe {
-            let retval = mach_vm_remap(
-                task,
-                &mut newaddress,
-                newsize as u64,
-                0, // mask
-                VM_FLAGS_ANYWHERE,
-                task,
-                p.addr() as u64,
-                0, // copy = False
-                &mut cur_prot,
-                &mut max_prot,
-                VM_INHERIT_NONE,
-            );
-            debug_assert!(retval == KERN_SUCCESS, "retval: {retval}, newsize: {newsize}, newaddress: {newaddress:?}, p: {p:?}");
-        }
-
-        newaddress as *mut u8
-    }
-}
-
-#[cfg(test)]
-mod platformtests {
-    use crate::tests::BYTES1;
-
-    //#[test]
-    fn _realloc_16kib_down_to_8kib_realloc_back_up_to_16kib_pages_1_1_1() {
-        const SIZE: usize = 2usize.pow(13);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_plus1_down_to_16kib_plus1_then_realloc_back_up_to_32kib_pages_3_2_2() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2 + 1).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_plus1_down_to_16kib_plus1_then_realloc_back_up_to_32kib_plus1_pages_3_2_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2 + 1).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2 + 1);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_48kib_down_to_32kib_then_realloc_back_up_to_48kib_pages_3_2_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 3).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 3, PAGE_SIZE * 2);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE * 2, PAGE_SIZE * 3);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_plus1_pages_2_2_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2 + 1);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_then_realloc_back_up_to_48kib_pages_2_1_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE, PAGE_SIZE * 3);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_8kib_down_to_4kib_then_realloc_back_up_to_48kib_pages_1_1_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 2, PAGE_SIZE / 4);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE / 4, PAGE_SIZE * 3);
-        assert!(!p3.is_null());
-    }
-
-    #[test]
-    fn malloc_32kib_then_realloc_to_48kib_pages_2_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE, PAGE_SIZE * 3);
-        assert!(!p2.is_null());
-    }
-
-    #[test]
-    fn malloc_4kib_then_realloc_to_48kib_pages_1_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 3);
-        assert!(!p2.is_null());
-    }
-
-    #[test]
-    fn malloc_4kib_then_realloc_to_32kib_pages_1_2() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 2);
-        assert!(!p2.is_null());
-    }
-
-    #[test]
-    fn malloc_4kib_then_realloc_to_32kib_plus1_pages_1_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE / 4).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE / 4, PAGE_SIZE * 2 + 1);
-        assert!(!p2.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_48kib_pages_2_2_3() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 3);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_pages_2_2_2() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_with_write_pages_2_2_2() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(PAGE_SIZE + 1 - BYTES1.len()), min(BYTES1.len(), PAGE_SIZE + 1)) };
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    use std::cmp::min;
-
-    use std::thread;
-    use std::time::Duration;
-    
-    //#[test]
-    fn _realloc_down_realloc_back_up_16kib_plus1_with_write_and_wait_30() {
-        const SIZE: usize = 2usize.pow(13)+1;
-        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
-        assert!(!p2.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(SIZE - BYTES1.len()), min(BYTES1.len(), SIZE)) };
-        thread::sleep(Duration::from_secs(30));
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_down_realloc_back_up_16kib_plus1_with_write_and_wait_300() {
-        const SIZE: usize = 2usize.pow(13)+1;
-        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, SIZE * 2, SIZE);
-        assert!(!p2.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(SIZE - BYTES1.len()), min(BYTES1.len(), SIZE)) };
-        thread::sleep(Duration::from_secs(300));
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, SIZE, SIZE * 2);
-        assert!(!p3.is_null());
-    }
-
-    //#[test]
-    fn _realloc_32kib_down_to_16kib_plus1_then_realloc_back_up_to_32kib_with_intervening_alloc_dealloc_and_write_pages_2_2_2() {
-        const PAGE_SIZE: usize = 2usize.pow(14);
-        const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
-
-        let p1 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p1.is_null());
-        let p2 = crate::platformalloc::vendor::sys_realloc(p1, PAGE_SIZE * 2, PAGE_SIZE + 1);
-        assert!(!p2.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p2.add(PAGE_SIZE + 1 - BYTES1.len()), min(BYTES1.len(), PAGE_SIZE)) };
-        let p4 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE).ok().unwrap();
-        assert!(!p4.is_null());
-        let p5 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE * 2).ok().unwrap();
-        assert!(!p5.is_null());
-        let p6 = crate::platformalloc::vendor::sys_alloc(PAGE_SIZE + 1).ok().unwrap();
-        assert!(!p6.is_null());
-        crate::platformalloc::vendor::sys_dealloc(p4, PAGE_SIZE);
-        crate::platformalloc::vendor::sys_dealloc(p5, PAGE_SIZE * 2);
-        crate::platformalloc::vendor::sys_dealloc(p6, PAGE_SIZE + 1);
-        let p3 = crate::platformalloc::vendor::sys_realloc(p2, PAGE_SIZE + 1, PAGE_SIZE * 2);
-        assert!(!p3.is_null());
-    }
 }
 
 // -> mach_vm_remap(target_task, newaddress-out, newsize, anywhere, src_task, memory_address_u, ...);
@@ -474,3 +181,5 @@ mod platformtests {
 // for Windows, check out VirtualAllocEx with MEM_RESERVE flag: https://learn.microsoft.com/en-us/windows/win32/memory/page-state
 // https://stackoverflow.com/questions/15261527/how-can-i-reserve-virtual-memory-in-linux?rq=1
 //xxx look into VirtualAlloc on windows and the difference between "reserve" and "commit"...
+
+// mimalloc by default madvise's transparent hugepage support *think*
