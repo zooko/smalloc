@@ -6,9 +6,10 @@
 #![feature(unchecked_shifts)]
 #![feature(test)]
 
+
 // Layout of this file:
 // * Fixed constants chosen for the design (see README.md)
-// * Constant values computed at compile time from the constants above
+// * Constant values computed at compile time from the fixed constants
 // * Implementation code
 // * Code for development (e.g benchmarks, tests, utility functions, development tools)
 
@@ -39,12 +40,9 @@ const SINGLEWORDSIZE: usize = 4;
 
 // --- Constant values determined by the constants above ---
 
-const SMALLOC_ADDRESS_BITS_MASK: usize = 0b111111111111111111111111111111111111111111111;
-const UNUSED_MSB_ADDRESS_BITS: u8 = help_leading_zeros_usize(SMALLOC_ADDRESS_BITS_MASK);
-
 // xxx symbolify these?
 const SMALL_SLABNUM_MASK: u32 = const_gen_mask_u32(NUM_SMALL_SLABS_BITS); // 0b11111111
-const LARGE_SLAB_SC_MASK: usize = 0b1111100000000000000000000000000000000000000;
+const LARGE_SLAB_SC_MASK: usize = const_shl_u8_usize(NUM_LARGE_SCS.next_power_of_two() - 1, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // 0b0b1111100000000000000000000000000000000000000
 
 const NUM_SMALL_SLOTS: u32 = const_one_shl_u32(NUM_SMALL_SLOTS_BITS);
 const NUM_MEDIUM_SLOTS: u32 = const_one_shl_u32(NUM_MEDIUM_SLOTS_BITS);
@@ -62,19 +60,24 @@ const SIZECLASS_5_SLOTNUM_MASK: usize = const_shl_u32_usize(HIGHEST_MEDIUM_SLOTN
 const LARGE_SC_INDICATOR_MASK: usize = 0b100000000000000000000000000000000000000000000;
 
 // The address of the slot with the highest address is:
-const HIGHEST_SMALLOC_SLOT_ADDR: usize = LARGE_SC_INDICATOR_MASK | const_shl_u8_usize(NUM_LARGE_SCS - 1, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // xxx check that this equals that: 
-// const HIGHEST_SMALLOC_SLOT_ADDR: usize = b101100100000000000000000000000000000000000000;
+const HIGHEST_SMALLOC_SLOT_ADDR: usize = LARGE_SC_INDICATOR_MASK | const_shl_u8_usize(NUM_LARGE_SCS - 1, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // 0b101100100000000000000000000000000000000000000
 
 // The address of the byte of the slot with the highest address is:
 // const HIGHEST_SMALLOC_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | const_gen_mask_usize(LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - 1);
 
 // But currently we also have an flh in there:
-const HIGHEST_SMALLOC_ADDR: usize = (HIGHEST_SMALLOC_SLOT_ADDR | const_one_shl_usize(LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - 1)) + DOUBLEWORDSIZE - 1;
+const HIGHEST_SMALLOC_ADDR: usize = (HIGHEST_SMALLOC_SLOT_ADDR | const_one_shl_usize(LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - 1)) + DOUBLEWORDSIZE - 1; // 0b101100110000000000000000000000000000000000111
 
-// We need to allocate an extra 2^45 - 1 bytes we can align the smalloc base pointer to have 45
-// trailing zeros.
-const TOTAL_ALIGN: usize = const_one_shl_usize(45);
-const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_ADDR + TOTAL_ALIGN - 1;
+extern crate static_assertions as sa;
+
+const SMALLOC_ADDRESS_BITS_MASK: usize = HIGHEST_SMALLOC_ADDR.next_power_of_two() - 1; // 0b111111111111111111111111111111111111111111111 
+
+const UNUSED_MSB_ADDRESS_BITS: u8 = help_leading_zeros_usize(SMALLOC_ADDRESS_BITS_MASK);
+
+// We need to allocate an extra 2^45 - 1 bytes so that we can align the smalloc base pointer to have
+// 45 trailing zeros.
+const BASEPTR_ALIGN: usize = const_one_shl_usize(45);
+const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_ADDR + BASEPTR_ALIGN - 1;
 
 
 // --- Implementation ---
@@ -156,8 +159,8 @@ impl Smalloc {
             let sysbp = sys_alloc(layout)?;
             assert!(!sysbp.is_null());
             self.sys_baseptr.store(sysbp.addr(), Release);//xxx can we use weaker ordering constraints?
-            smbp = sysbp.addr().next_multiple_of(TOTAL_ALIGN);
-            debug_assert!(smbp + HIGHEST_SMALLOC_ADDR <= sysbp.addr() + layout.size(), "sysbp: {sysbp:?}, smbp: {smbp:?}, H slot: {HIGHEST_SMALLOC_SLOT_ADDR:?}, H: {HIGHEST_SMALLOC_ADDR:?}, smbp+H: {:?}, size: {:?}, TOTAL_ALIGN: {TOTAL_ALIGN:?}", smbp + HIGHEST_SMALLOC_ADDR, layout.size());
+            smbp = sysbp.addr().next_multiple_of(BASEPTR_ALIGN);
+            debug_assert!(smbp + HIGHEST_SMALLOC_ADDR <= sysbp.addr() + layout.size(), "sysbp: {sysbp:?}, smbp: {smbp:?}, H slot: {HIGHEST_SMALLOC_SLOT_ADDR:?}, H: {HIGHEST_SMALLOC_ADDR:?}, smbp+H: {:?}, size: {:?}, BASEPTR_ALIGN: {BASEPTR_ALIGN:?}", smbp + HIGHEST_SMALLOC_ADDR, layout.size());
             self.sm_baseptr.store(smbp, Release); //xxx can we use weaker ordering constraints?
         }
 
