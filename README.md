@@ -1154,5 +1154,6 @@ Smalloc v3 had the following lines counts:
 * benches loc: 796
 * tools loc: 123
 
-Smalloc v3 has the following lines counts:
+Smalloc v4 has the following lines counts:
+* implementaton loc: 392 (excluding debug_asserts)
 

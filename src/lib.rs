@@ -572,6 +572,123 @@ unsafe impl GlobalAlloc for Smalloc {
     }
 }
 
+// utility functions
+
+use std::cmp::min;
+use core::alloc::{GlobalAlloc, Layout};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release, Relaxed};
+mod platformalloc;
+use platformalloc::{sys_alloc, sys_dealloc};
+use platformalloc::vendor::PAGE_SIZE;
+use std::ptr::{copy_nonoverlapping, null_mut};
+use std::cell::Cell;
+use thousands::Separable;
+use platformalloc::AllocFailed;
+
+// xxx look at asm and benchmark these vs the builtin alternatives
+
+// xxx benchmark and inspect asm for this vs <<
+const fn const_shl_u32_usize(value: u32, shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+    debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
+    unsafe { (value as usize).unchecked_shl(shift as u32) }
+}
+
+// xxx benchmark and inspect asm for this vs <<
+const fn const_shl_u8_usize(value: u8, shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+    debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
+    unsafe { (value as usize).unchecked_shl(shift as u32) }
+}
+
+// xxx benchmark and inspect asm for this vs <<
+const fn const_shl_usize_usize(value: usize, shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+    debug_assert!(help_leading_zeros_usize(value) >= shift); // we never shift off 1 bits currently
+    unsafe { value.unchecked_shl(shift as u32) }
+}
+
+#[inline(always)]
+const fn const_one_shl_usize(shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+
+    unsafe { 1usize.unchecked_shl(shift as u32) }
+}
+
+#[inline(always)]
+const fn const_one_shl_u32(shift: u8) -> u32 {
+    debug_assert!((shift as u32) < u32::BITS);
+
+    unsafe { 1u32.unchecked_shl(shift as u32) }
+}
+
+#[inline(always)]
+const fn _const_shr_usize_usize(value: usize, shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+    unsafe { value.unchecked_shr(shift as u32) }
+}
+
+#[inline(always)]
+const fn const_shr_usize_u32(value: usize, shift: u8) -> u32 {
+    debug_assert!((shift as u32) < usize::BITS);
+    let res = unsafe { value.unchecked_shr(shift as u32) };
+    // No leaving 1 bits stranded up there
+    debug_assert!(help_leading_zeros_usize(res) as u32 >= usize::BITS - u32::BITS);
+    res as u32
+}
+
+#[inline(always)]
+const fn const_shr_usize_u8(value: usize, shift: u8) -> u8 {
+    debug_assert!((shift as u32) < usize::BITS);
+    let res = unsafe { value.unchecked_shr(shift as u32) };
+    // No leaving 1 bits stranded up there
+    debug_assert!(help_leading_zeros_usize(res) as u32 >= usize::BITS - u8::BITS);
+    res as u8
+}
+
+#[inline(always)]
+const fn _const_gen_mask_usize(numbits: u8) -> usize {
+    debug_assert!((numbits as u32) < usize::BITS);
+
+    unsafe { 1usize.unchecked_shl(numbits as u32) - 1 }
+}
+
+#[inline(always)]
+const fn const_gen_mask_u32(numbits: u8) -> u32 {
+    debug_assert!((numbits as u32) < u32::BITS);
+
+    unsafe { 1u32.unchecked_shl(numbits as u32) - 1 }
+}
+
+/// Returns the number of significant bits in the aligned size. This is the log base 2 of the size
+/// of slot required to hold requests of this size and alignment.
+// xxx nanobenchmark these two ways to compute alignedsize/alignedsizebits
+fn alignedsize_minus1_bits_lzcnt(size: usize, align: usize) -> u8 {
+    debug_assert!(size > 0);
+    debug_assert!(align > 0);
+    usize::BITS as u8 - min(help_leading_zeros_usize(size - 1), help_leading_zeros_usize(align - 1))
+}
+
+#[inline(always)]
+const fn _help_leading_zeros_u32(x: u32) -> u8 {
+    let res = x.leading_zeros();
+    debug_assert!(res <= u8::MAX as u32);
+    res as u8
+}
+    
+#[inline(always)]
+const fn help_leading_zeros_usize(x: usize) -> u8 {
+    let res = x.leading_zeros();
+    debug_assert!(res <= u8::MAX as u32);
+    res as u8
+}
+    
+#[inline(always)]
+const fn help_trailing_zeros_usize(x: usize) -> u8 {
+    x.trailing_zeros() as u8
+}
+
 
 // --- Code for development (e.g benchmarks, tests, development utilities) ---
 
@@ -3320,121 +3437,3 @@ mod tests {
         assert!(p1.is_null());
     }
 }
-
-// utility functions
-
-use std::cmp::min;
-use core::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Release, Relaxed};
-mod platformalloc;
-use platformalloc::{sys_alloc, sys_dealloc};
-use platformalloc::vendor::PAGE_SIZE;
-use std::ptr::{copy_nonoverlapping, null_mut};
-use std::cell::Cell;
-use thousands::Separable;
-use platformalloc::AllocFailed;
-
-// xxx look at asm and benchmark these vs the builtin alternatives
-
-// xxx benchmark and inspect asm for this vs <<
-const fn const_shl_u32_usize(value: u32, shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-    debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
-    unsafe { (value as usize).unchecked_shl(shift as u32) }
-}
-
-// xxx benchmark and inspect asm for this vs <<
-const fn const_shl_u8_usize(value: u8, shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-    debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
-    unsafe { (value as usize).unchecked_shl(shift as u32) }
-}
-
-// xxx benchmark and inspect asm for this vs <<
-const fn const_shl_usize_usize(value: usize, shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-    debug_assert!(help_leading_zeros_usize(value) >= shift); // we never shift off 1 bits currently
-    unsafe { value.unchecked_shl(shift as u32) }
-}
-
-#[inline(always)]
-const fn const_one_shl_usize(shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-
-    unsafe { 1usize.unchecked_shl(shift as u32) }
-}
-
-#[inline(always)]
-const fn const_one_shl_u32(shift: u8) -> u32 {
-    debug_assert!((shift as u32) < u32::BITS);
-
-    unsafe { 1u32.unchecked_shl(shift as u32) }
-}
-
-#[inline(always)]
-const fn _const_shr_usize_usize(value: usize, shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-    unsafe { value.unchecked_shr(shift as u32) }
-}
-
-#[inline(always)]
-const fn const_shr_usize_u32(value: usize, shift: u8) -> u32 {
-    debug_assert!((shift as u32) < usize::BITS);
-    let res = unsafe { value.unchecked_shr(shift as u32) };
-    // No leaving 1 bits stranded up there
-    debug_assert!(help_leading_zeros_usize(res) as u32 >= usize::BITS - u32::BITS);
-    res as u32
-}
-
-#[inline(always)]
-const fn const_shr_usize_u8(value: usize, shift: u8) -> u8 {
-    debug_assert!((shift as u32) < usize::BITS);
-    let res = unsafe { value.unchecked_shr(shift as u32) };
-    // No leaving 1 bits stranded up there
-    debug_assert!(help_leading_zeros_usize(res) as u32 >= usize::BITS - u8::BITS);
-    res as u8
-}
-
-#[inline(always)]
-const fn _const_gen_mask_usize(numbits: u8) -> usize {
-    debug_assert!((numbits as u32) < usize::BITS);
-
-    unsafe { 1usize.unchecked_shl(numbits as u32) - 1 }
-}
-
-#[inline(always)]
-const fn const_gen_mask_u32(numbits: u8) -> u32 {
-    debug_assert!((numbits as u32) < u32::BITS);
-
-    unsafe { 1u32.unchecked_shl(numbits as u32) - 1 }
-}
-
-/// Returns the number of significant bits in the aligned size. This is the log base 2 of the size
-/// of slot required to hold requests of this size and alignment.
-// xxx nanobenchmark these two ways to compute alignedsize/alignedsizebits
-fn alignedsize_minus1_bits_lzcnt(size: usize, align: usize) -> u8 {
-    debug_assert!(size > 0);
-    debug_assert!(align > 0);
-    usize::BITS as u8 - min(help_leading_zeros_usize(size - 1), help_leading_zeros_usize(align - 1))
-}
-
-#[inline(always)]
-const fn _help_leading_zeros_u32(x: u32) -> u8 {
-    let res = x.leading_zeros();
-    debug_assert!(res <= u8::MAX as u32);
-    res as u8
-}
-    
-#[inline(always)]
-const fn help_leading_zeros_usize(x: usize) -> u8 {
-    let res = x.leading_zeros();
-    debug_assert!(res <= u8::MAX as u32);
-    res as u8
-}
-    
-#[inline(always)]
-const fn help_trailing_zeros_usize(x: usize) -> u8 {
-    x.trailing_zeros() as u8
-}
-
