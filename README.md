@@ -5,7 +5,7 @@ glibc memory allocator), `libmalloc` (the Macos userspace memory allocator), `je
 `snmalloc`, `rpmalloc`, etc.
 
 `smalloc` offers performance properties comparable to the other memory managers, while being
-simpler. The current implementation is only 903 lines of Rust code (excluding comments, tests,
+simpler. The current implementation is only 395 lines of Rust code (excluding comments, tests,
 benchmarks, etc).
 
 # Caveats
@@ -521,79 +521,84 @@ X      <- smalloc base pointer (first 8 MiB boundary)
 ```
 
 ```
-              [unused                                     ]
- pad        0 000000000000000000000000000000000000000000000                            2^34
+small flhs
 
-medium
-              unused sc   slotnum                    data
-              [    ][   ][                         ][     ]
-  sc   offset                                 ... in binary slotsize slots slabs regionsize
-  --   ------                                 ------------- -------- ----- ----- ----------
-              [unus][sc ][slotnum                  ][data ]
-   5     2^34 000000000010000000000000000000000000000000000      128  2^27     1       2^34
-              [unus][sc][slotnum                  ][data  ]
-   6     2^35 000000000100000000000000000000000000000000000      256  2^27     1       2^35
-              [unus][s][slotnum                  ][data   ]
-   7     2^36 000000001000000000000000000000000000000000000      512  2^27     1       2^36
-              [unus][][slotnum                  ][data    ]
-   8     2^37 000000010000000000000000000000000000000000000     1024  2^27     1       2^37
-              [unus]][slotnum                  ][data     ]
-   9     2^38 000000100000000000000000000000000000000000000     2048  2^27     1       2^38
+small flh addr = slabnum * 5 * 8 + sc * 8 == (slabnum * 5 + sc) * 8
+medium flh addr = 256 * 5 * 8 + sc * 8 - 5 * 8 == 255 * 5 * 8 + sc * 8 == (255 * 5 + sc) * 8
+large flh addr = 256 * 5 * 8 + 5 * 8 + sc * 8 - 10 * 8 == 255 * 5 * 8 + sc * 8 == 10200 + sc * 8
 
-small
-               sc    slabnum slotnum                  data
-              [    ][      ][                       ][    ]
-  sc   offset                                 ... in binary slotsize slots slabs regionsize
-  --   ------                                 ------------- -------- ----- ----- ----------
-              [sc  ][slabnu][slotnum                    ][]
-   0     2^39 000001000000000000000000000000000000000000000        4  2^29   2^8       2^39
-              [sc ][slabnu][slotnum                    ][d]
-   1     2^40 000010000000000000000000000000000000000000000        8  2^29   2^8       2^40
-              [sc][slabnu][slotnum                    ][da]
-   2     2^41 000100000000000000000000000000000000000000000       16  2^29   2^8       2^41
-              [s][slabnu][slotnum                    ][dat]
-   3     2^42 001000000000000000000000000000000000000000000       32  2^29   2^8       2^42
-              [][slabnu][slotnum                    ][data]
-   4     2^43 010000000000000000000000000000000000000000000       64  2^29   2^8       2^43
+flhs        0 00000000000000000000000000000000000000000000                          12,288
+                                          0b10100011110000
+
+              [unused                                    ]
+pad         0 00000000000000000000000000000000000000000000                           ~2^33
+
+medium size classes
+              unused sc   slotnum                   data
+              [    ][   ][                        ][     ]
+  sc   offset                                ... in binary slotsize slots slabs regionsize
+  --   ------                                ------------- -------- ----- ----- ----------
+              [unus][sc ][slotnum                 ][data ]
+   5     2^33 00000000001000000000000000000000000000000000      128  2^26     1       2^33
+              [unus][sc][slotnum                 ][data  ]
+   6     2^34 00000000010000000000000000000000000000000000      256  2^26     1       2^34
+              [unus][s][slotnum                 ][data   ]
+   7     2^35 00000000100000000000000000000000000000000000      512  2^26     1       2^35
+              [unus][][slotnum                 ][data    ]
+   8     2^36 00000001000000000000000000000000000000000000     1024  2^26     1       2^36
+              [unus]][slotnum                 ][data     ]
+   9     2^37 00000010000000000000000000000000000000000000     2048  2^26     1       2^37
+
+small size classes
+               sc    slabnum slotnum                 data
+              [    ][      ][                      ][    ]
+  sc   offset                                ... in binary slotsize slots slabs regionsize
+  --   ------                                ------------- -------- ----- ----- ----------
+              [sc  ][slabnu][slotnum                   ][]
+   0     2^38 00000100000000000000000000000000000000000000        4  2^28   2^8       2^38
+              [sc ][slabnu][slotnum                   ][d]
+   1     2^39 00001000000000000000000000000000000000000000        8  2^28   2^8       2^39
+              [sc][slabnu][slotnum                   ][da]
+   2     2^40 00010000000000000000000000000000000000000000       16  2^28   2^8       2^40
+              [s][slabnu][slotnum                   ][dat]
+   3     2^41 00100000000000000000000000000000000000000000       32  2^28   2^8       2^41
+              [][slabnu][slotnum                   ][data]
+   4     2^42 01000000000000000000000000000000000000000000       64  2^28   2^8       2^42
  
-              000000111111111111111111111111111100000000000
-
-large
-         unused  sc   slotnum                   data
-              [][   ][                        ][          ]
-  sc   offset                                 ... in binary slotsize slots slabs regionsize
-  --   ------                                 ------------- -------- ----- ----- ----------
-              [][sc ][slotnum                 ][data      ]
-  10     2^44 100000000000000000000000000000000000000000000     2^12  2^26     1       2^38
-              [][sc ][slotnum                ][data       ]
-  11  +1*2^38 100000100000000000000000000000000000000000000     2^13  2^25     1       2^38
-              [][sc ][slotnum               ][data        ]
-  12  +2*2^38 100001000000000000000000000000000000000000000     2^14  2^24     1       2^38
-              [][sc ][slotnum              ][data         ]
-  13  +3*2^38 100001100000000000000000000000000000000000000     2^15  2^23     1       2^38
-              [][sc ][slotnum             ][data          ]
-  14  +4*2^38 100010000000000000000000000000000000000000000     2^16  2^22     1       2^38
-              [][sc ][slotnum            ][data           ]
-  15  +5*2^38 100010100000000000000000000000000000000000000     2^17  2^21     1       2^38
-              [][sc ][slotnum           ][data            ]
-  16  +6*2^38 100011000000000000000000000000000000000000000     2^18  2^20     1       2^38
-              [][sc ][slotnum          ][data             ]
-  17  +7*2^38 100011100000000000000000000000000000000000000     2^19  2^19     1       2^38
-              [][sc ][slotnum         ][data              ]
-  18  +8*2^38 100100000000000000000000000000000000000000000     2^20  2^18     1       2^38
-              [][sc ][slotnum        ][data               ]
-  19  +9*2^38 100100100000000000000000000000000000000000000     2^21  2^17     1       2^38
+large size classes
+         unused  sc   slotnum                  data
+              [][   ][                       ][          ]
+  sc   offset                                ... in binary slotsize slots slabs regionsize
+  --   ------                                ------------- -------- ----- ----- ----------
+              [][sc ][slotnum                ][data      ]
+  10     2^43 10000000000000000000000000000000000000000000     2^12  2^25     1       2^37
+              [][sc ][slotnum               ][data       ]
+  11  +1*2^37 10000010000000000000000000000000000000000000     2^13  2^24     1       2^37
+              [][sc ][slotnum              ][data        ]
+  12  +2*2^37 10000100000000000000000000000000000000000000     2^14  2^23     1       2^37
+              [][sc ][slotnum             ][data         ]
+  13  +3*2^37 10000110000000000000000000000000000000000000     2^15  2^22     1       2^37
+              [][sc ][slotnum            ][data          ]
+  14  +4*2^37 10001000000000000000000000000000000000000000     2^16  2^21     1       2^37
+              [][sc ][slotnum           ][data           ]
+  15  +5*2^37 10001010000000000000000000000000000000000000     2^17  2^20     1       2^37
+              [][sc ][slotnum          ][data            ]
+  16  +6*2^37 10001100000000000000000000000000000000000000     2^18  2^19     1       2^37
+              [][sc ][slotnum         ][data             ]
+  17  +7*2^37 10001110000000000000000000000000000000000000     2^19  2^18     1       2^37
+              [][sc ][slotnum        ][data              ]
+  18  +8*2^37 10010000000000000000000000000000000000000000     2^20  2^17     1       2^37
+              [][sc ][slotnum       ][data               ]
+  19  +9*2^37 10010010000000000000000000000000000000000000     2^21  2^16     1       2^37
 ...14 more scs
-              [][sc ][s][data                             ]
-  33 +23*2^38 101011100000000000000000000000000000000000000     2^35   2^3     1       2^38
-              [][sc ][][data                              ]
-  34 +24*2^38 101100000000000000000000000000000000000000000     2^36   2^2     1       2^38
-              [][sc ][[data                               ]
-  35 +25*2^38 101100100000000000000000000000000000000000000     2^37   2^1     1       2^38
+              [][sc ][][data                             ]
+  33 +23*2^37 10101110000000000000000000000000000000000000     2^35   2^2     1       2^37
+              [][sc ][[data                              ]
+  34 +24*2^37 10110000000000000000000000000000000000000000     2^36   2^1     1       2^37
 ```
 
 Okay, now you know everything there is to know about `smalloc`'s data model and memory layout. Given
-his information, you can calculate the exact address of every data element in `smalloc`! (Counting
+his information, you can calculate the exact location of every data element in `smalloc`! (Counting
 from the `smalloc` base pointer, which is the address of the first byte in the layout described
 above.)
 
@@ -1099,6 +1104,8 @@ goals, written here in roughly descending order of importance:
 
 * investigate using the #[noalias] annotation
 
+* Try "tarpaulin" HT Sean Bowe
+
 # Acknowledgments
 
 * Thanks to Andrew Reece and Sam Smith for some specific suggestions that I implemented (see notes
@@ -1148,12 +1155,20 @@ Smalloc v2 had the following lines counts (counted by tokei):
 
 Smalloc v3 had the following lines counts:
 
-* docs and comments: 1665
+* docs and comments: 2347
 * implementation loc: 867 (excluding debug_asserts)
 * tests loc: 1302
 * benches loc: 796
 * tools loc: 123
 
 Smalloc v4 has the following lines counts:
-* implementaton loc: 392 (excluding debug_asserts)
+* docs and comments: 2217
+* implementaton loc: 401 (excluding debug_asserts)
+* tests loc: 977
+* benches loc: 0 -- benchmarks are broken 😭
 
+Smalloc v5 has the following lines counts:
+* docs and comments: 2208
+* implementaton loc: 395 (excluding debug_asserts)
+* tests loc: 949
+* benches loc: 84 -- benchmarks are still mostly broken 😭

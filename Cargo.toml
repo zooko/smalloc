@@ -2,7 +2,7 @@ cargo-features = ["profile-rustflags"]
 
 [package]
 name = "smalloc"
-version = "4.0.0"
+version = "5.0.0"
 edition = "2024"
 
 [dependencies]
@@ -12,6 +12,7 @@ thousands = "0.2.0"
 
 [dev-dependencies]
 cargo-nextest = "0.9.96"
+tango-bench = { version = "0.6.0", path = "../tango/tango-bench" }
 
 [target.'cfg(target_vendor="apple")'.dependencies]
 mach-sys = "0.5"
@@ -19,6 +20,28 @@ mach-sys = "0.5"
 [lib]
 name = "smalloc"
 
+# [profile.release]
+# lto = "fat"
+# rustflags = ["-C", "target-cpu=native"]
+
+[[bench]]
+name = "smallocb"
+harness = false
+
+[profile.bench]
+opt-level = 3
+debug = false
+split-debuginfo = "packed"
+codegen-units = 1
+lto = true
+debug-assertions = false
+overflow-checks = false
+
 [profile.release]
-lto = "fat"
-rustflags = ["-C", "target-cpu=native"]
+opt-level = 3
+debug = false
+# split-debuginfo = "packed"
+codegen-units = 1
+lto = true
+debug-assertions = false
+overflow-checks = false
