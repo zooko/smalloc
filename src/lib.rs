@@ -131,7 +131,7 @@ impl Smalloc {
         }
     }
 
-    fn idempotent_init(&self) -> Result<usize, AllocFailed> {
+    pub fn idempotent_init(&self) -> Result<usize, AllocFailed> {
         let mut p: usize;
 
         p = self.sm_baseptr.load(Acquire);
@@ -895,24 +895,45 @@ pub mod benches {
         }
     }
 
-    //use std::sync::Arc;
+    use std::sync::Arc;
     //use std::time::{Duration,Instant};
-    pub fn alloc_and_free(iters: u64, allocator: &Arc<impl GlobalAlloc>) {
+    pub fn alloc_and_free(allocator: &Arc<impl GlobalAlloc>) {
         let l = unsafe { Layout::from_size_align_unchecked(32, 1) };
-        for _i in 0..iters {
-            let p = unsafe { allocator.alloc(l) };
-            unsafe { allocator.dealloc(p, l) };
-        }
+        let p = unsafe { allocator.alloc(l) };
+        unsafe { allocator.dealloc(p, l) };
     }
 
-    use std::sync::Arc;
-    pub  fn bench_allocator(name: &str, allocator: &Arc<impl GlobalAlloc>) {
+    #[inline(never)]
+    pub fn bench<F: FnMut()>(name: &str, iters: u64, mut f: F) {
         let start = clock();
-        let iters = 1_000_000_000;
-        alloc_and_free(iters, allocator);
+        for _i in 0..iters {
+            f();
+        }
         let elap = clock() - start;
-        eprintln!("{}: {} ns, {} ps/i", name, elap, elap*1000/iters);
+        eprintln!("name: {name}, iters: {iters} ns: {elap}, ps/i: {}", elap*1000/iters);
     }
+
+    use std::hint::black_box;
+
+    #[inline(never)]
+    pub fn dummy_func(maxi: u8, maxj: u8) -> u8 {
+        // When I make this code a little faster/simpler than maxi=30, maxj=29, then various clocks
+        // on Macos on Apple M4 Max start telling me that it took 0 nanoseconds. 🤔
+        let mut a = Arc::new(0);
+        for i in 0..maxi {
+            for j in 0..maxj {
+                *Arc::make_mut(&mut a) ^= black_box(i.wrapping_mul(j));
+            }
+    }
+
+        *a
+    }
+
+//     use std::sync::Arc;
+//     pub  fn bench_allocator(name: &str, allocator: &Arc<impl GlobalAlloc>) {
+// //xxx        fn allo(
+// //        bench(name
+//     }
 
 //    use crate::*;
 

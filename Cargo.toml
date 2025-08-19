@@ -20,28 +20,24 @@ mach-sys = "0.5"
 [lib]
 name = "smalloc"
 
-# [profile.release]
-# lto = "fat"
-# rustflags = ["-C", "target-cpu=native"]
-
 [[bench]]
+inherits = "release"
 name = "smallocb"
 harness = false
 
-[profile.bench]
-opt-level = 3
-debug = false
-split-debuginfo = "packed"
-codegen-units = 1
-lto = true
-debug-assertions = false
-overflow-checks = false
-
+# For optimized release build:
 [profile.release]
 opt-level = 3
 debug = false
-# split-debuginfo = "packed"
 codegen-units = 1
-lto = true
+lto = "fat"
 debug-assertions = false
 overflow-checks = false
+# rustflags = ["-C", "target-cpu=native"] # when I comment this in, then the "builtin" benchmark in simplebench goes from 240 picoseconds per iteration to 7800 picoseconds per iteration!? (The smalloc benchmark doesn't change.)
+
+# For profiling mostly-optimized release build:
+[profile.profiling]
+inherits = "release"
+debug = true
+# split-debuginfo = "packed" # ??? do we want this?
+lto = false
