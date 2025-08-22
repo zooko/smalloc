@@ -900,6 +900,7 @@ pub mod benches {
     pub fn alloc_and_free(allocator: &Arc<impl GlobalAlloc>) {
         let l = unsafe { Layout::from_size_align_unchecked(32, 1) };
         let p = unsafe { allocator.alloc(l) };
+        unsafe { *p = 0 };
         unsafe { allocator.dealloc(p, l) };
     }
 
