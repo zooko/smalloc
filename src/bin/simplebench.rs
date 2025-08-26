@@ -5,10 +5,18 @@
 #[cfg(not(test))]
 mod notests {
     use smalloc::benches::{dummy_func, bench, alloc_and_free, GlobalAllocWrap};
+    use smalloc::{help_test_one_alloc_dealloc_realloc_with_writes, help_test_one_alloc_dealloc_realloc};
     use smalloc::Smalloc;
     use std::sync::Arc;
     use std::thread;
     use std::hint::black_box;
+    use std::alloc::Layout;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use std::cmp::max;
+    use ahash::HashSet;
+    use ahash::RandomState;
+    use rand::Rng;
 
     pub fn main() {
         let mut handles = Vec::new();
@@ -25,32 +33,79 @@ mod notests {
             });
         }));
 
-        //let iters = 1;
-        //let iters = 2;
-        //let iters = 4;
-        //let iters = 8;
-        //let iters = 16;
-        //let iters = 32;
-        //let iters = 64;
-        // let iters = 128;
-        //let iters = 256;
-        //let iters = 1000;
-        //let iters = 1_000_000;
-        let iters = 1_000_000_000;
-        //let iters = 10_000_000_000;
+        let iters = 100_000_000;
+
         let sm = Arc::new(Smalloc::new());
         sm.idempotent_init().unwrap();
+
+        let l = Layout::from_size_align(35, 32).unwrap();
+
+        let l1 = l;
+        let mut ls = Vec::new();
+        ls.push(l1);
+        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
+        ls.push(l2);
+        let l3 = Layout::from_size_align(max(11, l1.size()) - 10, l1.align()).unwrap();
+        ls.push(l3);
+        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
+        ls.push(l4);
+
+        let mut rsm1 = StdRng::seed_from_u64(0);
+        let mut msm1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rsm1.random::<u64>() as usize));
+        let mut pssm1 = Vec::new();
+
+        let sm1 = Arc::clone(&sm);
+        let ls1 = ls.clone();
+        let bench_a_d_r_w_w_sm = move || {
+            help_test_one_alloc_dealloc_realloc_with_writes(sm1.as_ref(), &mut rsm1, &mut pssm1, &mut msm1, &ls1);
+        };
+
         handles.push(thread::spawn(move || {
-            bench("smalloc", iters, || {
-                alloc_and_free(&sm);
-            });
+            bench("a_d_r_w_w sm", iters, bench_a_d_r_w_w_sm);
         }));
 
-        let bi = Arc::new(GlobalAllocWrap);
+        let mut rsm2 = StdRng::seed_from_u64(0);
+        let mut msm2: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rsm2.random::<u64>() as usize));
+        let mut pssm2 = Vec::new();
+
+        let sm2 = Arc::clone(&sm);
+        let ls2 = ls.clone();
+        let bench_a_d_r_sm = move || {
+            help_test_one_alloc_dealloc_realloc(sm2.as_ref(), &mut rsm2, &mut pssm2, &mut msm2, &ls2);
+        };
+
         handles.push(thread::spawn(move || {
-            bench("builtin", iters, || {
-                alloc_and_free(&bi);
-            });
+            bench("a_d_r sm", iters, bench_a_d_r_sm);
+        }));
+
+        let mut rbi1 = StdRng::seed_from_u64(0);
+        let mut mbi1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rbi1.random::<u64>() as usize));
+        let mut psbi1 = Vec::new();
+
+        let bi = Arc::new(GlobalAllocWrap);
+
+        let bi1 = Arc::clone(&bi);
+        let lsbi1 = ls.clone();
+        let bench_a_d_r_w_w_bi = move || {
+            help_test_one_alloc_dealloc_realloc_with_writes(bi1.as_ref(), &mut rbi1, &mut psbi1, &mut mbi1, &lsbi1);
+        };
+
+        handles.push(thread::spawn(move || {
+            bench("a_d_r_w_w bi", iters, bench_a_d_r_w_w_bi);
+        }));
+
+        let mut rbi2 = StdRng::seed_from_u64(0);
+        let mut mbi2: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rbi2.random::<u64>() as usize));
+        let mut psbi2 = Vec::new();
+
+        let bi2 = Arc::clone(&bi);
+        let lsbi2 = ls.clone();
+        let bench_a_d_r_bi = move || {
+            help_test_one_alloc_dealloc_realloc(bi2.as_ref(), &mut rbi2, &mut psbi2, &mut mbi2, &lsbi2);
+        };
+
+        handles.push(thread::spawn(move || {
+            bench("a_d_r bi", iters, bench_a_d_r_bi);
         }));
 
         for handle in handles {
