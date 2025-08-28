@@ -22,8 +22,8 @@ use rand::Rng;
 use tango_bench::Bencher;
 
 fn smallocb_benchmarks() -> impl IntoBenchmarks {
-    //let mut s = GlobalAllocWrap;
-    let mut s = Smalloc::new();
+    let mut s = GlobalAllocWrap; // comment-in for tango baseline
+    //let mut s = Smalloc::new(); // comment-in to compare to smalloc
 
     let l = Layout::from_size_align(35, 32).unwrap();
 
