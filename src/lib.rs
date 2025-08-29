@@ -40,7 +40,6 @@ const SINGLEWORDSIZE: usize = 4;
 
 // --- Constant values determined by the constants above ---
 
-// xxx symbolify these?
 const SMALL_SLABNUM_MASK: u32 = const_gen_mask_u32(NUM_SMALL_SLABS_BITS); // 0b11111111
 const LARGE_SLAB_SC_MASK: usize = const_shl_u8_usize(NUM_LARGE_SCS.next_power_of_two() - 1, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // 0b0b111110000000000000000000000000000000000000 
 
@@ -75,6 +74,10 @@ const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_ADDR + SMALLOC_ADDRESS_BITS_
 
 
 // --- Implementation ---
+
+use std::sync::atomic::AtomicU32;
+use std::cell::Cell;
+use std::sync::atomic::Ordering::Relaxed;
 
 static GLOBAL_THREAD_NUM: AtomicU32 = AtomicU32::new(0);
 
@@ -552,13 +555,12 @@ unsafe impl GlobalAlloc for Smalloc {
 
 use std::cmp::min;
 use core::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Release, Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
 mod platformalloc;
 use platformalloc::{sys_alloc, sys_dealloc};
 use platformalloc::vendor::PAGE_SIZE;
 use std::ptr::{copy_nonoverlapping, null_mut};
-use std::cell::Cell;
 use thousands::Separable;
 use platformalloc::AllocFailed;
 
@@ -3296,6 +3298,7 @@ pub mod tests {
         }
     }
     
+    use std::sync::atomic::Ordering::Relaxed;
     fn help_set_flh_singlehthreaded(smbp: usize, sc: u8, slotnum: u32) {
         let flh_addr = if sc < NUM_SMALL_SCS {
             let slabnum = get_thread_num() as u8;
