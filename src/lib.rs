@@ -3387,9 +3387,9 @@ pub mod tests {
         let (sc3, slabnum3, slotnum3) = help_ptr_to_loc(&sm, p3, l);
 
         // The raison d'etre for this test: Assert that the newly allocated slot is in a bigger
-        // size class, same areanum.
-        assert_eq!(slabnum3, slabnum1);
+        // size class, same areanum (if the new size class has more than one area).
         assert_eq!(sc3, sc + 1, "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}");
+        assert!(if sc3 < NUM_SMALL_SCS { slabnum3 == slabnum1 } else { true });
         assert!(sc3 + 2 > alignedsizebits);
         assert_eq!(slotnum3, 0);
         assert_eq!(help_get_flh_singlehthreaded(smbp, sc3), 1, "sc3: {sc3}");
