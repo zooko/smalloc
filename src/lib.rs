@@ -122,9 +122,6 @@ impl Drop for Smalloc {
     }
 }
 
-//xxxunsafe impl Send for Smalloc {}
-//xxxunsafe impl Sync for Smalloc {}
-
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
