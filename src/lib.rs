@@ -26,8 +26,7 @@ const NUM_SMALL_SLABS_BITS: u8 = 8;
 
 const NUM_SMALL_SLOTS_BITS: u8 = 28;
 const NUM_MEDIUM_SLOTS_BITS: u8 = 26;
-
-const LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS: u8 = 37;
+const NUM_MOST_LARGE_SLOTS_BITS: u8 = 25;
 
 // --- Fixed constants for supported machine architecture
 
@@ -39,6 +38,8 @@ const SINGLEWORDSIZE: usize = 4;
 
 
 // --- Constant values determined by the constants above ---
+
+const LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS: u8 = NUM_MOST_LARGE_SLOTS_BITS + NUM_SMALL_SCS + NUM_MEDIUM_SCS + SMALLEST_SLOT_SIZE_BITS; // 37
 
 const SMALL_SLABNUM_MASK: u32 = const_gen_mask_u32(NUM_SMALL_SLABS_BITS); // 0b11111111
 const LARGE_SLAB_SC_MASK: usize = const_shl_u8_usize(NUM_LARGE_SCS.next_power_of_two() - 1, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // 0b0b111110000000000000000000000000000000000000 
