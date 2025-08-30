@@ -176,12 +176,16 @@ impl Smalloc {
         p
     }
 
-    fn push_slot_onto_freelist(&self, slabbp: usize, flh_addr: usize, newslotnum: u32, numslotsbits: u8, slotsizebits: u8) {
+    /// `highestslotnum` is for using `& highestslotnum` instead of `% numslots` to compute a number
+    /// modulo numslots (where `numslots` here counts the sentinel slot). So `highestslotnum` is
+    /// equal to `numslots - 1`, which is also the slotnum of the sentinel slot. (It is also used in
+    /// `debug_asserts`.) `newslotnum` cannot be the sentinel slotnum.
+    fn push_slot_onto_freelist(&self, slabbp: usize, flh_addr: usize, newslotnum: u32, highestslotnum: u32, slotsizebits: u8) {
         debug_assert!(slabbp != 0);
         debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
         debug_assert!(flh_addr.is_multiple_of(DOUBLEWORDSIZE), "{flh_addr}");
-        debug_assert!(newslotnum < const_one_shl_u32(numslotsbits));
-        debug_assert!(numslotsbits <= NUM_SMALL_SLOTS_BITS); // the most slots
+        debug_assert!(newslotnum < highestslotnum);
+        debug_assert!(highestslotnum < 2u32.pow(NUM_SMALL_SLOTS_BITS as u32)); // the most slots
         debug_assert!(slotsizebits < LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // the biggest slot
 
         // xxx use smbp or sysbp and with_metadata_of() and/or with_addr() ?
@@ -191,14 +195,15 @@ impl Smalloc {
             // Load the value (current first entry slot num) from the flh
             let flhdword: u64 = flha.load(Acquire);
             let curfirstentryslotnum: u32 = (flhdword & u32::MAX as u64) as u32;
-            debug_assert!(curfirstentryslotnum < const_one_shl_u32(numslotsbits));
+            // The curfirstentryslotnum can be the sentinel slotnum.
+            debug_assert!(curfirstentryslotnum <= highestslotnum);
 
             let counter: u32 = (flhdword >> 32) as u32;
 
             // Encode it as the next-entry link for the new entry
             // xxx lookup table instead of gen_mask?
-            let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, numslotsbits);
-            debug_assert_eq!(curfirstentryslotnum, Self::decode_next_entry_link(newslotnum, next_entry_link, numslotsbits), "newslotnum: {newslotnum}, next_entry_link: {next_entry_link}, curfirstentryslotnum: {curfirstentryslotnum}, numslotsbits: {numslotsbits}, const_ge_mask_u32(numslotsbits): {}", const_gen_mask_u32(numslotsbits));
+            let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, highestslotnum);
+            debug_assert_eq!(curfirstentryslotnum, Self::decode_next_entry_link(newslotnum, next_entry_link, highestslotnum), "newslotnum: {newslotnum}, next_entry_link: {next_entry_link}, curfirstentryslotnum: {curfirstentryslotnum}, highestslotnum: {highestslotnum}");
 
             // Write it into the new slot
             let new_slot_p = (slabbp | const_shl_u32_usize(newslotnum, slotsizebits)) as *mut u32;
@@ -217,31 +222,37 @@ impl Smalloc {
     }
 
     #[inline(always)]
-    fn encode_next_entry_link(baseslotnum: u32, targslotnum: u32, numslotsbits: u8) -> u32 {
+    fn encode_next_entry_link(baseslotnum: u32, targslotnum: u32, highestslotnum: u32) -> u32 {
         debug_assert_ne!(baseslotnum, targslotnum);
-        debug_assert!(baseslotnum < const_one_shl_u32(numslotsbits));
-        debug_assert!(targslotnum < const_one_shl_u32(numslotsbits));
+        // The baseslotnum cannot be the sentinel slotnum.
+        debug_assert!(baseslotnum < highestslotnum);
+        // The targslotnum can be the sentinel slotnum.
+        debug_assert!(targslotnum <= highestslotnum);
 
-        // xxx lookup table (28 entries) instead of gen_mask? // or pass in the mask??
-        targslotnum.wrapping_sub(baseslotnum).wrapping_sub(1) & const_gen_mask_u32(numslotsbits)
+        targslotnum.wrapping_sub(baseslotnum).wrapping_sub(1) & highestslotnum
     }
 
     #[inline(always)]
-    fn decode_next_entry_link(baseslotnum: u32, codeword: u32, numslotsbits: u8) -> u32 {
-        debug_assert!(baseslotnum < const_one_shl_u32(numslotsbits));
+    fn decode_next_entry_link(baseslotnum: u32, codeword: u32, highestslotnum: u32) -> u32 {
+        // The baseslotnum cannot be the sentinel slot num.
+        debug_assert!(baseslotnum < highestslotnum);
         //xxx this assertion doesn't hold when multithreading due to race conditions -- see comment in pop_slot_from_freelist about why this is okay. debug_assert!(codeword < (const_one_shl_u32(numslotsbits)), "baseslotnum: {baseslotnum}, codeword: {codeword}, numslotsbits: {numslotsbits}");
 
         // xxx lookup table (28 entries) instead of gen_mask? // or pass in the mask??
-        (baseslotnum + codeword + 1) & const_gen_mask_u32(numslotsbits)
+        (baseslotnum + codeword + 1) & highestslotnum
     }
         
     /// Allocate a slot from this slab by popping the free-list-head. Return the resulting pointer
     /// as a usize, or null pointer (0) if this slab is full.
-    fn pop_slot_from_freelist(&self, slabbp: usize, flh_addr: usize, numslotsbits: u8, slotsizebits: u8) -> usize {
+    ///
+    /// `highestslotnum` is the slotnum of the sentinel slot (`numslots - 1`). It is also used to
+    /// compute numbers modulo `numslots` with `& highestslotnum` instead of with `% numslots`, and
+    /// it is used in `debug_asserts`.
+    fn pop_slot_from_freelist(&self, slabbp: usize, flh_addr: usize, highestslotnum: u32, slotsizebits: u8) -> usize {
         debug_assert!(slabbp != 0);
         debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
         debug_assert!(flh_addr.is_multiple_of(DOUBLEWORDSIZE));
-        debug_assert!(numslotsbits <= NUM_SMALL_SLOTS_BITS, "{numslotsbits} <= {NUM_SMALL_SLOTS_BITS}"); // the most slots
+        debug_assert!(highestslotnum < 2u32.pow(NUM_SMALL_SLOTS_BITS as u32)); // the most slots
         debug_assert!(slotsizebits < LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS); // the biggest slot
 
         // xxx use smbp or sysbp and with_metadata_of() and/or with_addr() ?
@@ -252,10 +263,9 @@ impl Smalloc {
             let flhdword = flha.load(Acquire);
             let curfirstentryslotnum = (flhdword & (u32::MAX as u64)) as u32;
 
-            // xxx lookup table or pass in the numslots ?
-            debug_assert!(curfirstentryslotnum < const_one_shl_u32(numslotsbits), "curfirstentryslotnum: {curfirstentryslotnum} < {}; ", const_one_shl_u32(numslotsbits));
-
-            if curfirstentryslotnum == const_one_shl_u32(numslotsbits) - 1 {
+            // curfirstentryslotnum can be the sentinel value.
+            debug_assert!(curfirstentryslotnum <= highestslotnum);
+            if curfirstentryslotnum == highestslotnum {
                 // meaning no next entry, meaning the free list is empty
                 break 0
             }
@@ -270,7 +280,7 @@ impl Smalloc {
             // bits will fail.
             let curfirstentryval = unsafe { *(curfirstentry_p as *mut u32) };
 
-            let newnextentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentryval, numslotsbits);
+            let newnextentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentryval, highestslotnum);
             //xxxeprintln!("in pop: flhdword: {flhdword}, curfirstentryslotnum: {curfirstentryslotnum}, curfirstentryval: {curfirstentryval}, newnextentryslotnum: {newnextentryslotnum}, sentinel val: {}", const_one_shl_u32(numslotsbits) - 1);
 
             // Create a new flh word, with the new slotnum, pointing to the new first slot
@@ -322,7 +332,7 @@ unsafe impl GlobalAlloc for Smalloc {
                         // xxx ? lookup table (5 entries) instead of arithmetic?
                         let flh_addr = smbp + (slabnum as usize * NUM_SMALL_SCS as usize + sc as usize) * DOUBLEWORDSIZE; 
 
-                        self.pop_slot_from_freelist(slabbp, flh_addr, NUM_SMALL_SLOTS_BITS, slotsizebits)
+                        self.pop_slot_from_freelist(slabbp, flh_addr, HIGHEST_SMALL_SLOTNUM, slotsizebits)
                     } else if sc < NUM_SMALL_SCS + NUM_MEDIUM_SCS {
                         // medium size class
 
@@ -335,7 +345,7 @@ unsafe impl GlobalAlloc for Smalloc {
                         // xxx ? lookup table (5 entries) instead of arithmetic?
                         let flh_addr = smbp + const_shl_usize_usize(NUM_SMALL_SCS as usize * DOUBLEWORDSIZE, NUM_SMALL_SLABS_BITS) + mediumsc as usize * DOUBLEWORDSIZE;
 
-                        self.pop_slot_from_freelist(slabbp, flh_addr, NUM_MEDIUM_SLOTS_BITS, sc + SMALLEST_SLOT_SIZE_BITS)
+                        self.pop_slot_from_freelist(slabbp, flh_addr, HIGHEST_MEDIUM_SLOTNUM, sc + SMALLEST_SLOT_SIZE_BITS)
                     } else {
                         // large size class
 
@@ -349,15 +359,16 @@ unsafe impl GlobalAlloc for Smalloc {
 
                         let slotsizebits = sc + SMALLEST_SLOT_SIZE_BITS;
 
-                        let slotnumbits = LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - slotsizebits;
-
                         // xxx lookup table (26 entries) instead of arithmetic?
                         let flh_addr = smbp + const_shl_usize_usize(NUM_SMALL_SCS as usize * DOUBLEWORDSIZE, NUM_SMALL_SLABS_BITS) + (NUM_MEDIUM_SCS as usize * DOUBLEWORDSIZE) + (largesc as usize * DOUBLEWORDSIZE);
 
                         //xxxlet res = self.pop_slot_from_freelist(slabbp, flh_addr, slotnumbits, slotsizebits);
                         //xxxeprintln!("in alloc() in large case, reqsizbits: {reqsizbits}, sc: {sc}, largesc: {largesc}, slabbp: {slabbp:064b}, slotsizebits: {slotsizebits}, slotnumbits: {slotnumbits}, res: {res:064b}");
-                        //xxxres
-                        self.pop_slot_from_freelist(slabbp, flh_addr, slotnumbits, slotsizebits)
+
+                        let slotnumbits = LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - slotsizebits;
+                        let highestslotnum = const_gen_mask_u32(slotnumbits);
+
+                        self.pop_slot_from_freelist(slabbp, flh_addr, highestslotnum, slotsizebits)
                     };
 
                     if ptr == 0 {
@@ -440,7 +451,7 @@ unsafe impl GlobalAlloc for Smalloc {
             //xxxeprintln!("in dealloc(), p_addr: {p_addr:064b}, slotnummask: {slotnummask:064b}, flh_addr: {flh_addr:064b}");
 
             //xxxxeprintln!("push_slot(..., ..., {slotnum}, ...)");
-            self.push_slot_onto_freelist(slabbp, flh_addr, slotnum, NUM_MEDIUM_SLOTS_BITS, slotsizebits);
+            self.push_slot_onto_freelist(slabbp, flh_addr, slotnum, HIGHEST_MEDIUM_SLOTNUM, slotsizebits);
         } else if lzc > UNUSED_MSB_ADDRESS_BITS {
             // This pointer is in the region for small size classes.
             let sizeclass = UNUSED_MSB_ADDRESS_BITS + NUM_SMALL_SCS - lzc;
@@ -468,7 +479,7 @@ unsafe impl GlobalAlloc for Smalloc {
             let slabnum = const_shr_usize_u8(s_addr & slabnummask, slotsizebits + NUM_SMALL_SLOTS_BITS);
             let flh_addr = smbp + (slabnum as usize * NUM_SMALL_SCS as usize + sizeclass as usize) * DOUBLEWORDSIZE; 
 
-            self.push_slot_onto_freelist(slabbp, flh_addr, smallslotnum, NUM_SMALL_SLOTS_BITS, slotsizebits);
+            self.push_slot_onto_freelist(slabbp, flh_addr, smallslotnum, HIGHEST_SMALL_SLOTNUM, slotsizebits);
         } else {
             // This pointer is in the region for large size classes.
 
@@ -484,9 +495,12 @@ unsafe impl GlobalAlloc for Smalloc {
             // than the one before.
             let slotnumbits = LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - slotsizebits;
 
+            // The highestslotnum (i.e. the slotnum of the sentinel slot).
+            let highestslotnum = const_gen_mask_u32(slotnumbits);
+
             // This mask has 1 in each position that encodes the slotnum.
             // xxx lookup table (26 entries) instead of gen_mask and shift-left ??
-            let slotnummask = const_shl_u32_usize(const_gen_mask_u32(slotnumbits), slotsizebits);
+            let slotnummask = const_shl_u32_usize(highestslotnum, slotsizebits);
 
             // The pointer to the beginning of the slab is just the p_addr with all of those
             // slotnum bits turned off:
@@ -498,7 +512,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // xxx lookup table (26 entries) instead of arithmetic?
             let flh_addr = smbp + const_shl_usize_usize(NUM_SMALL_SCS as usize * DOUBLEWORDSIZE, NUM_SMALL_SLABS_BITS) + (NUM_MEDIUM_SCS as usize * DOUBLEWORDSIZE) + ((sizeclass as usize - NUM_SMALL_SCS as usize - NUM_MEDIUM_SCS as usize) * DOUBLEWORDSIZE);
 
-            self.push_slot_onto_freelist(slabbp, flh_addr, largeslotnum, slotnumbits, slotsizebits);
+            self.push_slot_onto_freelist(slabbp, flh_addr, largeslotnum, highestslotnum, slotsizebits);
         }
     }
 
@@ -2257,13 +2271,14 @@ pub mod tests {
     fn slotnum_encode_and_decode_roundtrip() {
         let numslotsbitses = [ NUM_MEDIUM_SLOTS_BITS, NUM_SMALL_SLOTS_BITS, LARGE_SLOT_SIZE_BITS_PLUS_NUM_SLOTS_BITS - SMALLEST_SLOT_SIZE_BITS - NUM_SMALL_SCS - NUM_MEDIUM_SCS ];
         for numslotsbits in numslotsbitses {
+            let highestslotnum = const_gen_mask_u32(numslotsbits);
             let numslots = help_pow2_u32(numslotsbits);
             let slotnums = [ 0, 1, 2, 3, 4, numslots - 4, numslots - 3, numslots - 2, numslots - 1 ];
             for slotnum1 in slotnums {
                 for slotnum2 in slotnums {
-                    if slotnum1 != slotnum2 {
-                        let ence = Smalloc::encode_next_entry_link(slotnum1, slotnum2, numslotsbits);
-                        let dece = Smalloc::decode_next_entry_link(slotnum1, ence, numslotsbits);
+                    if slotnum1 < numslots - 1 && slotnum1 != slotnum2 {
+                        let ence = Smalloc::encode_next_entry_link(slotnum1, slotnum2, highestslotnum);
+                        let dece = Smalloc::decode_next_entry_link(slotnum1, ence, highestslotnum);
                         assert_eq!(slotnum2, dece);
                     }
                 }
