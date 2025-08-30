@@ -25,17 +25,13 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
     let mut s = GlobalAllocWrap; // comment-in for tango baseline
     //let mut s = Smalloc::new(); // comment-in to compare to smalloc
 
-    let l = Layout::from_size_align(35, 32).unwrap();
-
-    let l1 = l;
     let mut ls = Vec::new();
-    ls.push(l1);
-    let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
-    ls.push(l2);
-    let l3 = Layout::from_size_align(max(11, l1.size()) - 10, l1.align()).unwrap();
-    ls.push(l3);
-    let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
-    ls.push(l4);
+    for siz in [35, 64, 128, 500, 2000, 10_000, 1_000_000] {
+        ls.push(Layout::from_size_align(siz, 1).unwrap());
+        ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
+        ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
+        ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
+    }
 
     let mut r = StdRng::seed_from_u64(0);
 

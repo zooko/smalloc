@@ -33,22 +33,18 @@ mod notests {
             });
         }));
 
-        let iters = 100_000_000;
+        let iters = 10_000_000;
 
         let sm = Arc::new(Smalloc::new());
         sm.idempotent_init().unwrap();
 
-        let l = Layout::from_size_align(35, 32).unwrap();
-
-        let l1 = l;
         let mut ls = Vec::new();
-        ls.push(l1);
-        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
-        ls.push(l2);
-        let l3 = Layout::from_size_align(max(11, l1.size()) - 10, l1.align()).unwrap();
-        ls.push(l3);
-        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
-        ls.push(l4);
+        for siz in [35, 64, 128, 500, 2000, 10_000, 1_000_000] {
+            ls.push(Layout::from_size_align(siz, 1).unwrap());
+            ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
+            ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
+            ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
+        }
 
         let mut rsm1 = StdRng::seed_from_u64(0);
         let mut msm1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rsm1.random::<u64>() as usize));
