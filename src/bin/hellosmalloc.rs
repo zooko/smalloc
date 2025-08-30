@@ -3,7 +3,7 @@ mod notests {
     const MAX_U128: u128 = 2u128.pow(39);
     const MAX_U8: u8 = 2u8.pow(6);
 
-    use smalloc::Smalloc;
+    use smalloc::{Smalloc, TOTAL_VIRTUAL_MEMORY};
 
     #[global_allocator]
     static SMALLOC: Smalloc = Smalloc::new();
@@ -11,9 +11,11 @@ mod notests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use rand::Rng;
+
+    use thousands::Separable;
     
     pub fn main() {
-        println!("Hello, world!");
+        println!("Hello, world! I'm smalloc. I just mmap()'ed {} bytes of virtual address space. :-)", TOTAL_VIRTUAL_MEMORY.separate_with_commas());
 
         let mut r = StdRng::seed_from_u64(0);
 
