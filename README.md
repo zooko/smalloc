@@ -521,81 +521,69 @@ X      <- smalloc base pointer (first 8 MiB boundary)
 ```
 
 ```
-small flhs
-
-small flh addr = slabnum * 5 * 8 + sc * 8 == (slabnum * 5 + sc) * 8
-medium flh addr = 256 * 5 * 8 + sc * 8 - 5 * 8 == 255 * 5 * 8 + sc * 8 == (255 * 5 + sc) * 8
-large flh addr = 256 * 5 * 8 + 5 * 8 + sc * 8 - 10 * 8 == 255 * 5 * 8 + sc * 8 == 10200 + sc * 8
-
-flhs        0 00000000000000000000000000000000000000000000                          12,288
-                                          0b10100011110000
-
               [unused                                    ]
-pad         0 00000000000000000000000000000000000000000000                           ~2^33
+pad         0 00000000000000000000000000000000000000000000                           ~2^45
 
-medium size classes
-              unused sc   slotnum                   data
-              [    ][   ][                        ][     ]
-  sc   offset                                ... in binary slotsize slots slabs regionsize
-  --   ------                                ------------- -------- ----- ----- ----------
-              [unus][sc ][slotnum                 ][data ]
-   5     2^33 00000000001000000000000000000000000000000000      128  2^26     1       2^33
-              [unus][sc][slotnum                 ][data  ]
-   6     2^34 00000000010000000000000000000000000000000000      256  2^26     1       2^34
-              [unus][s][slotnum                 ][data   ]
-   7     2^35 00000000100000000000000000000000000000000000      512  2^26     1       2^35
-              [unus][][slotnum                 ][data    ]
-   8     2^36 00000001000000000000000000000000000000000000     1024  2^26     1       2^36
-              [unus]][slotnum                 ][data     ]
-   9     2^37 00000010000000000000000000000000000000000000     2048  2^26     1       2^37
+slabs
+        sc   slab slotnum                   slot
+       [   ][   ][                        ][     ]
+  sc                                 ... in binary slotsize slots slabs
+  --                                 ------------- -------- ----- -----
+       [sc ][sla][slotnum                      ][]
+   0   0000000000000000000000000000000000000000000     2^ 2  2^31   2^5
 
-small size classes
-               sc    slabnum slotnum                 data
-              [    ][      ][                      ][    ]
-  sc   offset                                ... in binary slotsize slots slabs regionsize
-  --   ------                                ------------- -------- ----- ----- ----------
-              [sc  ][slabnu][slotnum                   ][]
-   0     2^38 00000100000000000000000000000000000000000000        4  2^28   2^8       2^38
-              [sc ][slabnu][slotnum                   ][d]
-   1     2^39 00001000000000000000000000000000000000000000        8  2^28   2^8       2^39
-              [sc][slabnu][slotnum                   ][da]
-   2     2^40 00010000000000000000000000000000000000000000       16  2^28   2^8       2^40
-              [s][slabnu][slotnum                   ][dat]
-   3     2^41 00100000000000000000000000000000000000000000       32  2^28   2^8       2^41
-              [][slabnu][slotnum                   ][data]
-   4     2^42 01000000000000000000000000000000000000000000       64  2^28   2^8       2^42
- 
-large size classes
-         unused  sc   slotnum                  data
-              [][   ][                       ][          ]
-  sc   offset                                ... in binary slotsize slots slabs regionsize
-  --   ------                                ------------- -------- ----- ----- ----------
-              [][sc ][slotnum                ][data      ]
-  10     2^43 10000000000000000000000000000000000000000000     2^12  2^25     1       2^37
-              [][sc ][slotnum               ][data       ]
-  11  +1*2^37 10000010000000000000000000000000000000000000     2^13  2^24     1       2^37
-              [][sc ][slotnum              ][data        ]
-  12  +2*2^37 10000100000000000000000000000000000000000000     2^14  2^23     1       2^37
-              [][sc ][slotnum             ][data         ]
-  13  +3*2^37 10000110000000000000000000000000000000000000     2^15  2^22     1       2^37
-              [][sc ][slotnum            ][data          ]
-  14  +4*2^37 10001000000000000000000000000000000000000000     2^16  2^21     1       2^37
-              [][sc ][slotnum           ][data           ]
-  15  +5*2^37 10001010000000000000000000000000000000000000     2^17  2^20     1       2^37
-              [][sc ][slotnum          ][data            ]
-  16  +6*2^37 10001100000000000000000000000000000000000000     2^18  2^19     1       2^37
-              [][sc ][slotnum         ][data             ]
-  17  +7*2^37 10001110000000000000000000000000000000000000     2^19  2^18     1       2^37
-              [][sc ][slotnum        ][data              ]
-  18  +8*2^37 10010000000000000000000000000000000000000000     2^20  2^17     1       2^37
-              [][sc ][slotnum       ][data               ]
-  19  +9*2^37 10010010000000000000000000000000000000000000     2^21  2^16     1       2^37
-...14 more scs
-              [][sc ][][data                             ]
-  33 +23*2^37 10101110000000000000000000000000000000000000     2^35   2^2     1       2^37
-              [][sc ][[data                              ]
-  34 +24*2^37 10110000000000000000000000000000000000000000     2^36   2^1     1       2^37
+       [sc ][sla][slotnum                     ][s]
+   1   0000100000000000000000000000000000000000000     2^ 3  2^30   2^5
+
+       [sc ][sla][slotnum                    ][sl]
+   2   0001000000000000000000000000000000000000000     2^ 4  2^29   2^5
+
+       [sc ][sla][slotnum                   ][slo]
+   3   0001100000000000000000000000000000000000000     2^ 5  2^28   2^5
+
+       [sc ][sla][slotnum                  ][slot]
+   4   0010000000000000000000000000000000000000000     2^ 6  2^27   2^5
+
+       [sc ][sla][slotnum                 ][slot ]
+   5   0010100000000000000000000000000000000000000     2^ 7  2^26   2^5
+
+       [sc ][sla][slotnum                ][slot  ]
+   6   0011000000000000000000000000000000000000000     2^ 8  2^25   2^5
+
+   7                                                   2^ 9  2^24   2^5
+   8                                                   2^10  2^23   2^5
+   9                                                   2^11  2^22   2^5
+  10                                                   2^12  2^21   2^5
+  11                                                   2^13  2^20   2^5
+  12                                                   2^14  2^19   2^5
+  13                                                   2^15  2^18   2^5
+  14                                                   2^16  2^17   2^5
+  15                                                   2^17  2^16   2^5
+  16                                                   2^18  2^15   2^5
+  17                                                   2^19  2^14   2^5
+  18                                                   2^20  2^13   2^5
+  19                                                   2^21  2^12   2^5
+  20                                                   2^22  2^11   2^5
+  21                                                   2^23  2^10   2^5
+  22                                                   2^24  2^ 9   2^5
+  23                                                   2^25  2^ 8   2^5
+  24                                                   2^26  2^ 7   2^5
+  25                                                   2^27  2^ 6   2^5
+  26                                                   2^28  2^ 5   2^5
+
+       [sc ][sla][sl][slot                       ]
+  27   1101100000000000000000000000000000000000000     2^29  2^ 4   2^5
+
+       [sc ][sla][s][slot                        ]
+  28   1110000000000000000000000000000000000000000     2^30  2^ 3   2^5
+
+       [sc ][sla][][slot                         ]
+  29   1110100000000000000000000000000000000000000     2^31  2^ 2   2^5
+
+       [sc ][sla]][slot                          ]
+  30   1111000000000000000000000000000000000000000     2^32  2^ 1   2^5
 ```
+
 
 Okay, now you know everything there is to know about `smalloc`'s data model and memory layout. Given
 his information, you can calculate the exact location of every data element in `smalloc`! (Counting
@@ -1093,23 +1081,29 @@ goals, written here in roughly descending order of importance:
 * add support for the [new experimental Rust Allocator
   API](https://doc.rust-lang.org/nightly/std/alloc/trait.Allocator.html)
 
-* add initialized-to-zero alloc alternative, relying on kernel
-  0-initialization when coming from eac
+* add initialized-to-zero alloc alternative, relying on kernel 0-initialization when coming from eac
 
-* make it usable as the implementation `malloc()`, `free()`, and
-  `realloc()` for native code. :-) (Nate's suggestion.)
+* make it usable as the implementation `malloc()`, `free()`, and `realloc()` for native code. :-)
+  (Nate's suggestion.)
 
-* Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the
-  programming language, not for the rewrite.)
+* Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the programming language, not for
+  the rewrite.)
 
 * investigate using the #[noalias] annotation
 
 * Try "tarpaulin" HT Sean Bowe
 
+* Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
+
+* Put back the fallback to mmap for requests that overflow.
+
 # Acknowledgments
 
 * Thanks to Andrew Reece and Sam Smith for some specific suggestions that I implemented (see notes
-  in documentation above).
+  in documentation above). Thanks also to Andrew Reece for suggesting (at the Shielded Labs team
+  meeting in San Diego) that we use multiple slabs for all size classes in order to reduce
+  multithreading write conflicts. This suggestion forms a big part of smalloc v6 vs smalloc v5,
+  which used multiple slabs for small size classes but not for larger ones.
 
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner for advice and
   encouragement. Thanks to Nate Wilcox and Jack O'Connor for hands-on debugging help!
@@ -1172,3 +1166,9 @@ Smalloc v5 has the following lines counts:
 * implementaton loc: 395 (excluding debug_asserts)
 * tests loc: 949
 * benches loc: 84 -- benchmarks are still mostly broken 😭
+
+Smalloc v6 has the following lines counts:
+* docs and comments: 2162
+* implementaton loc: 380 (excluding debug_asserts)
+* tests loc: 615
+* benches loc: 286

@@ -4,11 +4,10 @@
 
 #[cfg(not(test))]
 mod notests {
-    use smalloc::benches::{dummy_func, bench, alloc_and_free, GlobalAllocWrap};
+    use smalloc::benches::{clock, dummy_func, bench_itered, bench_once, alloc_and_free, GlobalAllocWrap};
     use smalloc::{help_test_one_alloc_dealloc_realloc_with_writes, help_test_one_alloc_dealloc_realloc};
     use smalloc::Smalloc;
-    use std::sync::Arc;
-    use std::thread;
+
     use std::hint::black_box;
     use std::alloc::Layout;
     use rand::rngs::StdRng;
@@ -18,25 +17,68 @@ mod notests {
     use ahash::RandomState;
     use rand::Rng;
 
+    use smalloc::TOTAL_VIRTUAL_MEMORY;
+    use thousands::Separable;
+
+    use std::thread;
+    use std::sync::{Arc, Mutex};
+
+    extern crate libc;
+
+    use std::alloc::GlobalAlloc;
+
     pub fn main() {
+        println!("Hello, world! I'm smalloc. I just mmap()'ed {} bytes of virtual address space. :-)", TOTAL_VIRTUAL_MEMORY.separate_with_commas());
+
         let mut handles = Vec::new();
 
-        handles.push(thread::spawn(|| {
-            bench("dummy3029", 100_000, || {
-                dummy_func(30, 29);
-            });
-        }));
+        // let df3029 = move || {
+        //     dummy_func(30, 29);
+        // };
 
-        handles.push(thread::spawn(|| {
-            bench("dummy3130", 100_000, || {
-                dummy_func(31, 30);
-            });
-        }));
+        // handles.push(thread::spawn(move || {
+        //     let multithread_dummy3029 = move || {
+        //         let mut mt3029handles = Vec::new();
+        //         for _t in 0..128 {
+        //             mt3029handles.push(thread::spawn(df3029));
+        //         }
+        //         for mth in mt3029handles {
+        //             mth.join().unwrap();
+        //         }
+        //     };
+            
+        //     bench_once("mtdummy3029", || {
+        //         multithread_dummy3029();
+        //     }, libc::CLOCK_THREAD_CPUTIME_ID);
+        // }));
 
-        let iters = 10_000_000;
+        // let df3130 = move || {
+        //     dummy_func(31, 30);
+        // };
 
-        let sm = Arc::new(Smalloc::new());
+        // handles.push(thread::spawn(move || {
+        //     let multithread_dummy3130 = move || {
+        //         let mut mt3130handles = Vec::new();
+        //         for _t in 0..128 {
+        //             mt3130handles.push(thread::spawn(df3130));
+        //         }
+        //         for mth in mt3130handles {
+        //             mth.join().unwrap();
+        //         }
+        //     };
+            
+        //     bench_once("mtdummy3130", || {
+        //         multithread_dummy3130();
+        //     }, libc::CLOCK_THREAD_CPUTIME_ID);
+        // }));
+
+        const ITERS: usize = 1_000_000;
+        const NUM_THREADS: usize = 512;
+
+        let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
+
+        let bi = GlobalAllocWrap;
 
         let mut ls = Vec::new();
         for siz in [35, 64, 128, 500, 2000, 10_000, 1_000_000] {
@@ -45,65 +87,64 @@ mod notests {
             ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
             ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
         }
+        let lsa = Arc::new(ls);
 
-        let mut rsm1 = StdRng::seed_from_u64(0);
-        let mut msm1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rsm1.random::<u64>() as usize));
-        let mut pssm1 = Vec::new();
+        fn multithread_bench<F>(bf: F, iters: usize, name: &str)
+        where
+            F: FnMut() + Send + 'static
+        {
+            let bfa = Arc::new(Mutex::new(bf));
 
-        let sm1 = Arc::clone(&sm);
-        let ls1 = ls.clone();
-        let bench_a_d_r_w_w_sm = move || {
-            help_test_one_alloc_dealloc_realloc_with_writes(sm1.as_ref(), &mut rsm1, &mut pssm1, &mut msm1, &ls1);
-        };
+            let start = clock(libc::CLOCK_UPTIME_RAW);
 
+            let mut smhandles = Vec::new();
+
+            for _t in 0..NUM_THREADS {
+                let bfa_clone = Arc::clone(&bfa);
+                let handle = thread::spawn(move || {
+                    let mut bfa_guard  = bfa_clone.lock().unwrap();
+                    bfa_guard();
+                });
+                smhandles.push(handle);
+            }
+
+            for smh in smhandles {
+                smh.join().unwrap();
+            }
+
+            let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
+
+            eprintln!("name: {name}, threads: {NUM_THREADS}, iters: {iters}, ns: {}, ns/i: {}", elap.separate_with_commas(), (elap / iters as u64).separate_with_commas());
+        }
+
+        fn generate_one_thread_iterated_function<A: GlobalAlloc + 'static>(allocator: A, ls: Arc<Vec<Layout>>) -> impl FnMut() {
+            move || {
+                let lsai = Arc::clone(&ls);
+                let mut r1 = StdRng::seed_from_u64(0);
+                let mut m1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(ITERS, RandomState::with_seed(r1.random::<u64>() as usize));
+                let mut ps1 = Vec::new();
+                    
+                for _i in 0..ITERS {
+                    help_test_one_alloc_dealloc_realloc_with_writes(&allocator, &mut r1, &mut ps1, &mut m1, &lsai);
+                }
+            }
+        }
+
+        let lsasm = Arc::clone(&lsa);
+        let otsm = generate_one_thread_iterated_function(sm, lsasm);
         handles.push(thread::spawn(move || {
-            bench("a_d_r_w_w sm", iters, bench_a_d_r_w_w_sm);
+            multithread_bench(otsm, ITERS, "smalloc");
         }));
 
-        let mut rsm2 = StdRng::seed_from_u64(0);
-        let mut msm2: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rsm2.random::<u64>() as usize));
-        let mut pssm2 = Vec::new();
-
-        let sm2 = Arc::clone(&sm);
-        let ls2 = ls.clone();
-        let bench_a_d_r_sm = move || {
-            help_test_one_alloc_dealloc_realloc(sm2.as_ref(), &mut rsm2, &mut pssm2, &mut msm2, &ls2);
-        };
-
+        let lsabi = Arc::clone(&lsa);
+        let otbi = generate_one_thread_iterated_function(bi, lsabi);
         handles.push(thread::spawn(move || {
-            bench("a_d_r sm", iters, bench_a_d_r_sm);
+            multithread_bench(otbi, ITERS, "builtin");
         }));
 
-        let mut rbi1 = StdRng::seed_from_u64(0);
-        let mut mbi1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rbi1.random::<u64>() as usize));
-        let mut psbi1 = Vec::new();
-
-        let bi = Arc::new(GlobalAllocWrap);
-
-        let bi1 = Arc::clone(&bi);
-        let lsbi1 = ls.clone();
-        let bench_a_d_r_w_w_bi = move || {
-            help_test_one_alloc_dealloc_realloc_with_writes(bi1.as_ref(), &mut rbi1, &mut psbi1, &mut mbi1, &lsbi1);
-        };
-
-        handles.push(thread::spawn(move || {
-            bench("a_d_r_w_w bi", iters, bench_a_d_r_w_w_bi);
-        }));
-
-        let mut rbi2 = StdRng::seed_from_u64(0);
-        let mut mbi2: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(iters, RandomState::with_seed(rbi2.random::<u64>() as usize));
-        let mut psbi2 = Vec::new();
-
-        let bi2 = Arc::clone(&bi);
-        let lsbi2 = ls.clone();
-        let bench_a_d_r_bi = move || {
-            help_test_one_alloc_dealloc_realloc(bi2.as_ref(), &mut rbi2, &mut psbi2, &mut mbi2, &lsbi2);
-        };
-
-        handles.push(thread::spawn(move || {
-            bench("a_d_r bi", iters, bench_a_d_r_bi);
-        }));
-
+        //handles.push(thread::spawn(multithread_sm));
+        //handles.push(thread::spawn(multithread_bi));
+                     
         for handle in handles {
             handle.join().unwrap();
         }
