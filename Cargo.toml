@@ -33,11 +33,10 @@ codegen-units = 1
 lto = "fat"
 debug-assertions = false
 overflow-checks = false
-rustflags = ["-C", "target-cpu=native"] # when I comment this in, then the "builtin" benchmark in simplebench goes from 240 picoseconds per iteration to 7800 picoseconds per iteration!? (The smalloc benchmark doesn't change.)
+rustflags = ["-C", "target-cpu=native"]
 
-# For profiling mostly-optimized release build:
 [profile.profiling]
 inherits = "release"
 debug = true
-# split-debuginfo = "packed" # ??? do we want this?
 lto = false
+# split-debuginfo = "packed" # ??? do we want this?

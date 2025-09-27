@@ -58,25 +58,6 @@ const BASEPTR_ALIGN: usize = SIZE_OF_SLABS_AND_FLHS.next_power_of_two(); // 0b10
 const SMALLOC_ADDRESS_BITS_MASK: usize = BASEPTR_ALIGN - 1; // 0b1111111111111111111111111111111111111111111 
 pub const TOTAL_VIRTUAL_MEMORY: usize = SIZE_OF_SLABS_AND_FLHS + SMALLOC_ADDRESS_BITS_MASK; // 0b11111011111100000000000000000001111011111111 == 17_313_013_178_111
 
-//xxx3const fn gen_lut_sum_small_slab_sizes() -> [usize; NUM_SMALL_SLABS + 1] {
-//xxx3    let mut lut: [usize; NUM_SMALL_SLABS + 1] = [0; NUM_SMALL_SLABS + 1];
-//xxx3    
-//xxx3    let mut slabnum = 0;
-//xxx3    let mut sum: usize = 0;
-//xxx3    while slabnum < NUM_SMALL_SLABS {
-//xxx3        sum += small_slabnum_to_slotsize(slabnum) * NUM_SLOTS_O;
-//xxx3        // Add padding to align the beginning of the next small data
-//xxx3        // slab to PAGE_SIZE alignment, so that the first few slots
-//xxx3        // will touch only one page.
-//xxx3        sum = sum.next_multiple_of(PAGE_SIZE);
-//xxx3        slabnum += 1;
-//xxx3        lut[slabnum] = sum;
-//xxx3    }
-//xxx3    lut
-//xxx3}
-//xxx3
-//xxx3const LUT_SC_TO_MASK: [u32; NUM_SMALL_SLABS + 1] = gen_lut_sum_small_slab_sizes();
-
 
 // --- Implementation ---
 
@@ -242,7 +223,6 @@ impl Smalloc {
     fn decode_next_entry_link(baseslotnum: u32, codeword: u32, highestslotnum: u32) -> u32 {
         // The baseslotnum cannot be the sentinel slot num.
         debug_assert!(baseslotnum < highestslotnum);
-        //xxx this assertion doesn't hold when multithreading due to race conditions -- see comment in pop_slot_from_freelist about why this is okay. debug_assert!(codeword < (const_one_shl_u32(numslotsbits)), "baseslotnum: {baseslotnum}, codeword: {codeword}, numslotsbits: {numslotsbits}");
 
         (baseslotnum + codeword + 1) & highestslotnum
     }
@@ -284,7 +264,6 @@ impl Smalloc {
             let curfirstentryval = unsafe { *(curfirstentry_p as *mut u32) };
 
             let newnextentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentryval, highestslotnum);
-            //xxxeprintln!("in pop: flh: {flh:?}, addr: {flh:p}, flhdword: {flhdword}, curfirstentryslotnum: {curfirstentryslotnum}, curfirstentryval: {curfirstentryval}, newnextentryslotnum: {newnextentryslotnum}, highestslotnum: {highestslotnum}");
 
             // Create a new flh word, with the new slotnum, pointing to the new first slot
             let counter: u32 = (flhdword >> 32) as u32;
@@ -308,16 +287,18 @@ unsafe impl GlobalAlloc for Smalloc {
                 null_mut()
             }
             Ok(smbp) => {
+                debug_assert!(smbp == self.get_sm_baseptr(), "{smbp:x}, {:x}", self.get_sm_baseptr());
                 let reqsiz = layout.size();
                 let reqalign = layout.align();
                 debug_assert!(reqsiz > 0);
                 debug_assert!(reqalign > 0);
-                assert!(reqalign.is_power_of_two()); // alignment must be a power of two
+                debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
 
                 let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
                 let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
                 if sc >= NUM_SCS {
                     // This request exceeds our largest slot size, so we return null ptr.
+                    // panic!(); // xxx for clearer failure case in benchmarking
                     return null_mut();
                 };
 
@@ -331,7 +312,6 @@ unsafe impl GlobalAlloc for Smalloc {
 
                 let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
                 let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
-                //xxxeprintln!("xxx 2 in alloc(), flhptr: {flhptr:x}");
                 let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
                 let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
