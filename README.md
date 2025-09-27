@@ -68,8 +68,9 @@ Look in "./benchresults" for results.
 ```
 
 The benchmarks compare `smalloc` with the default Rust global allocator. This output is saying that
-with one thread, `smalloc` was 170% as fast, with 32 threads, `smalloc` was 164% as fast, and with
-2048 threads, `smalloc` was 136% as fast.
+with one thread, `smalloc` was took 40% less time (i.e. it was 170% as fast), with 32 threads, it
+took 39% less time (i.e. it was 164% as fast), and with 2048 threads, it took 28% less time (i.e. it
+was 136% as fast).
 
 The benchmarks use the excellent ["Tango" benchmarking tool](https://github.com/bazhenov/tango) to
 do pairwise testing, which statistically "subtracts out" most of the noise inherent in your system
