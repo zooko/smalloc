@@ -1,11 +1,10 @@
 #![feature(rustc_private)]
-
 #![allow(unused_imports)]
 
 #[cfg(not(test))]
 mod notests {
-    use smalloc::benches::{clock, dummy_func, bench_itered, bench_once, alloc_and_free, GlobalAllocWrap};
-    use smalloc::{help_test_one_alloc_dealloc_realloc_with_writes, help_test_one_alloc_dealloc_realloc};
+    use smalloc::benchmarks::{clock, dummy_func, bench_itered, bench_once, alloc_and_free, GlobalAllocWrap, TestState, multithread_bench};
+    use smalloc::{gen_layouts, help_test_alloc_dealloc_realloc_with_writes, help_test_alloc_dealloc_realloc};
     use smalloc::Smalloc;
 
     use std::hint::black_box;
@@ -26,128 +25,66 @@ mod notests {
     extern crate libc;
 
     use std::alloc::GlobalAlloc;
+    use std::thread::JoinHandle;
 
     pub fn main() {
-        println!("Hello, world! I'm smalloc. I just mmap()'ed {} bytes of virtual address space. :-)", TOTAL_VIRTUAL_MEMORY.separate_with_commas());
+        // println!("Hello, world! I'm smalloc. I just mmap()'ed {} bytes of virtual address space. :-)", TOTAL_VIRTUAL_MEMORY.separate_with_commas());
 
-        let mut handles = Vec::new();
+        const ITERS: u32 = 1_850_000;
 
-        // let df3029 = move || {
-        //     dummy_func(30, 29);
-        // };
+        let sm = Arc::new(Smalloc::new());
+        let bi = Arc::new(GlobalAllocWrap);
+        let ls = Arc::new(gen_layouts());
 
-        // handles.push(thread::spawn(move || {
-        //     let multithread_dummy3029 = move || {
-        //         let mut mt3029handles = Vec::new();
-        //         for _t in 0..128 {
-        //             mt3029handles.push(thread::spawn(df3029));
-        //         }
-        //         for mth in mt3029handles {
-        //             mth.join().unwrap();
-        //         }
-        //     };
-            
-        //     bench_once("mtdummy3029", || {
-        //         multithread_dummy3029();
-        //     }, libc::CLOCK_THREAD_CPUTIME_ID);
-        // }));
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "smalloc adrww    1", Arc::clone(&sm), Arc::clone(&ls));
+            });
 
-        // let df3130 = move || {
-        //     dummy_func(31, 30);
-        // };
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "builtin adrww    1", Arc::clone(&bi), Arc::clone(&ls));
+            });
+        });
 
-        // handles.push(thread::spawn(move || {
-        //     let multithread_dummy3130 = move || {
-        //         let mut mt3130handles = Vec::new();
-        //         for _t in 0..128 {
-        //             mt3130handles.push(thread::spawn(df3130));
-        //         }
-        //         for mth in mt3130handles {
-        //             mth.join().unwrap();
-        //         }
-        //     };
-            
-        //     bench_once("mtdummy3130", || {
-        //         multithread_dummy3130();
-        //     }, libc::CLOCK_THREAD_CPUTIME_ID);
-        // }));
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "smalloc adrww   32", Arc::clone(&sm), Arc::clone(&ls));
+            });
 
-        const ITERS: usize = 1_000_000;
-        const NUM_THREADS: usize = 512;
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "builtin adrww   32", Arc::clone(&bi), Arc::clone(&ls));
+            });
+        });
 
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "smalloc adrww  128", Arc::clone(&sm), Arc::clone(&ls));
+            });
 
-        let bi = GlobalAllocWrap;
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "builtin adrww  128", Arc::clone(&bi), Arc::clone(&ls));
+            });
+        });
 
-        let mut ls = Vec::new();
-        for siz in [35, 64, 128, 500, 2000, 10_000, 1_000_000] {
-            ls.push(Layout::from_size_align(siz, 1).unwrap());
-            ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
-            ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
-            ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
-        }
-        let lsa = Arc::new(ls);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "smalloc adrww 1024", Arc::clone(&sm), Arc::clone(&ls));
+            });
 
-        fn multithread_bench<F>(bf: F, iters: usize, name: &str)
-        where
-            F: FnMut() + Send + 'static
-        {
-            let bfa = Arc::new(Mutex::new(bf));
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "builtin adrww 1024", Arc::clone(&bi), Arc::clone(&ls));
+            });
+        });
 
-            let start = clock(libc::CLOCK_UPTIME_RAW);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "smalloc adrww 1650", Arc::clone(&sm), Arc::clone(&ls));
+            });
 
-            let mut smhandles = Vec::new();
-
-            for _t in 0..NUM_THREADS {
-                let bfa_clone = Arc::clone(&bfa);
-                let handle = thread::spawn(move || {
-                    let mut bfa_guard  = bfa_clone.lock().unwrap();
-                    bfa_guard();
-                });
-                smhandles.push(handle);
-            }
-
-            for smh in smhandles {
-                smh.join().unwrap();
-            }
-
-            let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
-
-            eprintln!("name: {name}, threads: {NUM_THREADS}, iters: {iters}, ns: {}, ns/i: {}", elap.separate_with_commas(), (elap / iters as u64).separate_with_commas());
-        }
-
-        fn generate_one_thread_iterated_function<A: GlobalAlloc + 'static>(allocator: A, ls: Arc<Vec<Layout>>) -> impl FnMut() {
-            move || {
-                let lsai = Arc::clone(&ls);
-                let mut r1 = StdRng::seed_from_u64(0);
-                let mut m1: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(ITERS, RandomState::with_seed(r1.random::<u64>() as usize));
-                let mut ps1 = Vec::new();
-                    
-                for _i in 0..ITERS {
-                    help_test_one_alloc_dealloc_realloc_with_writes(&allocator, &mut r1, &mut ps1, &mut m1, &lsai);
-                }
-            }
-        }
-
-        let lsasm = Arc::clone(&lsa);
-        let otsm = generate_one_thread_iterated_function(sm, lsasm);
-        handles.push(thread::spawn(move || {
-            multithread_bench(otsm, ITERS, "smalloc");
-        }));
-
-        let lsabi = Arc::clone(&lsa);
-        let otbi = generate_one_thread_iterated_function(bi, lsabi);
-        handles.push(thread::spawn(move || {
-            multithread_bench(otbi, ITERS, "builtin");
-        }));
-
-        //handles.push(thread::spawn(multithread_sm));
-        //handles.push(thread::spawn(multithread_bi));
-                     
-        for handle in handles {
-            handle.join().unwrap();
-        }
+            scope.spawn(|| {
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "builtin adrww 1650", Arc::clone(&bi), Arc::clone(&ls));
+            });
+        });
     }
 }
 

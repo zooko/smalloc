@@ -4,9 +4,7 @@ use tango_bench::{benchmark_fn, tango_benchmarks, tango_main, IntoBenchmarks};
 use std::sync::Arc;
 
 use smalloc::Smalloc;
-use smalloc::benches::{dummy_func, alloc_and_free};
-
-use smalloc::benches::GlobalAllocWrap;
+use smalloc::benchmarks::{dummy_func, alloc_and_free, GlobalAllocWrap, TestState};
 
 use std::alloc::Layout;
 
@@ -15,54 +13,68 @@ use std::cmp::max;
 use rand::rngs::StdRng;
 use ahash::HashSet;
 use ahash::RandomState;
-use smalloc::{help_test_one_alloc_dealloc_realloc_with_writes, help_test_one_alloc_dealloc_realloc};
+use smalloc::{help_test_multithreaded_with_allocator, help_test_alloc_dealloc_realloc_with_writes, help_test_alloc_dealloc_realloc, gen_layouts};
 use rand::SeedableRng;
 use rand::Rng;
 
-use tango_bench::Bencher;
+use tango_bench::{Bencher, ErasedSampler};
+
+use std::alloc::GlobalAlloc;
+use std::cell::RefCell;
+
+mod smallocb_allocator_config;
+use smallocb_allocator_config::gen_allocator;
+
+use std::rc::Rc;
+
+fn gen_mt_bencher<T, F>(f: F, num_threads: u32, num_iters: u32, al: Arc<T>, ls: Arc<Vec<Layout>>) -> impl FnMut(Bencher) -> Box<dyn ErasedSampler>
+where
+      T: GlobalAlloc + ?Sized + Sync + Send + 'static,
+      F: Fn(&Arc<T>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + 'static + Copy
+{
+    let al_inter = Arc::clone(&al);
+    let ls_inter = Arc::clone(&ls);
+
+    move |b: Bencher| {
+        let local_al = Arc::clone(&al_inter);
+        let local_ls = Arc::clone(&ls_inter);
+
+        b.iter(move || {
+            help_test_multithreaded_with_allocator(f, num_threads, num_iters, &local_al, &local_ls);
+        })
+    }
+}
 
 fn smallocb_benchmarks() -> impl IntoBenchmarks {
-    //let mut s = GlobalAllocWrap; // comment-in for tango baseline
-    let mut s = Smalloc::new(); // comment-in to compare to smalloc
+    let al = gen_allocator();
+    let ls = Arc::new(gen_layouts());
 
-    let mut ls = Vec::new();
-    for siz in [35, 64, 128, 500, 2000, 10_000, 1_000_000] {
-        ls.push(Layout::from_size_align(siz, 1).unwrap());
-        ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
-        ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
-        ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
-    }
-
-    let mut r = StdRng::seed_from_u64(0);
-
-    let mut m: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(100_000_000, RandomState::with_seed(r.random::<u64>() as usize));
-
-    let mut ps = Vec::new();
-    
-    let bbb = move |b: Bencher| {
-        let s_ptr = &mut s as *mut _;
-        let r_ptr = &mut r as *mut _;
-        let ps_ptr = &mut ps as *mut _;
-        let m_ptr = &mut m as *mut _;
-        let ls_ptr = ls.as_slice() as *const [Layout];
-
-        b.iter(move || unsafe {
-            for _i in 0..1000 {
-                help_test_one_alloc_dealloc_realloc_with_writes(
-                    &*s_ptr,
-                    &mut *r_ptr,
-                    &mut *ps_ptr,
-                    &mut *m_ptr,
-                    &*ls_ptr
-                )
-            }
-        })
-    };
+    const NUM_ITERS: u32 = 100_000;
 
     [
-        benchmark_fn("smallocb", bbb)
+        benchmark_fn("madrww1",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, NUM_ITERS, Arc::clone(&al), Arc::clone(&ls))
+        ),
+        benchmark_fn("madrww32",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 32, NUM_ITERS, Arc::clone(&al), Arc::clone(&ls))
+        ),
+        benchmark_fn("madrww2048",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 2048, NUM_ITERS, Arc::clone(&al), Arc::clone(&ls))
+        ),
     ]
 }
 
 tango_benchmarks!(smallocb_benchmarks());
-tango_main!();
+
+use tango_bench::MeasurementSettings;
+use tango_bench::SampleLengthKind::Flat;
+
+tango_main!(
+    MeasurementSettings {
+        sampler_type: Flat,
+        cache_firewall: Some(36864), // For my Apple M4 Max
+        max_iterations_per_sample: 1,
+
+        ..Default::default()
+    }
+);

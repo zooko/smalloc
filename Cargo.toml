@@ -12,7 +12,7 @@ thousands = "0.2.0"
 
 [dev-dependencies]
 cargo-nextest = "0.9.96"
-tango-bench = { version = "0.6.0", path = "../tango/tango-bench" }
+tango-bench = "0.6.0"
 
 [target.'cfg(target_vendor="apple")'.dependencies]
 mach-sys = "0.5"

@@ -299,6 +299,7 @@ impl Smalloc {
 }
 
 use std::cmp::max;
+use std::thread;
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.idempotent_init() {
@@ -736,23 +737,14 @@ pub fn dev_find_max_vm_space_allocatable() {
     }
 }
 
-// use bytesize::ByteSize;
-// 
-// fn conv(size: usize) -> String {
-//     ByteSize::b(size as u64).to_string_as(true) // true for binary units (KiB, MiB, GiB, etc.)
-// }
-// 
-// fn convsum(size: usize) -> String {
-//     let logtwo = size.ilog2();
-//     format!("{} ({:.3}b)", conv(size), logtwo)
-// }
 
-// xxx add benchmarks of high thread contention
-
-//xxx #[cfg(test)]
-pub mod benches {
+pub mod benchmarks {
     extern crate libc;
     use std::alloc::GlobalAlloc;
+    use rand::rngs::StdRng;
+    use ahash::HashSet;
+
+    use crate::help_test_multithreaded_with_allocator;
 
     use std::mem::MaybeUninit;
     pub fn clock(clocktype: u32) -> u64 {
@@ -765,8 +757,6 @@ pub mod benches {
         debug_assert!(instnsec >= 0);
         instsec as u64 * 1_000_000_000 + instnsec as u64
     }
-
-//    use std::sync::Arc;
 
     pub struct GlobalAllocWrap;
 
@@ -786,7 +776,6 @@ pub mod benches {
     }
 
     use std::sync::Arc;
-    //use std::time::{Duration,Instant};
     pub fn alloc_and_free(allocator: &Arc<impl GlobalAlloc>) {
         let l = unsafe { Layout::from_size_align_unchecked(32, 1) };
         let p = unsafe { allocator.alloc(l) };
@@ -813,6 +802,27 @@ pub mod benches {
         eprintln!("name: {name}, ns: {}", elap.separate_with_commas());
     }
 
+    use ahash::RandomState;
+    use rand::SeedableRng;
+    use rand::Rng;
+
+    pub fn multithread_bench<T, F>(bf: F, threads: u32, iters: u32, name: &str, al: Arc<T>, ls: Arc<Vec<Layout>>)
+    where
+        T: GlobalAlloc + Sync + Send,
+        F: Fn(&Arc<T>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+    {
+        let arcal = Arc::clone(&al);
+        let arcls = Arc::clone(&ls);
+
+        let start = clock(libc::CLOCK_UPTIME_RAW);
+
+        help_test_multithreaded_with_allocator(bf, threads, iters, &arcal, &arcls);
+
+        let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
+
+        eprintln!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+    }
+
     use std::hint::black_box;
 
     #[inline(never)]
@@ -829,1192 +839,30 @@ pub mod benches {
         *a
     }
 
-//     use std::sync::Arc;
-//     pub  fn bench_allocator(name: &str, allocator: &Arc<impl GlobalAlloc>) {
-// //xxx        fn allo(
-// //        bench(name
-//     }
-
-//    use crate::*;
-
-//     use rand::{Rng, SeedableRng};
-//     use rand::rngs::StdRng;
-//     use std::ptr::null_mut;
-//     use std::alloc::{GlobalAlloc, Layout};
-//    use std::hint::black_box;
-//     use std::time::Duration;
-//     use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
-
-//     // #[cfg(target_vendor = "apple")]
-//     // pub mod plat {
-//     //     use crate::benches::{Criterion, Duration};
-//     //     use criterion::measurement::plat_apple::MachAbsoluteTimeMeasurement;
-//     //     pub fn make_criterion() -> Criterion<MachAbsoluteTimeMeasurement> {
-//     //         Criterion::default().with_measurement(MachAbsoluteTimeMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-//     //     }
-//     // }
-
-//     // #[cfg(target_arch = "x86_64")]
-//     // pub mod plat {
-//     //     use criterion::measurement::plat_x86_64::RDTSCPMeasurement;
-//     //     use crate::benches::{Criterion, Duration};
-//     //     pub fn make_criterion() -> Criterion<RDTSCPMeasurement> {
-//     //         Criterion::default().with_measurement(RDTSCPMeasurement::default()).sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-//     //     }
-//     // }
-
-//     // #[cfg(not(any(target_vendor = "apple", target_arch = "x86_64")))]
-//     pub mod plat {
-//         use crate::benches::Duration;
-//        //xxx pub fn make_criterion() -> Criterion {
-//        //xxx     Criterion::default().sample_size(300).warm_up_time(Duration::new(10, 0)).significance_level(0.0001).confidence_level(0.9999)
-//        //xxx }
-//     }
-    
-//     fn randdist_reqsiz(r: &mut StdRng) -> usize {
-//         // The following distribution was roughly modelled on smalloclog profiling of Zebra.
-//         let randnum = r.random::<u8>();
-
-//         if randnum < 50 {
-//             r.random_range(1..16)
-//         } else if randnum < 150 {
-//             32
-//         } else if randnum < 200 {
-//             64
-//         } else if randnum < 250 {
-//             r.random_range(65..16384)
-//         } else {
-//             4_000_000
-//         }
-//     }
-
-//     #[test]
-//     fn bench_size_to_sc_lzcnt_min() {
-//         let mut c = plat::make_criterion();
-
-//         const NUM_ARGS: usize = 1_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         // Generate a distribution of sizes that is similar to realistic usages of smalloc (so that
-//         // our benchmarks are more representative than if we just generated some kind of even
-//         // distribution or something).
-//         while reqs.len() < NUM_ARGS {
-//             reqs.push(randdist_reqsiz(&mut r));
-//         }
-
-//         let mut i = 0;
-//         let mut a = 0; // to prevent compiler from optimizing stuff away
-//         c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//             a ^= black_box(crate::size_to_sc_lzcnt_min(reqs[i % NUM_ARGS]));
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_size_to_sc_lzcnt_branch() {
-//         let mut c = plat::make_criterion();
-
-//         const NUM_ARGS: usize = 1_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         // Generate a distribution of sizes that is similar to realistic usages of smalloc (so that
-//         // our benchmarks are more representative than if we just generated some kind of even
-//         // distribution or something).
-//         while reqs.len() < NUM_ARGS {
-//             reqs.push(randdist_reqsiz(&mut r));
-//         }
-
-//         let mut i = 0;
-//         let mut a = 0; // to prevent compiler from optimizing stuff away
-//         c.bench_function("size_to_sc_lzcnt_branch", |b| b.iter(|| {
-//             a ^= black_box(crate::size_to_sc_lzcnt_branch(reqs[i % NUM_ARGS]));
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_size_to_sc_log_branch() {
-//         let mut c = plat::make_criterion();
-
-//         const NUM_ARGS: usize = 1_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         // Generate a distribution of sizes that is similar to realistic usages of smalloc (so that
-//         // our benchmarks are more representative than if we just generated some kind of even
-//         // distribution or something).
-//         while reqs.len() < NUM_ARGS {
-//             reqs.push(randdist_reqsiz(&mut r));
-//         }
-
-//         let mut i = 0;
-//         let mut a = 0; // to prevent compiler from optimizing stuff away
-//         c.bench_function("size_to_sc_log_branch", |b| b.iter(|| {
-//             a ^= black_box(crate::size_to_sc_log_branch(reqs[i % NUM_ARGS]));
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_offset_to_allslabnum_lzcnt() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-//         let smbp = sm.get_sm_baseptr();
-
-//         const NUM_ARGS: usize = 1_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         // Generate a distribution of offsets that is similar to realistic usages of smalloc (so
-//         // that our benchmarks are more representative than if we just generated some kind of even
-//         // distribution or something).
-//         while reqs.len() < NUM_ARGS {
-//             let mut s = randdist_reqsiz(&mut r);
-//             if s > slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1) {
-//                 s = slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1);
-//             }
-//             let l = Layout::from_size_align(s, 1).unwrap();
-//             let p = unsafe { sm.alloc(l) };
-//             let o = crate::offset_of_ptr(sybp, smbp, p);
-//             reqs.push(o.unwrap());
-//         }
-
-//         let mut i = 0;
-//         let mut a = 0; // to prevent compiler from optimizing stuff away
-//         c.bench_function("offset_to_allslabnum_lzcnt", |b| b.iter(|| {
-//             a ^= black_box(crate::offset_to_allslabnum_lzcnt(reqs[i % NUM_ARGS]));
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_offset_to_allslabnum_log() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-//         let smbp = sm.get_sm_baseptr();
-
-//         const NUM_ARGS: usize = 1_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         // Generate a distribution of offsets that is similar to realistic usages of smalloc (so
-//         // that our benchmarks are more representative than if we just generated some kind of even
-//         // distribution or something).
-//         while reqs.len() < NUM_ARGS {
-//             let mut s = randdist_reqsiz(&mut r);
-//             if s > slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1) {
-//                 s = slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1);
-//             }
-//             let l = Layout::from_size_align(s, 1).unwrap();
-//             let p = unsafe { sm.alloc(l) };
-//             let o = crate::offset_of_ptr(sybp, smbp, p);
-//             reqs.push(o.unwrap());
-//         }
-
-//         let mut i = 0;
-//         let mut a = 0; // to prevent compiler from optimizing stuff away
-//         c.bench_function("offset_to_allslabnum_log", |b| b.iter(|| {
-//             a ^= black_box(crate::offset_to_allslabnum_log(reqs[i % NUM_ARGS]));
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_pop_flh_small_sn_0_empty() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         c.bench_function("pop_small_flh_sep_sn_0_empty", |b| b.iter(|| { // xxx temp name for comparison to prev version
-//             let smbp = sm.get_sm_baseptr();
-//             let slab_bp = unsafe { smbp.add(SizeClass(0).base_offset()) };
-// // xxx include these lookups inside bench ? For comparability with smalloc v2's `pop_small_flh()`? Or not, for modeling of smalloc v3's runtime behavior ? *thinky face*
-//             let areanum = get_thread_num();
-//             let flha = sm.get_atomicu64(small_flh_offset(0, areanum));
-//             let eaca = sm.get_atomicu64(small_eac_offset(0, areanum));
-//             black_box(sm.inner_alloc(flha, slab_bp, eaca, 4, NUM_SMALL_SLOTS));
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_pop_flh_small_sn_4_empty() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-//         let smbp = sm.get_sm_baseptr();
-//         let slab_bp = unsafe { smbp.add(small_slab_base_offset(4, get_thread_num())) };
-
-//         c.bench_function("pop_small_flh_sn_0_empty", |b| b.iter(|| { // xxx temp name for comparison to prev version
-//             let areanum = get_thread_num();
-//             let flha = sm.get_atomicu64(small_flh_offset(4, areanum));
-//             let eaca = sm.get_atomicu64(small_eac_offset(4, areanum));
-//             black_box(sm.inner_alloc(flha, slab_bp, eaca, 64, NUM_SMALL_SLOTS));
-//         }));
-//     }
-
-//     use std::sync::atomic::Ordering;
-//     use rand::seq::SliceRandom;
-
-//     #[derive(PartialEq)]
-//     enum DataOrder {
-//         Sequential, Random
-//     }
-    
-//     fn help_bench_pop_small_slab_freelist_wdata(fnname: &str, smallslabnum: usize, ord: DataOrder, thenwrite: bool) {
-//         let mut c = plat::make_criterion();
-
-//         let gtan1 = get_thread_num();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         // To prime the pump for the assertion inside setup() that the free list isn't empty.
-//         let l = Layout::from_size_align(slotsize(smallslabnum), 1).unwrap();
-//         unsafe { sm.dealloc(sm.alloc(l), l) };
-
-//         let router = RefCell::new(StdRng::seed_from_u64(0));
-
-//         const NUM_ARGS: usize = 16_000;
-//         let setup = || {
-//             let mut rinner = router.borrow_mut();
-
-//             let gtan2 = get_thread_num();
-//             assert_eq!(gtan1, gtan2);
-
-//             // reset the free list and eac
-//             let eaca = sm.get_atomicu64(small_eac_offset(smallslabnum, gtan2));
-//             eaca.store(0, Ordering::Release);
-//             let flha = sm.get_atomicu64(small_flh_offset(smallslabnum, gtan2));
-
-//             // assert that the free list hasnt't been emptied out, which would mean that during the
-//             // previous batch of benchmarking, the free list ran dry and we started benchmarking the
-//             // "pop from empty free list" case instead of what we're trying to benchmark here.
-//             assert_ne!(flha.load(Ordering::Acquire) & u32::MAX as u64, 0);
-
-//             flha.store(0, Ordering::Release);
-            
-//             let mut ps = Vec::with_capacity(NUM_ARGS);
-
-//             while ps.len() < NUM_ARGS {
-//                 ps.push(unsafe { sm.alloc(l) })
-//             }
-
-//             match ord {
-//                 DataOrder::Sequential => { }
-//                 DataOrder::Random => {
-//                     ps.shuffle(&mut rinner)
-//                 }
-//             }
-
-//             for p in ps.iter() {
-//                 unsafe { sm.dealloc(*p, l) };
-//             }
-//         };
-
-//         let smbp = sm.get_sm_baseptr();
-
-//         let f = |()| {
-//             let gtan3 = get_thread_num();
-//             assert_eq!(gtan1, gtan3);
-
-//             let slab_bp = unsafe { smbp.add(small_slab_base_offset(smallslabnum, gtan3)) };
-//             let flha = sm.get_atomicu64(small_flh_offset(smallslabnum, gtan3));
-//             let eaca = sm.get_atomicu64(small_eac_offset(smallslabnum, gtan3));
-            
-//             let p2 = black_box(sm.inner_alloc(flha, slab_bp, eaca, slotsize(smallslabnum), NUM_SMALL_SLOTS));
-//             assert!(!p2.is_null());
-
-//             if thenwrite {
-//                 // Okay now write into the newly allocated space.
-//                 unsafe { std::ptr::copy_nonoverlapping(&99_u8, p2, 1) };
-//             }
-//         };
-
-//         c.bench_function(fnname, move |b| b.iter_batched(setup, f, BatchSize::SmallInput));
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_0_wdata_sequential() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sep_sn_0_wdata_sequential", 0, DataOrder::Sequential, false) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_0_wdata_sequential_then_write() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sep_sn_0_wdata_sequential_then_write", 0, DataOrder::Sequential, true) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_0_wdata_random() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sep_sn_0_wdata_random", 0, DataOrder::Random, false) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_0_wdata_random_then_write() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sep_sn_0_wdata_random_then_write", 0, DataOrder::Random, true) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_1_wdata_sequential_n() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sn_4_wdata_sequential", 1, DataOrder::Sequential, false) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_1_wdata_sequential_then_write() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sn_4_wdata_sequential_then_write", 1, DataOrder::Sequential, true) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_1_wdata_random() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sn_4_wdata_random", 1, DataOrder::Random, false) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_1_wdata_random_then_write() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_small_flh_sn_4_wdata_random_then_write", 1, DataOrder::Random, true) // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_4_wdata_random() {
-//         help_bench_pop_small_slab_freelist_wdata("pop_medium_flh_sn_0_wdata_random", 4, DataOrder::Random, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_4_wdata_random_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_0_wdata_random_then_write", 4, DataOrder::Random, true); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_4_wdata_sequential() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_0_wdata_sequential", 4, DataOrder::Sequential, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_small_sn_4_wdata_sequential_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_0_wdata_sequential_then_write", 4, DataOrder::Sequential, true); // xxx temp name for comparison to prev version
-//     }
-
-//     fn help_bench_pop_medium_slab_freelist_wdata(fnname: &str, mediumslabnum: usize, ord: DataOrder, thenwrite: bool) {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         // To prime the pump for the assertion inside setup() that the free list isn't empty.
-//         let allslabnum = mediumslabnum + NUM_SMALL_SCS;
-//         let l = Layout::from_size_align(slotsize(allslabnum), 1).unwrap();
-//         unsafe { sm.dealloc(sm.alloc(l), l) };
-
-//         let router = RefCell::new(StdRng::seed_from_u64(0));
-
-//         const NUM_ARGS: usize = 16_000;
-//         let setup = || {
-//             let mut rinner = router.borrow_mut();
-
-//             // reset the free list and eac
-//             let eaca = sm.get_atomicu64(medium_eac_offset(mediumslabnum));
-//             eaca.store(0, Ordering::Release);
-//             let flha = sm.get_atomicu64(medium_flh_offset(mediumslabnum));
-
-//             // assert that the free list hasnt't been emptied out,
-//             // which would mean that during the previous batch of
-//             // benchmarking, the free list ran dry and we started
-//             // benchmarking the "pop from empty free list" case
-//             // instead of what we're trying to benchmark here.
-//             assert_ne!(flha.load(Ordering::Acquire) & u32::MAX as u64, 0);
-
-//             flha.store(0, Ordering::Release);
-            
-//             let mut ps = Vec::with_capacity(NUM_ARGS);
-
-//             while ps.len() < NUM_ARGS {
-//                 ps.push(unsafe { sm.alloc(l) })
-//             }
-
-//             match ord {
-//                 DataOrder::Sequential => { }
-//                 DataOrder::Random => {
-//                     ps.shuffle(&mut rinner)
-//                 }
-//             }
-
-//             for p in ps.iter() {
-//                 unsafe { sm.dealloc(*p, l) };
-//             }
-//         };
-
-//         let smbp = sm.get_sm_baseptr();
-
-//         let f = |()| {
-//             let slab_bp = unsafe { smbp.add(medium_slab_base_offset(mediumslabnum)) };
-//             let flha = sm.get_atomicu64(medium_flh_offset(mediumslabnum));
-//             let eaca = sm.get_atomicu64(medium_eac_offset(mediumslabnum));
-
-//             let p2 = black_box(sm.inner_alloc(flha, slab_bp, eaca, slotsize(allslabnum), NUM_MEDIUM_SLOTS));
-//             assert!(!p2.is_null());
-
-//             if thenwrite {
-//                 // Okay now write into the newly allocated space.
-//                 unsafe { std::ptr::copy_nonoverlapping(&99_u8, p2, 1) };
-//             }
-//         };
-
-//         c.bench_function(fnname, |b| b.iter_batched(setup, f, BatchSize::SmallInput));
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_5_wdata_random() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_6_wdata_random", 5, DataOrder::Random, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_5_wdata_random_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_6_wdata_random_then_write", 5, DataOrder::Random, true); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_5_wdata_sequential() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_6_wdata_sequential", 5, DataOrder::Sequential, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_5_wdata_sequential_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_6_wdata_sequential_then_write", 5, DataOrder::Sequential, true); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_6_wdata_random() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_7_wdata_random", 6, DataOrder::Random, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_6_wdata_random_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_7_wdata_random_then_write", 6, DataOrder::Random, true); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_6_wdata_sequential() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_7_wdata_sequential", 6, DataOrder::Sequential, false); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_pop_medium_sn_6_wdata_sequential_then_write() {
-//         help_bench_pop_medium_slab_freelist_wdata("pop_medium_flh_sn_7_wdata_sequential_then_write", 6, DataOrder::Sequential, true); // xxx temp name for comparison to prev version
-//     }
-
-//     #[test]
-//     fn bench_small_alloc() {
-//         let mut c = Criterion::default();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         const NUM_ARGS: usize = 50_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         while reqs.len() < NUM_ARGS {
-//             reqs.push(slotsize(r.random_range(0..NUM_SMALL_SCS)));
-//         }
-
-//         let mut accum = 0; // to prevent compiler optimizing things away
-//         let mut i = 0;
-//         c.bench_function("small_alloc_with_overflow", |b| b.iter(|| { // xxx temp name for comparison to prev version
-//             let l = unsafe { Layout::from_size_align_unchecked(reqs[i % reqs.len()], 1) };
-//             accum ^= black_box(unsafe { sm.alloc(l) }) as u64;
-//             i += 1;
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_medium_alloc() {
-//         let mut c = Criterion::default();
-
-//         const NUM_ARGS: usize = 50_000;
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         let mut r = StdRng::seed_from_u64(0);
-//         let mut reqs = Vec::with_capacity(NUM_ARGS);
-
-//         while reqs.len() < NUM_ARGS {
-//             reqs.push(slotsize(NUM_SMALL_SCS + r.random_range(0..NUM_MEDIUM_SCS)));
-//         }
-
-//         let mut accum = 0; // to prevent compiler optimizing things away
-//         let mut i = 0;
-//         c.bench_function("inner_medium_alloc", |b| b.iter(|| { // xxx temp name for comparison to prev version
-//             let l = unsafe { Layout::from_size_align_unchecked(reqs[i % reqs.len()], 1) };
-//             accum ^= black_box(unsafe { sm.alloc(l) }) as u64;
-//             i += 1
-//         }));
-//     }
-
-//     #[test]
-//     fn bench_ptr_to_slot() {
-//         let mut c = Criterion::default();
-
-//         const NUM_ARGS: usize = 50_000_000;
-
-//         let mut r = StdRng::seed_from_u64(0);
-//         let baseptr_for_testing: *mut u8 = null_mut();
-//         let mut reqptrs = Box::new(Vec::new());
-//         reqptrs.reserve(NUM_ARGS);
-        
-//         while reqptrs.len() < NUM_ARGS {
-//             // generate a random slot
-//             let o = if r.random::<bool>() {
-//                 // SmallSlot
-//                 let areanum = r.random_range(0..NUM_SMALL_SLABS);
-//                 let smallslabnum = r.random_range(0..NUM_SMALL_SCS);
-//                 let slotnum = r.random_range(0..NUM_SMALL_SLOTS);
-
-//                 small_slot_offset(smallslabnum, areanum, slotnum)
-//             } else {
-//                 // medium or large slot
-//                 let mediumslabnum = r.random_range(0..NUM_MEDIUM_SCS + NUM_LARGE_SCS);
-//                 if mediumslabnum < NUM_MEDIUM_SCS {
-//                     // medium slot
-//                     let slotnum = r.random_range(0..NUM_MEDIUM_SLOTS);
-//                     medium_slot_offset(mediumslabnum, slotnum)
-//                 } else {
-//                     // large slot
-//                     let slotnum = r.random_range(0..NUM_LARGE_SCS);
-//                     large_slot_offset(slotnum)
-//                 }
-//             };
-
-//             // put the random slot's pointer into the test set
-//             reqptrs.push(unsafe { baseptr_for_testing.add(o) });
-//         }
-
-//         let mut accum = 0; // This is to prevent the compiler from optimizing away some of these calculations.
-//         let mut i = 0;
-//         c.bench_function("ptr_to_slot", |b| b.iter(|| { // xxx temp name for comparison to prev version
-//             let ptr = reqptrs[i % NUM_ARGS];
-
-//             let opto = crate::offset_of_ptr(baseptr_for_testing, baseptr_for_testing, ptr);
-//             let res = match opto {
-//                 None => {
-//                     panic!("wrong");
-//                 }
-//                 Some(o) => {
-//                     if o < MEDIUM_SLABS_REGION_BASE {
-//                         // This points into the "small-slabs-areas-region".
-
-//                         let allslabnum = offset_to_allslabnum(o);
-//                         let slotsize = slotsize(allslabnum);
-
-//                         assert!(o.is_multiple_of(slotsize));
-
-//                         let (areanum2, slotnum2) = small_slot(o, allslabnum, slotsize);
-
-//                         black_box((allslabnum, areanum2, slotnum2))
-//                     } else if o < LARGE_SLAB_REGION_BASE {
-//                         // This points into the "medium-slabs-region".
-
-//                         let allslabnum = offset_to_allslabnum(o);
-//                         let slotsize = slotsize(allslabnum);
-
-//                         assert!(o.is_multiple_of(slotsize));
-
-//                         let slotnum2 = medium_slot(o, allslabnum - NUM_SMALL_SCS, slotsize);
-                        
-//                         black_box((allslabnum, 0, slotnum2))
-//                     } else {
-//                         // This points into the "large-slab".
-//                         let slotnum2 = large_slot(o);
-                        
-//                         black_box((0, 0, slotnum2))
-//                     }
-//                 }
-//             };
-
-//             accum += res.2;
-
-//             i += 1;
-//         }));
-//     }
-
-
-//     #[test]
-//     fn bench_alloc_rand() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         let saved_thread_areanum = get_thread_num();
-//         let r = RefCell::new(StdRng::seed_from_u64(0));
-
-//         const NUM_ARGS: usize = 1_000_000;
-//         let reqsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
-
-//         let setup = || {
-//             let areanum = get_thread_num();
-//             assert_eq!(areanum, saved_thread_areanum);
-//             let mut reqsinnersetup = reqsouter.borrow_mut();
-            
-//             let mut rinner = r.borrow_mut();
-
-//             // reset the reqs vec
-//             reqsinnersetup.clear();
-
-//             // reset the free lists and eacs for all three size classes
-//             for smallslabnum in 0..NUM_SMALL_SCS {
-//                 let flha = sm.get_atomicu64(small_flh_offset(smallslabnum, areanum));
-//                 let eaca = sm.get_atomicu64(small_eac_offset(smallslabnum, areanum));
-//                 flha.store(0, Ordering::Release);
-//                 eaca.store(0, Ordering::Release);
-//             }
-
-//             for mediumslabnum in 0..NUM_MEDIUM_SCS {
-//                 let flha = sm.get_atomicu64(medium_flh_offset(mediumslabnum));
-//                 let eaca = sm.get_atomicu64(medium_eac_offset(mediumslabnum));
-//                 flha.store(0, Ordering::Release);
-//                 eaca.store(0, Ordering::Release);
-//             }
-
-//             let flha = sm.get_atomicu64(large_flh_offset());
-//             let eaca = sm.get_atomicu64(large_eac_offset());
-//             flha.store(0, Ordering::Release);
-//             eaca.store(0, Ordering::Release);
-            
-//             while reqsinnersetup.len() < NUM_ARGS {
-//                 let l = Layout::from_size_align(randdist_reqsiz(&mut rinner), 1).unwrap();
-//                 reqsinnersetup.push(l);
-//             }
-//         };
-
-//         let f = |()| {
-//             dummy_func()
-//             // let mut reqsinnerf = reqsouter.borrow_mut();
-//             // let _l = black_box(reqsinnerf.pop().unwrap());
-//             //unsafe { sm.alloc(l) };
-//         };
-
-//         let mut g = c.benchmark_group("g");
-//     //xxx    g.sampling_mode(criterion::SamplingMode::Linear);
-//         g.bench_function("alloc_rand", |b| b.iter_batched(setup, f, BatchSize::SmallInput));
-//     }
-
-//     fn help_bench_alloc_x_bytes(bytes: usize, fnname: &str) {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         let saved_thread_areanum = get_thread_num();
-
-//         const NUM_ARGS: usize = 100_000;
-//         let reqsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
-
-//         let setup = || {
-//             let areanum = get_thread_num();
-//             assert_eq!(areanum, saved_thread_areanum);
-//             let mut reqsinnersetup = reqsouter.borrow_mut();
-            
-//             // reset the reqs vec
-//             reqsinnersetup.clear();
-
-//             // reset the free lists and eacs for all three size classes
-//             for smallslabnum in 0..NUM_SMALL_SCS {
-//                 let flha = sm.get_atomicu64(small_flh_offset(smallslabnum, areanum));
-//                 let eaca = sm.get_atomicu64(small_eac_offset(smallslabnum, areanum));
-//                 flha.store(0, Ordering::Release);
-//                 eaca.store(0, Ordering::Release);
-//             }
-
-//             for mediumslabnum in 0..NUM_MEDIUM_SCS {
-//                 let flha = sm.get_atomicu64(medium_flh_offset(mediumslabnum));
-//                 let eaca = sm.get_atomicu64(medium_eac_offset(mediumslabnum));
-//                 flha.store(0, Ordering::Release);
-//                 eaca.store(0, Ordering::Release);
-//             }
-
-//             let flha = sm.get_atomicu64(large_flh_offset());
-//             let eaca = sm.get_atomicu64(large_eac_offset());
-//             flha.store(0, Ordering::Release);
-//             eaca.store(0, Ordering::Release);
-            
-//             let l: Layout = Layout::from_size_align(bytes, 1).unwrap();
-//             while reqsinnersetup.len() < NUM_ARGS {
-//                 reqsinnersetup.push(l);
-//             }
-//         };
-
-//         let f = |()| {
-//             let mut reqsinnerf = reqsouter.borrow_mut();
-//             let l = reqsinnerf.pop().unwrap();
-//             unsafe { sm.alloc(l) };
-//         };
-
-//         c.bench_function(fnname, |b| b.iter_batched(setup, f, BatchSize::SmallInput));
-//     }
-
-//     #[test]
-//     fn bench_alloc_1_byte() {
-//         help_bench_alloc_x_bytes(1, "alloc_1_byte");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_2_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_2_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_3_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_3_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_4_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_4_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_5_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_5_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_6_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_6_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_7_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_7_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_8_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_8_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_9_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_9_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_10_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_10_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_16_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_16_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_32_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_32_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_64_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_64_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_128_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_128_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_256_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_256_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_512_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_512_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_1024_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_1024_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_2048_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_2048_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_4096_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_4096_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_8192_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_8192_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_16384_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_16384_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_32768_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_32768_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_65536_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_65536_bytes");
-//     }
-    
-//     #[test]
-//     fn bench_alloc_131072_bytes() {
-//         help_bench_alloc_x_bytes(2, "alloc_131072_bytes");
-//     }
-    
-//     use std::cell::RefCell;
-//     #[test]
-//     fn bench_dealloc() {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         let saved_thread_areanum = get_thread_num();
-//         let router = RefCell::new(StdRng::seed_from_u64(0));
-
-//         const NUM_ARGS: usize = 15_000;
-//         let allocsouter = RefCell::new(Vec::with_capacity(NUM_ARGS));
-
-//         let setup = || {
-//             let areanum = get_thread_num();
-//             assert_eq!(areanum, saved_thread_areanum);
-//             let mut rinner = router.borrow_mut();
-//             let mut allocsinnersetup = allocsouter.borrow_mut();
-
-//             // reset the allocs vec
-//             allocsinnersetup.clear();
-
-//             // reset the free lists and eacs for all three size classes
-
-//             for smallslabnum in 0..NUM_SMALL_SCS {
-//                 let flha = sm.get_atomicu64(small_flh_offset(smallslabnum, areanum));
-//                 flha.store(0, Ordering::Release);
-//                 let eaca = sm.get_atomicu64(small_eac_offset(smallslabnum, areanum));
-//                 eaca.store(0, Ordering::Release);
-//             }
-
-//             for mediumslabnum in 0..NUM_MEDIUM_SCS {
-//                 let flha = sm.get_atomicu64(medium_flh_offset(mediumslabnum));
-//                 flha.store(0, Ordering::Release);
-//                 let eaca = sm.get_atomicu64(medium_eac_offset(mediumslabnum));
-//                 eaca.store(0, Ordering::Release);
-//             }
-            
-//             let flha = sm.get_atomicu64(large_flh_offset());
-//             flha.store(0, Ordering::Release);
-//             let eaca = sm.get_atomicu64(large_eac_offset());
-//             eaca.store(0, Ordering::Release);
-            
-//             while allocsinnersetup.len() < NUM_ARGS {
-//                 let l = Layout::from_size_align(randdist_reqsiz(&mut rinner), 1).unwrap();
-//                 allocsinnersetup.push((unsafe { sm.alloc(l) }, l));
-//             }
-
-//             allocsinnersetup.shuffle(&mut rinner);
-//         };
-
-//         let f = |()| {
-//             let mut allocsinnerf = allocsouter.borrow_mut();
-//             let (p, l) = allocsinnerf.pop().unwrap();
-//             unsafe { sm.dealloc(p, l) };
-//         };
-
-//         let mut g = c.benchmark_group("g");
-//         //xxxg.sampling_mode(criterion::SamplingMode::Linear);
-//         g.bench_function("dealloc", |b| b.iter_batched(setup, f, BatchSize::SmallInput));
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_1() {
-//         help_bench_many_accesses("bench_1_1", 1);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_2() {
-//         help_bench_many_accesses("bench_1_2", 2);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_3() {
-//         help_bench_many_accesses("bench_1_3", 3);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_4() {
-//         help_bench_many_accesses("bench_1_4", 4);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_5() {
-//         help_bench_many_accesses("bench_1_5", 5);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_6() {
-//         help_bench_many_accesses("bench_1_6", 6);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_8() {
-//         help_bench_many_accesses("bench_1_8", 8);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_9() {
-//         help_bench_many_accesses("bench_1_9", 9);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_10() {
-//         help_bench_many_accesses("bench_1_10", 10);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_16() {
-//         help_bench_many_accesses("bench_1_16", 16);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_32() {
-//         help_bench_many_accesses("bench_1_32", 32);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_64() {
-//         help_bench_many_accesses("bench_1_64", 64);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_128() {
-//         help_bench_many_accesses("bench_1_128", 128);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_256() {
-//         help_bench_many_accesses("bench_1_256", 256);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_512() {
-//         help_bench_many_accesses("bench_1_512", 512);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_1024() {
-//         help_bench_many_accesses("bench_1_1024", 1024);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_2048() {
-//         help_bench_many_accesses("bench_1_2048", 2048);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_4096() {
-//         help_bench_many_accesses("bench_1_4096", 4096);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_8192() {
-//         help_bench_many_accesses("bench_1_8192", 8192);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_16384() {
-//         help_bench_many_accesses("bench_1_16384", 16384);
-//     }
-
-//     #[test]
-//     fn cache_behavior_1_32768() {
-//         help_bench_many_accesses("bench_1_32768", 32768);
-//     }
-
-//     use std::cmp::min;
-
-//     /// This is intended to measure the effect of packing many allocations into few cache lines.
-//     fn help_bench_many_accesses(fnname: &str, alloc_size: usize) {
-//         let mut c = plat::make_criterion();
-
-//         let sm = Smalloc::new();
-//         sm.idempotent_init().unwrap();
-
-//         const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
-//         let max_num_args = (MEM_TO_USE / alloc_size).next_multiple_of(CACHE_LINE_SIZE);
-//         let max_num_slots = if alloc_size <= slotsize(NUM_SMALL_PLUS_MEDIUM_SLABS - 1) {
-//             NUM_MEDIUM_SLOTS
-//         } else {
-//             NUM_LARGE_SLOTS
-//         };
-//         let num_args = min(max_num_args, max_num_slots);
-        
-//         assert!(num_args <= NUM_MEDIUM_SLOTS, "{num_args} <= {NUM_MEDIUM_SLOTS}, MEM_TO_USE: {MEM_TO_USE}, CACHE_SIZE: {CACHE_SIZE}, CACHE_LINE_SIZE: {CACHE_LINE_SIZE}, alloc_size: {alloc_size}");
-
-//         // Okay now we need a jump which is relatively prime to num_args / CACHE_LINE_SIZE (so that
-//         // we visit all the allocations in a permutation) and >= 1/2 of (num_args / CACHE_LINE_SIZE)
-//         // (so that we get away from any linear pre-fetching).
-//         let x = num_args / CACHE_LINE_SIZE;
-//         let mut jump = x / 2;
-//         while x.gcd(jump) != 1 {
-//             jump += 1;
-//         }
-
-//         let mut r = StdRng::seed_from_u64(0);
-
-//         let mut allocs = Vec::with_capacity(num_args);
-
-//         let l = Layout::from_size_align(alloc_size, 1).unwrap();
-//         while allocs.len() < num_args {
-//             // Allocate CACHE_LINE_SIZE allocations, take their pointers, shuffle the pointers, and
-//             // append them to allocs.
-//             let mut batch_of_allocs = Vec::new();
-//             for _x in 0..CACHE_LINE_SIZE {
-//                 batch_of_allocs.push(unsafe { sm.alloc(l) });
-//             }
-//             batch_of_allocs.shuffle(&mut r);
-//             allocs.extend(batch_of_allocs);
-//         };
-//         //        eprintln!("num_args: {}, alloc_size: {}, total alloced: {}, jump: {}", num_args.separate_with_commas(), alloc_size.separate_with_commas(), (alloc_size * num_args).separate_with_commas(), jump.separate_with_commas());
-
-//         let mut a = 0;
-//         let mut i = 0;
-//         c.bench_function(fnname, |b| b.iter(|| {
-//             // Now CACHE_LINE_SIZE times in a row we're going to read one byte from the allocation
-//             // pointed to by each successive pointer. The theory is that when those successive
-//             // allocations are packed into cache lines, we should be able to do these
-//             // CACHE_LINE_SIZE reads more quickly than when those successive allocations are spread
-//             // out over many cache lines.
-            
-//             // get the next pointer
-//             let x = allocs[i % allocs.len()];
-
-//             // read a byte from it
-//             let b = unsafe { *x };
-
-//             // accumulate its value
-//             a ^= b as usize;
-
-//             // go to the next pointer
-//             i += 1;
-//         }));
-//     }
-
-// // xxx teach criterion config that these take more threads
-//     // #[test]
-//     // fn bench_threads_1_large_alloc_dealloc_x() {
-//     //     let mut c = plat::make_criterion();
-
-//     //     let mut i = 0;
-//     //     c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//     //         crate::tests::help_test_multithreaded(1, 100, SizeClass::Large, true, true, false);
-//     //         i += 1;
-//     //     }));
-
-//     // }
-
-//     // #[test]
-//     // fn bench_threads_2_large_alloc_dealloc_x() {
-//     //     let mut c = plat::make_criterion();
-
-//     //     let mut i = 0;
-//     //     c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//     //         crate::tests::help_test_multithreaded(2, 100, SizeClass::Large, true, true, false);
-//     //         i += 1;
-//     //     }));
-
-//     // }
-
-//     // #[test]
-//     // fn bench_threads_10_large_alloc_dealloc_x() {
-//     //     let mut c = plat::make_criterion();
-
-//     //     let mut i = 0;
-//     //     c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//     //         crate::tests::help_test_multithreaded(10, 100, SizeClass::Large, true, true, false);
-//     //         i += 1;
-//     //     }));
-
-//     // }
-
-//     // #[test]
-//     // fn bench_threads_100_large_alloc_dealloc_x() {
-//     //     let mut c = plat::make_criterion();
-
-//     //     let mut i = 0;
-//     //     c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//     //         crate::tests::help_test_multithreaded(100, 100, SizeClass::Large, true, true, false);
-//     //         i += 1;
-//     //     }));
-
-//     // }
-
-//     // #[test]
-//     // fn bench_threads_1000_large_alloc_dealloc_x() {
-//     //     let mut c = plat::make_criterion();
-
-//     //     let mut i = 0;
-//     //     c.bench_function("size_to_sc_lzcnt_min", |b| b.iter(|| {
-//     //         crate::tests::help_test_multithreaded(1000, 100, SizeClass::Large, true, true, false);
-//     //         i += 1;
-//     //     }));
-
-//     // }
-
-//     // use std::sync::Arc;
-//     // use std::thread;
-//     // pub fn help_bench_multithreaded(numthreads: u32, numiters: u32, sc: SizeClass, dealloc: bool, realloc: bool, writes: bool) {
-//     //     let sm = Arc::new(Smalloc::new());
-//     //     sm.idempotent_init().unwrap();
-
-//     //     let mut handles = Vec::new();
-//     //     for _i in 0..numthreads {
-//     //         let smc = Arc::clone(&sm);
-//     //         handles.push(thread::spawn(move || {
-//     //             let r = StdRng::seed_from_u64(0);
-//     //             help_test(&smc, numiters, sc, r, dealloc, realloc, writes);
-//     //         }));
-//     //     }
-
-//     //     for handle in handles {
-//     //         handle.join().unwrap();
-//     //     }
-//     // }
-
+    pub struct TestState {
+        pub r: StdRng,
+        pub ps: Vec<(usize, Layout)>,
+        pub m: HashSet<(usize, Layout)>,
+    }
+
+    impl TestState {
+        pub fn new(iters: u32) -> Self {
+            let mut r = StdRng::seed_from_u64(0);
+            let m = HashSet::with_capacity_and_hasher(iters as usize, RandomState::with_seed(r.random::<u64>() as usize));
+
+            Self {
+                r,
+                m,
+                ps: Vec::with_capacity(iters as usize),
+            }
+        }
+    }
 }
 
+// xxx move tests and benchmarks to a separate file
+
 // These functions are used in both tests and benchmarks.
-use rand::rngs::StdRng;
 use rand::Rng;
-use ahash::HashSet;
 use rand::prelude::IndexedRandom;
 pub const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
 const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
@@ -2022,112 +870,212 @@ const BYTES3: [u8; 8] = [0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11];
 const BYTES4: [u8; 8] = [0x12, 0x11, 0x10, 0xF, 0xE, 0xD, 0xC, 0xB];
 const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
-pub fn help_test_one_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(sm: &T, mut r: &mut StdRng, ps: &mut Vec<(usize, Layout)>, m: &mut HashSet<(usize, Layout)>, ls: &[Layout]) {
-    // random coin
-    let coin = r.random_range(0..3);
-    if coin == 0 {
-        // Free
-        if !ps.is_empty() {
-            let (p, lt) = ps.swap_remove(r.random_range(0..ps.len()));
-            debug_assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            m.remove(&(p, lt));
-            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
-            unsafe { sm.dealloc(p as *mut u8, lt) };
+use benchmarks::TestState;
+pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc + ?Sized>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        // random coin
+        let coin = s.r.random_range(0..3);
+        if coin == 0 {
+            // Free
+            if !s.ps.is_empty() {
+                let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+                s.m.remove(&(p, lt));
+                unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
+                unsafe { al.dealloc(p as *mut u8, lt) };
 
-            // Write to a random (other) allocation...
-            if !ps.is_empty() {
-               //xxx let (po, lto) = ps[r.random_range(0..ps.len())];
-                let (po, lto) = ps.choose(&mut r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+                }
             }
-        }
-    } else if coin == 1 {
-        // Malloc
-        let lt = ls.choose(&mut r).unwrap();
-        let p = unsafe { sm.alloc(*lt) };
-        debug_assert!(!p.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-        debug_assert!(!m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-        m.insert((p as usize, *lt));
-        ps.push((p as usize, *lt));
-
-        // Write to a random (other) allocation...
-        if !ps.is_empty() {
-            //xxxlet (po, lto) = ps[r.random_range(0..ps.len())];
-            let (po, lto) = ps.choose(&mut r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
-        }
-    } else {
-        // Realloc
-        if !ps.is_empty() {
-            let i = r.random_range(0..ps.len());
-            let (p, lt) = ps.swap_remove(i);
-            debug_assert_ne!(p, 0);
-            debug_assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            m.remove(&(p, lt));
-
-            let newlt = ls.choose(&mut r).unwrap();
-            let newp = unsafe { sm.realloc(p as *mut u8, lt, newlt.size()) };
-            unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
-
-            debug_assert!(!m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
-            m.insert((newp as usize, *newlt));
-            ps.push((newp as usize, *newlt));
+        } else if coin == 1 {
+            // Malloc
+            let lt = ls.choose(&mut s.r).unwrap();
+            let p = unsafe { al.alloc(*lt) };
+            debug_assert!(!p.is_null());
+            unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.insert((p as usize, *lt));
+            s.ps.push((p as usize, *lt));
 
             // Write to a random (other) allocation...
-            let (po, lto) = ps.choose(&mut r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
+            if !s.ps.is_empty() {
+                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+                unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+            }
+        } else {
+            // Realloc
+            if !s.ps.is_empty() {
+                let i = s.r.random_range(0..s.ps.len());
+                let (p, lt) = s.ps.swap_remove(i);
+                debug_assert_ne!(p, 0);
+                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+                s.m.remove(&(p, lt));
+
+                let newlt = ls.choose(&mut s.r).unwrap();
+                let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+                unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
+
+                debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+                s.m.insert((newp as usize, *newlt));
+                s.ps.push((newp as usize, *newlt));
+
+                // Write to a random (other) allocation...
+                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+                unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
+            }
         }
     }
 }
 
-pub fn help_test_one_alloc_dealloc_realloc<T: GlobalAlloc>(sm: &T, mut r: &mut StdRng, ps: &mut Vec<(usize, Layout)>, m: &mut HashSet<(usize, Layout)>, ls: &[Layout]) {
-    // random coin
-    let coin = r.random_range(0..3);
-    if coin == 0 {
-        // Free
-        if !ps.is_empty() {
-            let (p, lt) = ps.swap_remove(r.random_range(0..ps.len()));
-            debug_assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            m.remove(&(p, lt));
-            unsafe { sm.dealloc(p as *mut u8, lt) };
-        }
-    } else if coin == 1 {
-        // Malloc
-        let lt = ls.choose(&mut r).unwrap();
-        let p = unsafe { sm.alloc(*lt) };
-        debug_assert!(!p.is_null());
-        debug_assert!(!m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-        m.insert((p as usize, *lt));
-        ps.push((p as usize, *lt));
-    } else {
-        // Realloc
-        if !ps.is_empty() {
-            let i = r.random_range(0..ps.len());
-            let (p, lt) = ps.swap_remove(i);
-            debug_assert_ne!(p, 0);
-            debug_assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            m.remove(&(p, lt));
+pub fn help_test_alloc_dealloc_realloc<T>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>)
+where
+    T: GlobalAlloc + ?Sized + Sync
+{
+    for _i in 0..iters {
+        // random coin
+        let coin = s.r.random_range(0..3);
+        if coin == 0 {
+            // Free
+            if !s.ps.is_empty() {
+                let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+                s.m.remove(&(p, lt));
+                unsafe { al.dealloc(p as *mut u8, lt) };
+            }
+        } else if coin == 1 {
+            // Malloc
+            let lt = ls.choose(&mut s.r).unwrap();
+            let p = unsafe { al.alloc(*lt) };
+            debug_assert!(!p.is_null(), "{lt:?}");
+            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.insert((p as usize, *lt));
+            s.ps.push((p as usize, *lt));
+        } else {
+            // Realloc
+            if !s.ps.is_empty() {
+                let i = s.r.random_range(0..s.ps.len());
+                let (p, lt) = s.ps.swap_remove(i);
+                debug_assert_ne!(p, 0);
+                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+                s.m.remove(&(p, lt));
 
-            let newlt = ls.choose(&mut r).unwrap();
-            let newp = unsafe { sm.realloc(p as *mut u8, lt, newlt.size()) };
+                let newlt = ls.choose(&mut s.r).unwrap();
+                let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
 
-            debug_assert!(!m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
-            m.insert((newp as usize, *newlt));
-            ps.push((newp as usize, *newlt));
+                debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+                s.m.insert((newp as usize, *newlt));
+                s.ps.push((newp as usize, *newlt));
+            }
         }
     }
+}
+
+pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        // random coin
+        if s.r.random::<bool>() && !s.ps.is_empty() {
+            // Free
+            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
+            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
+            unsafe { al.dealloc(p as *mut u8, lt) };
+
+            // Write to a random (other) allocation...
+            if !s.ps.is_empty() {
+                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+            }
+        } else {
+            // Malloc
+            let lt = ls.choose(&mut s.r).unwrap();
+            let p = unsafe { al.alloc(*lt) };
+            debug_assert!(!p.is_null());
+            unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.insert((p as usize, *lt));
+            s.ps.push((p as usize, *lt));
+
+            // Write to a random (other) allocation...
+            if !s.ps.is_empty() {
+                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+                unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+            }
+        }
+    }
+}
+
+pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        if s.r.random::<bool>() && !s.ps.is_empty() {
+            // Free
+            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+            assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
+            unsafe { al.dealloc(p as *mut u8, lt) };
+        } else {
+            // Malloc
+            let l = *(ls.choose(&mut s.r).unwrap());
+            let p = unsafe { al.alloc(l) };
+            assert!(!p.is_null());
+            let pu = p as usize;
+            assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
+            s.m.insert((pu, l));
+            s.ps.push((pu, l));
+        }
+    }
+}
+
+pub fn help_test_alloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        // Malloc
+        let l = *(ls.choose(&mut s.r).unwrap());
+        let p = unsafe { al.alloc(l) };
+        assert!(!p.is_null(), "l: {l:?}");
+        let pu = p as usize;
+        assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
+        s.m.insert((pu, l));
+        s.ps.push((pu, l));
+    }
+}
+
+use std::sync::Arc;
+pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters: u32, al: &Arc<T>, ls: &Arc<Vec<Layout>>)
+where
+    T: GlobalAlloc + ?Sized + Sync + Send,
+    F: Fn(&Arc<T>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+{
+    thread::scope(|scope| {
+        for _t in 0..threads {
+            let inneral = Arc::clone(al);
+            let innerls = Arc::clone(ls);
+            scope.spawn(move || {
+                let mut s = TestState::new(iters);
+
+                f(&inneral, iters, &mut s, &innerls);
+            });
+        }
+    });
+}
+
+pub fn gen_layouts() -> Vec<Layout> {
+    let mut ls = Vec::new();
+    for siz in [35, 64, 128, 500, 2000, 10_000] {
+        ls.push(Layout::from_size_align(siz, 1).unwrap());
+        ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
+        ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
+        ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
+    }
+
+    ls
 }
 
 #[cfg(test)]
 pub mod tests {
-    // xxx add tests for realloc?
     use super::*;
-    use std::cmp::min;
-    use std::sync::Arc;
-
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
 
     const fn help_pow2_usize(bits: u8) -> usize {
         2usize.pow(bits as u32)
@@ -2479,8 +1427,6 @@ pub mod tests {
         unsafe { sm.dealloc(p, layout) };
     }
 
-    use std::thread;
-
     #[test]
     fn main_thread_init() {
         let sm = Smalloc::new();
@@ -2592,166 +1538,26 @@ pub mod tests {
         help_test_multithreaded(1, 100, false, false, false);
     }
 
+    fn help_test_multithreaded(threads: u32, iters: u32, dealloc: bool, realloc: bool, writes: bool)  {
+        let al = Arc::new(Smalloc::new());
+        let ls = Arc::new(gen_layouts());
 
-    fn help_test_multithreaded(numthreads: u32, numiters: u32, dealloc: bool, realloc: bool, writes: bool) {
-        let sm = Arc::new(Smalloc::new());
-        sm.idempotent_init().unwrap();
+        let f = match (dealloc, realloc, writes) {
+            (true, true, true) => { help_test_alloc_dealloc_realloc_with_writes }
+            (true, true, false) => { help_test_alloc_dealloc_realloc }
+            (true, false, true) => { help_test_alloc_dealloc_with_writes }
+            (true, false, false) => { help_test_alloc_dealloc }
+            (false, false, false) => { help_test_alloc }
+            (false, _, _) => panic!()
+        };
 
-        let mut handles = Vec::new();
-        for _i in 0..numthreads {
-            let smc = Arc::clone(&sm);
-            handles.push(thread::spawn(move || {
-                let r = StdRng::seed_from_u64(0);
-                help_test(&smc, numiters, r, dealloc, realloc, writes);
-            }));
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-    }
-
-    use ahash::HashSet;
-    use ahash::RandomState;
-    
-    fn help_test_alloc_dealloc(sm: &Smalloc, numiters: u32, l: Layout, r: &mut StdRng) {
-        let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_capacity_and_hasher(10_000_000, RandomState::with_seed(r.random::<u64>() as usize));
-        
-        let mut ps = Vec::new();
-
-        for _i in 0..numiters {
-            // random coin
-            if r.random::<bool>() {
-                // Free
-                if !ps.is_empty() {
-                    let i = r.random_range(0..ps.len());
-                    let (p, lt) = ps.swap_remove(i);
-                    assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-                    m.remove(&(p, lt));
-                    unsafe { sm.dealloc(p, lt) };
-                }
-            } else {
-                // Malloc
-                let p = unsafe { sm.alloc(l) };
-                assert!(!p.is_null(), "l: {l:?}");
-                assert!(!m.contains(&(p, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-                m.insert((p, l));
-                ps.push((p, l));
-            }
-        }
-    }
-
-    fn help_test_alloc(sm: &Smalloc, _numiters: u32, l: Layout, _r: &mut StdRng) {
-        let p = unsafe { sm.alloc(l) };
-        assert!(!p.is_null());
+        help_test_multithreaded_with_allocator(f, threads, iters, &al, &ls);
     }
 
     fn help_slotsize(sc: u8) -> usize {
         help_pow2_usize(sc + NUM_SMALLEST_SLOT_SIZE_BITS)
     }
 
-    fn help_test(sm: &Smalloc, numiters: u32, mut r: StdRng,  dealloc: bool, realloc: bool, writes: bool) {
-        let l = Layout::from_size_align(64, 1).unwrap();
-        
-        for _i in 0..numiters {
-            match (dealloc, realloc, writes) {
-                (true, true, true) => {
-                    help_test_alloc_dealloc_realloc_with_writes(sm, numiters, l, &mut r)
-                }
-                (true, true, false) => {
-                    help_test_alloc_dealloc_realloc(sm, numiters, l, &mut r)
-                }
-                (true, false, true) => {
-                    help_test_alloc_dealloc_with_writes(sm, numiters, l, &mut r);
-                }
-                (true, false, false) => {
-                    help_test_alloc_dealloc(sm, numiters, l, &mut r)
-                }
-                (false, false, false) => {
-                    help_test_alloc(sm, numiters, l, &mut r)
-                }
-                (false, _, _) => todo!()
-            }
-        }
-    }
-    
-    fn help_test_alloc_dealloc_with_writes(sm: &Smalloc, numiters: u32, l: Layout, r: &mut StdRng) {
-        let mut m: HashSet<(*mut u8, Layout)> = HashSet::with_capacity_and_hasher(10_000_000, RandomState::with_seed(r.random::<u64>() as usize));
-        
-        let mut ps = Vec::new();
-        
-        for _i in 0..numiters {
-            if r.random::<bool>() && !ps.is_empty() {
-                // Free
-                let (p, lt) = ps.swap_remove(r.random_range(0..ps.len()));
-                assert!(m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-                m.remove(&(p, lt));
-                unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
-                unsafe { sm.dealloc(p, lt) };
-
-                // Write to a random (other) allocation...
-                if !ps.is_empty() {
-                    let (po, lto) = ps[r.random_range(0..ps.len())];
-                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po, min(BYTES2.len(), lto.size())) };
-                }
-            } else {
-                // Malloc
-                let p = unsafe { sm.alloc(l) };
-                assert!(!p.is_null());
-                unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), l.size())) };
-                assert!(!m.contains(&(p, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-                m.insert((p, l));
-                ps.push((p, l));
-
-                // Write to a random (other) allocation...
-                if !ps.is_empty() {
-                    let (po, lto) = ps[r.random_range(0..ps.len())];
-                    unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), po, min(BYTES4.len(), lto.size())) };
-                }
-            }
-        }
-    }
-    
-    fn help_test_alloc_dealloc_realloc(sm: &Smalloc, numiters: u32, l: Layout, r: &mut StdRng) {
-        let l1 = l;
-        let mut ls = Vec::new();
-        ls.push(l1);
-        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
-        ls.push(l2);
-        let l3 = Layout::from_size_align(max(11, l1.size()) - 10, l1.align()).unwrap();
-        ls.push(l3);
-        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
-        ls.push(l4);
-        
-        let mut m: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(10_000_000, RandomState::with_seed(r.random::<u64>() as usize));
-
-        let mut ps = Vec::new();
-
-        for _i in 0..numiters {
-            help_test_one_alloc_dealloc_realloc(sm, r, &mut ps, &mut m, &ls);
-        }
-    }
-
-    pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(sm: &T, numiters: u32, l: Layout, r: &mut StdRng) {
-        let l1 = l;
-        let mut ls = Vec::new();
-        ls.push(l1);
-        let l2 = Layout::from_size_align(l1.size() + 10, l1.align()).unwrap();
-        ls.push(l2);
-        let l3 = Layout::from_size_align(max(11, l1.size()) - 10, l1.align()).unwrap();
-        ls.push(l3);
-        let l4 = Layout::from_size_align(l1.size() * 2 + 10, l1.align()).unwrap();
-        ls.push(l4);
-        
-        let mut m: HashSet<(usize, Layout)> = HashSet::with_capacity_and_hasher(10_000_000, RandomState::with_seed(r.random::<u64>() as usize));
-
-        let mut ps = Vec::new();
-
-        for _i in 0..numiters {
-            help_test_one_alloc_dealloc_realloc_with_writes(sm, r, &mut ps, &mut m, &ls);
-        }
-    }
-    
     use std::sync::atomic::Ordering::Relaxed;
     fn help_set_flh_singlethreaded(flhbp: usize, sc: u8, slotnum: u32, slabnum: u8) {
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;

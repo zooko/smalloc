@@ -1,11 +1,11 @@
 # smalloc -- a simple memory allocator
 
-`smalloc` is a memory allocator, suitable (I hope) as a drop-in replacement for `ptmalloc` (the
-glibc memory allocator), `libmalloc` (the Macos userspace memory allocator), `jemalloc`, `mimalloc`,
-`snmalloc`, `rpmalloc`, etc.
+`smalloc` is a memory allocator, suitable (I hope) as a drop-in replacement for the Rust default
+global allocator, and (hopefully) other general-purpose allocators like `jemalloc`, `mimalloc`,
+`snmalloc`, etc.
 
-`smalloc` offers performance properties comparable to the other memory managers, while being
-simpler. The current implementation is only 395 lines of Rust code (excluding comments, tests,
+`smalloc` offers performance competitive with the other memory managers, while being much
+simpler. The current implementation is only 379 lines of Rust code (excluding docs, comments, tests,
 benchmarks, etc).
 
 # Caveats
@@ -14,6 +14,15 @@ No warranty! Not supported. Never been security audited. First time Rust project
 told me, laughing, that a low-level memory manager was "worst choice ever for a first-time Rust
 project"). There is no security contact information nor anyone you can contact for help using this
 code. Use at your own risk!
+
+In fact, I just found a sporadic bug that occurs only in a specific case and only very rarely at
+that (and maybe only on ARM?), and I left it in as an "Easter Egg" for any enterprising bug-hunters
+out there. I'll try to remember to go back and take it out before I consider removing this warning
+not to rely on `smalloc`.
+
+I will give a bounty of 100 Zcash (ZEC) to the first person who submits a pull request on github
+that fixes this Easter Egg bug. :-)
+
 
 # Usage
 
@@ -31,9 +40,10 @@ See `./src/bin/hellosmalloc.rs` for a test program that demonstrates how to do t
 That's it! There are no other features you could consider using, no other changes you need to make,
 no configuration options, no tuning options, no nothing.
 
-# Tests and Benchmarks
 
-Tests and benchmarks are run using the `nextest` runner.
+# Tests
+
+Tests are run using the `nextest` runner.
 
 To run the tests:
 
@@ -43,15 +53,38 @@ cargo --frozen nextest run tests::
 
 And look at stdout to see the test results.
 
-To run the benchmarks: xxx update this
+# Benchmarks
+
+To run the benchmarks, run `./runbench.sh` and read the stdout.
+
+Here are the results of running it on my Apple M4 Max CPU. This took 4 minutes:
 
 ```text
-cargo --frozen nextest run --release benches::
+madrww1                                            [   6.1 ms ...   3.6 ms ]     -40.43%*
+madrww32                                           [  21.8 ms ...  13.3 ms ]     -39.09%*
+madrww2048                                         [    1.5 s ...    1.1 s ]     -27.81%*
+
+Look in "./benchresults" for results.
 ```
 
-And open the `index.html` files in `./target/criterion/*/report/` to view the benchmark results.
+The benchmarks compare `smalloc` with the default Rust global allocator. This output is saying that
+with one thread, `smalloc` was 170% as fast, with 32 threads, `smalloc` was 164% as fast, and with
+2048 threads, `smalloc` was 136% as fast.
 
-xxx migrate to a different benchmarking tool
+The benchmarks use the excellent ["Tango" benchmarking tool](https://github.com/bazhenov/tango) to
+do pairwise testing, which statistically "subtracts out" most of the noise inherent in your system
+(such as other processes running, the CPU throttling itself to reduce heat, etc). So the reported
+relative performance of `smalloc` and the default allocator are probably valid even if other things
+were going on when you ran the benchmarks.
+
+The benchmarking script also generates plots. Look in the `./benchresults` directory for the svg
+files containing them. To interpret the plots, see [this
+documentation](https://github.com/zooko/tango/blob/zooko1/README.md#plots).
+
+Here are the plots from the "madrww1" benchmark whose stdout is shown above:
+
+[Plot](savedbenchresults/madrww1.svg)
+
 
 # How it works
 
