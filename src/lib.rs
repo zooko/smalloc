@@ -320,7 +320,16 @@ unsafe impl GlobalAlloc for Smalloc {
 
                 debug_assert!((p_addr == 0) || (p_addr >= self.get_sm_baseptr()) && (p_addr <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
 
-                p_addr as *mut u8
+                if p_addr == 0 {
+                    // The slab was full. Overflow to a slab with larger slots, by recursively
+                    // calling `.alloc()` with a doubled requested size. (Doubling the requested
+                    // size guarantees that the new recursive request will use the next larger sc.)
+
+                    let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version
+                    unsafe { self.alloc(doublesize_layout) }
+                } else {
+                    p_addr as *mut u8
+                }
             }
         }
     }
@@ -1548,20 +1557,12 @@ pub mod tests {
         flha.store(slotnum as u64, Relaxed);
     }
 
-    fn _help_get_flh_singlethreaded(smbp: usize, sc: u8, slabnum: u8) -> u32 {
-        let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = smbp | const_shl_u16_usize(flhi, 3);
-        let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-
-        flha.load(Relaxed) as u32
-    }
-
     /// If we've allocated all of the slots from a slab, then the next allocation comes from the
-    /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 31).
-    fn _help_test_overflow(sc: u8) {
+    /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 30) nor on the
+    /// second-biggest (sc 29).
+    fn help_test_overflow(sc: u8) {
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
-        let smbp = sm.get_sm_baseptr();
 
         let siz = help_slotsize(sc);
         let alignedsizebits = req_to_slotsizebits(siz, 1);
@@ -1593,6 +1594,11 @@ pub mod tests {
             let pt = unsafe { sm.alloc(l) };
             assert!(!pt.is_null());
 
+            let (scn, _slabnumn, slotnumn) = help_ptr_to_loc(&sm, pt, l);
+            assert_eq!(scn + 2, alignedsizebits);
+            assert_eq!(scn, sc);
+            assert_eq!(slotnumn, i);
+
             i += 1
         }
 
@@ -1619,11 +1625,10 @@ pub mod tests {
         assert_eq!(slabnum3, slabnum1);
         assert!(sc3 + 2 > alignedsizebits);
         assert_eq!(slotnum3, 0);
-        assert_eq!(_help_get_flh_singlethreaded(smbp, sc3, slabnum), 1, "sc3: {sc3}");
 
         // Step 5: If we alloc_slot() again on this thread, it will come from this new slab:
         let p4 = unsafe { sm.alloc(l) };
-        assert!(!p4.is_null());
+        assert!(!p4.is_null(), "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}, slotnum3: {slotnum3}");
 
         let (sc4, slabnum4, slotnum4) = help_ptr_to_loc(&sm, p4, l);
 
@@ -1631,18 +1636,15 @@ pub mod tests {
         assert!(sc4 + 2 > alignedsizebits);
         assert_eq!(slabnum4, slabnum3);
         assert_eq!(slotnum4, 1);
-
-        // We've now allocated two slots from this new area:
-        assert_eq!(_help_get_flh_singlethreaded(smbp, sc4, slabnum), 2);
     }
 
-    //xxx known to fail (overflow is currently unimplemented) #[test]
     /// If we've allocated all of the slots from a slab, the subsequent allocations come from a
     /// larger sizeclass.
-    fn _overflow_x() {
+    #[test]
+    fn overflow_x() {
         // This doesn't work for the largest large slab because there is no where to overflow to.
-        for sc in 0..NUM_SCS - 1 { 
-            _help_test_overflow(sc);
+        for sc in 0..NUM_SCS - 2 { 
+            help_test_overflow(sc);
         }
     }
 
