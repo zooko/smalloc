@@ -727,6 +727,8 @@ pub fn dev_find_max_vm_space_allocatable() {
 }
 
 
+pub mod smallocb_allocator_config;
+
 pub mod benchmarks {
     extern crate libc;
     use std::alloc::GlobalAlloc;
@@ -795,10 +797,10 @@ pub mod benchmarks {
     use rand::SeedableRng;
     use rand::Rng;
 
-    pub fn multithread_bench<T, F>(bf: F, threads: u32, iters: u32, name: &str, al: Arc<T>, ls: Arc<Vec<Layout>>)
+    use crate::smallocb_allocator_config::AllocatorType;
+    pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: Arc<AllocatorType>, ls: Arc<Vec<Layout>>)
     where
-        T: GlobalAlloc + Sync + Send,
-        F: Fn(&Arc<T>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+        F: Fn(&Arc<AllocatorType>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
     {
         let arcal = Arc::clone(&al);
         let arcls = Arc::clone(&ls);
@@ -810,22 +812,6 @@ pub mod benchmarks {
         let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
 
         eprintln!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
-    }
-
-    use std::hint::black_box;
-
-    #[inline(never)]
-    pub fn dummy_func(maxi: u8, maxj: u8) -> u8 {
-        // When I make this code a little faster/simpler than maxi=30, maxj=29, then various clocks
-        // on Macos on Apple M4 Max start telling me that it took 0 nanoseconds. 🤔
-        let mut a = Arc::new(0);
-        for i in 0..maxi {
-            for j in 0..maxj {
-                *Arc::make_mut(&mut a) ^= black_box(i.wrapping_mul(j));
-            }
-    }
-
-        *a
     }
 
     pub struct TestState {
@@ -860,7 +846,8 @@ const BYTES4: [u8; 8] = [0x12, 0x11, 0x10, 0xF, 0xE, 0xD, 0xC, 0xB];
 const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
 use benchmarks::TestState;
-pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc + ?Sized>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+use crate::smallocb_allocator_config::AllocatorType;
+pub fn help_test_alloc_dealloc_realloc_with_writes(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
     for _i in 0..iters {
         // random coin
         let coin = s.r.random_range(0..3);
@@ -919,9 +906,7 @@ pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc + ?Sized>(al: 
     }
 }
 
-pub fn help_test_alloc_dealloc_realloc<T>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>)
-where
-    T: GlobalAlloc + ?Sized + Sync
+pub fn help_test_alloc_dealloc_realloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>)
 {
     for _i in 0..iters {
         // random coin
@@ -962,7 +947,27 @@ where
     }
 }
 
-pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+use std::hint::black_box;
+#[inline(never)]
+pub fn dummy_func(maxi: u8, maxj: u8) -> u8 {
+    let mut a = Arc::new(0);
+    for i in 0..maxi {
+        for j in 0..maxj {
+            *Arc::make_mut(&mut a) ^= black_box(i.wrapping_mul(j));
+        }
+    }
+
+    *a
+}
+
+pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestState, _ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        //dummy_func(9, 7); // This crashed with heap corruption twice out of about 10 runs.
+        dummy_func(2, 3);
+    }
+}
+
+pub fn help_test_alloc_dealloc_with_writes(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
     for _i in 0..iters {
         // random coin
         if s.r.random::<bool>() && !s.ps.is_empty() {
@@ -997,7 +1002,7 @@ pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &Arc<T>, iters: u
     }
 }
 
-pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc_dealloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
     for _i in 0..iters {
         if s.r.random::<bool>() && !s.ps.is_empty() {
             // Free
@@ -1018,7 +1023,7 @@ pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut 
     }
 }
 
-pub fn help_test_alloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
     for _i in 0..iters {
         // Malloc
         let l = *(ls.choose(&mut s.r).unwrap());
@@ -1032,10 +1037,9 @@ pub fn help_test_alloc<T: GlobalAlloc>(al: &Arc<T>, iters: u32, s: &mut TestStat
 }
 
 use std::sync::Arc;
-pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters: u32, al: &Arc<T>, ls: &Arc<Vec<Layout>>)
+pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: &Arc<AllocatorType>, ls: &Arc<Vec<Layout>>)
 where
-    T: GlobalAlloc + ?Sized + Sync + Send,
-    F: Fn(&Arc<T>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+    F: Fn(&Arc<AllocatorType>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
 {
     thread::scope(|scope| {
         for _t in 0..threads {

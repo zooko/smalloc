@@ -3,9 +3,11 @@
 
 #[cfg(not(test))]
 mod notests {
-    use smalloc::benchmarks::{clock, dummy_func, bench_itered, bench_once, alloc_and_free, GlobalAllocWrap, TestState, multithread_bench};
-    use smalloc::{gen_layouts, help_test_alloc_dealloc_realloc_with_writes, help_test_alloc_dealloc_realloc};
+    use smalloc::benchmarks::{clock, bench_itered, bench_once, alloc_and_free, GlobalAllocWrap, TestState, multithread_bench};
+    use smalloc::{dummy_func, gen_layouts, help_test_alloc_dealloc_realloc_with_writes, help_test_alloc_dealloc_realloc};
     use smalloc::Smalloc;
+
+    use smalloc::smallocb_allocator_config::gen_allocator;
 
     use std::hint::black_box;
     use std::alloc::Layout;
@@ -32,58 +34,63 @@ mod notests {
 
         const ITERS: u32 = 1_850_000;
 
-        let sm = Arc::new(Smalloc::new());
-        let bi = Arc::new(GlobalAllocWrap);
+//xxx        let sm = Arc::new(Smalloc::new());
+//xxx        let bi = Arc::new(GlobalAllocWrap);
         let ls = Arc::new(gen_layouts());
 
+        let al = gen_allocator();
         thread::scope(|scope| {
             scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "smalloc adrww    1", Arc::clone(&sm), Arc::clone(&ls));
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "default adrww    1", Arc::clone(&al), Arc::clone(&ls));
             });
 
-            scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "builtin adrww    1", Arc::clone(&bi), Arc::clone(&ls));
-            });
+//xxx            scope.spawn(|| {
+//xxx                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, ITERS, "builtin adrww    1", Arc::clone(&bi), Arc::clone(&ls));
+//xxx            });
         });
 
+        let al = gen_allocator();
         thread::scope(|scope| {
             scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "smalloc adrww   32", Arc::clone(&sm), Arc::clone(&ls));
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "default adrww   32", Arc::clone(&al), Arc::clone(&ls));
             });
 
-            scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "builtin adrww   32", Arc::clone(&bi), Arc::clone(&ls));
-            });
+//xxx            scope.spawn(|| {
+//xxx                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 32, ITERS, "builtin adrww   32", Arc::clone(&bi), Arc::clone(&ls));
+//xxx            });
         });
 
+        let al = gen_allocator();
         thread::scope(|scope| {
             scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "smalloc adrww  128", Arc::clone(&sm), Arc::clone(&ls));
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "default adrww  128", Arc::clone(&al), Arc::clone(&ls));
             });
 
-            scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "builtin adrww  128", Arc::clone(&bi), Arc::clone(&ls));
-            });
+//xxx            scope.spawn(|| {
+//xxx                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 128, ITERS, "builtin adrww  128", Arc::clone(&bi), Arc::clone(&ls));
+//xxx            });
         });
 
+        let al = gen_allocator();
         thread::scope(|scope| {
             scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "smalloc adrww 1024", Arc::clone(&sm), Arc::clone(&ls));
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "default adrww 1024", Arc::clone(&al), Arc::clone(&ls));
             });
 
-            scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "builtin adrww 1024", Arc::clone(&bi), Arc::clone(&ls));
-            });
+//xxx            scope.spawn(|| {
+//xxx                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1024, ITERS, "builtin adrww 1024", Arc::clone(&bi), Arc::clone(&ls));
+//xxx            });
         });
 
+        let al = gen_allocator();
         thread::scope(|scope| {
             scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "smalloc adrww 1650", Arc::clone(&sm), Arc::clone(&ls));
+                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "default adrww 1650", Arc::clone(&al), Arc::clone(&ls));
             });
 
-            scope.spawn(|| {
-                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "builtin adrww 1650", Arc::clone(&bi), Arc::clone(&ls));
-            });
+//xxx            scope.spawn(|| {
+//xxx                multithread_bench(help_test_alloc_dealloc_realloc_with_writes, 1650, ITERS, "builtin adrww 1650", Arc::clone(&bi), Arc::clone(&ls));
+//xxx            });
         });
     }
 }
