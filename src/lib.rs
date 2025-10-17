@@ -752,18 +752,18 @@ pub mod benchmarks {
 
     pub struct GlobalAllocWrap;
 
-    use std::alloc::{alloc, dealloc, realloc, Layout};
+    use std::alloc::{System, Layout};
     unsafe impl GlobalAlloc for GlobalAllocWrap {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            unsafe { alloc(layout) }
+            unsafe { System.alloc(layout) }
         }
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            unsafe { dealloc(ptr, layout) }
+            unsafe { System.dealloc(ptr, layout) }
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, reqsize: usize) -> *mut u8 {
-            unsafe { realloc(ptr, layout, reqsize) }
+            unsafe { System.realloc(ptr, layout, reqsize) }
         }
     }
 
