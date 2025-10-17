@@ -297,6 +297,7 @@ unsafe impl GlobalAlloc for Smalloc {
                 let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
                 let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
                 if sc >= NUM_SCS {
+                    eprintln!("smalloc exhausted");
                     // This request exceeds our largest slot size, so we return null ptr.
                     // panic!(); // xxx for clearer failure case in benchmarking
                     return null_mut();
