@@ -30,7 +30,7 @@ harness = false
 opt-level = 3
 debug = false
 codegen-units = 1
-lto = "fat"
+# lto = "fat" # This causes segfaults etc on linux in benchmarks, probably because of the way tango dynamically loads code to be benchmarked
 debug-assertions = false
 overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
