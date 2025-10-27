@@ -25,8 +25,8 @@ const NUM_SCS: u8 = 31; // This is also NUM_MOST_SLOTS_BITS.
 // --- Constant values determined by the constants above ---
 
 // See the ASCII-art map in `README.md` for where these bit masks fit in.
-const NUM_SLABS: usize = 2usize.pow(NUM_SLABS_BITS as u32);
-const NUM_FLHS: usize = NUM_SLABS * NUM_SCS as usize; // 992
+const NUM_SLABS: u8 = 2u8.pow(NUM_SLABS_BITS as u32);
+const NUM_FLHS: u16 = NUM_SLABS as u16 * NUM_SCS as u16; // 992
 const NUM_MOST_SLOTS_BITS: u8 = NUM_SCS;
 const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_MOST_SLOTS_BITS + NUM_SMALLEST_SLOT_SIZE_BITS; // 33
 const NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS + NUM_SLABS_BITS; // 38
@@ -45,7 +45,7 @@ const HIGHEST_SMALLOC_SLOT_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | const_
 // The flh's are laid out after the slabs, and the beginning of the array of flh's is aligned to a
 // power of 2 so that we can compute flh addresses with bitwise arithmetic.
 
-const SIZE_OF_FLHS: usize = NUM_FLHS * 8; // Each flh is 8 bytes, so this is 7936.
+const SIZE_OF_FLHS: usize = NUM_FLHS as usize * 8; // Each flh is 8 bytes, so this is 7936.
 const FLHS_BASE: usize = (HIGHEST_SMALLOC_SLOT_BYTE_ADDR + 1).next_multiple_of(SIZE_OF_FLHS.next_power_of_two()); // 0b1111011111100000000000000000000000000000000
 
 // The total memory needed for slabs and flh's is:
@@ -69,6 +69,7 @@ static GLOBAL_THREAD_NUM: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static THREAD_NUM: Cell<Option<u32>> = const { Cell::new(None) };
+    static SLAB_NUM: Cell<Option<u8>> = const { Cell::new(None) };
 }
 
 /// Get this thread's unique, incrementing number.
@@ -86,6 +87,21 @@ fn get_thread_num() -> u32 {
             |value| value,
         )
     })
+}
+
+/// Get the slab that this thread allocates from. If uninitialized, this is initialized to
+/// `get_thread_num() % 32`.
+fn get_slab_num() -> u8 {
+    SLAB_NUM.with(|cell| {
+        cell.get().map_or_else(
+            || get_thread_num() as u8 & SLABNUM_ALONE_MASK,
+            |value| value,
+        )
+    })
+}
+
+fn set_slab_num(slabnum: u8) {
+    SLAB_NUM.set(Some(slabnum));
 }
 
 pub struct Smalloc {
@@ -303,33 +319,53 @@ unsafe impl GlobalAlloc for Smalloc {
                     return null_mut();
                 };
 
-                // The slabbp is the smbp with the size class bits and the slabnum bits set.
-                let slabnum = get_thread_num() as u8 & SLABNUM_ALONE_MASK;
+                // If the slab is full, we'll switch to another slab in this same sizeclass.
+                let orig_slabnum = get_slab_num();
+                let mut slabnum = orig_slabnum;
+                
+                loop {
+                    // The slabbp is the smbp with the size class bits and the slabnum bits set.
+                    //xxx lookup table instead of shl?
+                    let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
+                    debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {smbp:x}, highest_addr: {:x}", smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+                    debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
 
-                //xxx lookup table instead of shl?
-                let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
-                debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {smbp:x}, highest_addr: {:x}", smbp + HIGHEST_SMALLOC_SLOT_ADDR);
-                debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
+                    let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
+                    let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
+                    let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
-                let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-                let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
-                let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+                    let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
 
-                let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
+                    let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
 
-                let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
+                    debug_assert!((p_addr == 0) || (p_addr >= self.get_sm_baseptr()) && (p_addr <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
 
-                debug_assert!((p_addr == 0) || (p_addr >= self.get_sm_baseptr()) && (p_addr <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
+                    if p_addr != 0 {
+                        // Remember the new slab num for next time.
+                        set_slab_num(slabnum);
 
-                if p_addr == 0 {
-                    // The slab was full. Overflow to a slab with larger slots, by recursively
-                    // calling `.alloc()` with a doubled requested size. (Doubling the requested
-                    // size guarantees that the new recursive request will use the next larger sc.)
+                        return p_addr as *mut u8;
+                    }
 
-                    let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version
-                    unsafe { self.alloc(doublesize_layout) }
-                } else {
-                    p_addr as *mut u8
+                    // This slab was full.  Overflow to a different slab in the same size
+                    // class. Which slabnumber? 1. It should be relatively prime to NUM_SLABS so
+                    // that we will try all slabs before returning to the original one. 2. It should
+                    // be larger than 1 or 2 because the next couple threads got those slabs (the
+                    // first time they allocated). 3. It should use the information from the thread
+                    // number, not just the (strictly lesser) information from the original slab
+                    // number. So:
+                    const STEPS: [u8; 10] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31];
+                    let ix = (get_thread_num() as usize / NUM_SLABS as usize) % STEPS.len();
+                    slabnum = (slabnum + STEPS[ix]) % NUM_SLABS;
+
+                    if slabnum == orig_slabnum {
+                        // All slabs in this sizeclass were full. Overflow to a slab with larger
+                        // slots, by recursively calling `.alloc()` with a doubled requested
+                        // size. (Doubling the requested size guarantees that the new recursive
+                        // request will use the next larger sc.)
+                        let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version
+                        return unsafe { self.alloc(doublesize_layout) }
+                    }
                 }
             }
         }
@@ -1364,7 +1400,7 @@ pub mod tests {
 
         let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-        let orig_slabareanum = get_thread_num() as u8 & SLABNUM_ALONE_MASK;
+        let orig_slabareanum = get_slab_num();
 
         let p1 = unsafe { sm.alloc(l) };
         assert!(!p1.is_null(), "l: {l:?}");
@@ -1562,23 +1598,24 @@ pub mod tests {
         flha.store(slotnum as u64, Relaxed);
     }
 
-    /// If we've allocated all of the slots from a slab, then the next allocation comes from the
-    /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 30) nor on the
-    /// second-biggest (sc 29).
-    fn help_test_overflow(sc: u8) {
+    /// If we've allocated all the slots from a slab, the next allocation of that sizeclass comes
+    /// from a different slab of the same sizeclass. This test doesn't work for the largest
+    /// sizeclass simply because the test assumes you can allocate 2 slots...
+    fn help_test_overflow_to_other_slab(sc: u8) {
+        debug_assert!(sc < NUM_SCS);
+
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
 
         let siz = help_slotsize(sc);
-        let alignedsizebits = req_to_slotsizebits(siz, 1);
         let l = Layout::from_size_align(siz, 1).unwrap();
+        let alignedsizebits = req_to_slotsizebits(siz, 1);
 
-        let slabnum = get_thread_num() as u8 & SLABNUM_ALONE_MASK;
+        let slabnum = get_slab_num();
 
         let numslots = help_pow2_u32(NUM_MOST_SLOTS_BITS - sc);
 
         // Step 0: reach into the slab's `flh` and set it to almost the max slot number.
-
         let first_i = numslots - 3;
         let mut i = first_i;
         help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, i, slabnum);
@@ -1618,17 +1655,16 @@ pub mod tests {
         assert_eq!(slabnum1, slabnum2);
         assert_eq!(slotnum2, numslots - 2);
 
-        // Step 4: Allocate another slot and store it in local variables:
+        // Step 4: allocate another slot and store it in local variables:
         let p3 = unsafe { sm.alloc(l) };
         assert!(!p3.is_null());
 
         let (sc3, slabnum3, slotnum3) = help_ptr_to_loc(&sm, p3, l);
 
-        // The raison d'etre for this test: Assert that the newly allocated slot is in a bigger
-        // size class, same areanum.
-        assert_eq!(sc3, sc + 1, "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}");
-        assert_eq!(slabnum3, slabnum1);
-        assert!(sc3 + 2 > alignedsizebits);
+        // The raison d'etre for this test: Assert that the newly allocated slot is in the same size
+        // class but a different slab.
+        assert_eq!(sc3, sc, "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}");
+        assert_ne!(slabnum3, slabnum1);
         assert_eq!(slotnum3, 0);
 
         // Step 5: If we alloc_slot() again on this thread, it will come from this new slab:
@@ -1636,23 +1672,92 @@ pub mod tests {
         assert!(!p4.is_null(), "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}, slotnum3: {slotnum3}");
 
         let (sc4, slabnum4, slotnum4) = help_ptr_to_loc(&sm, p4, l);
-
+        
         assert_eq!(sc4, sc3);
-        assert!(sc4 + 2 > alignedsizebits);
+        assert!(sc4 + 2 >= alignedsizebits, "{sc4}, {alignedsizebits}");
         assert_eq!(slabnum4, slabnum3);
         assert_eq!(slotnum4, 1);
     }
 
+    /// If we've allocated all of the slots from a slab, then the next allocation comes from the
+    /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 30).
+    fn help_test_overflow_to_other_sizeclass(sc: u8) {
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+
+        let siz = help_slotsize(sc);
+        let l = Layout::from_size_align(siz, 1).unwrap();
+        let alignedsizebits = req_to_slotsizebits(siz, 1);
+        let numslots = help_pow2_u32(NUM_MOST_SLOTS_BITS - sc);
+        let slabnum = get_slab_num();
+
+        // Step 0: allocate a slot and store information about it in local variables:
+        let p1 = unsafe { sm.alloc(l) };
+        assert!(!p1.is_null());
+        
+        let (sc1, slabnum1, _slotnum1) = help_ptr_to_loc(&sm, p1, l);
+
+        assert_eq!(sc1, sc);
+        assert_eq!(sc1 + 2, alignedsizebits);
+        assert_eq!(slabnum1, slabnum);
+
+        // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
+        // free list is empty).
+        for slabnum in 0..NUM_SLABS {
+            help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, numslots - 1, slabnum);
+        }
+
+        // Step 3: Allocate another slot and store it in local variables:
+        let p2 = unsafe { sm.alloc(l) };
+        assert!(!p2.is_null());
+
+        let (sc2, slabnum2, slotnum2) = help_ptr_to_loc(&sm, p2, l);
+
+        // The raison d'etre for this test: Assert that the newly allocated slot is in a bigger
+        // size class, same areanum.
+        assert_eq!(sc2, sc + 1, "sc2: {sc2}, sc: {sc}, slabnum2: {slabnum2}, slabnum1: {slabnum1}, p2: {p2:?}, p2: {p2:?}");
+        assert_eq!(slabnum2, slabnum1);
+        assert!(sc2 + 2 > alignedsizebits);
+        assert_eq!(slotnum2, 0);
+
+        // Step 5: If we alloc_slot() again on this thread, it will come from this new slab:
+        let p3 = unsafe { sm.alloc(l) };
+        assert!(!p3.is_null(), "sc2: {sc2}, sc: {sc}, slabnum2: {slabnum2}, slabnum1: {slabnum1}, p1: {p1:?}, p2: {p2:?}, slotnum2: {slotnum2}");
+
+        let (sc3, slabnum3, slotnum3) = help_ptr_to_loc(&sm, p3, l);
+
+        assert_eq!(sc3, sc2);
+        assert_eq!(slabnum3, slabnum2);
+        assert_eq!(slotnum3, 1);
+    }
+
     /// If we've allocated all of the slots from a slab, the subsequent allocations come from a
-    /// larger sizeclass.
+    /// different slab in the same sizeclass.
     #[test]
-    fn overflow_x() {
-        // This doesn't work for the largest large slab because there is no where to overflow to.
-        for sc in 0..NUM_SCS - 2 { 
-            help_test_overflow(sc);
+    fn overflow_to_other_slab() {
+        for sc in 0..NUM_SCS - 1 { 
+            help_test_overflow_to_other_slab(sc);
         }
     }
 
+    /// If we've allocated all of the slots from all slabs of this sizeclass, the subsequent
+    /// allocations come from a bigger sizeclass.
+    #[test]
+    fn overflow_to_other_sizeclass() {
+        for sc in 0..NUM_SCS - 2 { 
+            help_test_overflow_to_other_sizeclass(sc);
+        }
+    }
+
+    /// Overflow works with more threads than our internal lookup table has entries.
+    #[test]
+    fn overflow_with_many_threads() {
+        // We need 320 threads to exceed the 10-index internal lookup table, but instead of spawning
+        // a bunch of threads here we're just going to reach in and set the thread num .
+        THREAD_NUM.set(Some(320));
+        help_test_overflow_to_other_slab(0);
+    }
+    
     #[test]
     /// If we've allocated all of the slots from the largest large-slots slab, the next allocation
     /// fails.
@@ -1664,10 +1769,10 @@ pub mod tests {
         let siz = help_slotsize(sc);
         let l = Layout::from_size_align(siz, 1).unwrap();
 
-        let slabnum = get_thread_num() as u8 & SLABNUM_ALONE_MASK;
-
-        // Step 0: reach into the slab's `flh` and set it to the max slot number.
-        help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, 1, slabnum);
+        // Step 0: reach into each slab's `flh` and set it to the max slot number.
+        for slabnum in 0..NUM_SLABS {
+            help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, 1, slabnum);
+        }
 
         // Step 1: allocate a slot
         let p1 = unsafe { sm.alloc(l) };
