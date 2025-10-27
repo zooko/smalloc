@@ -17,11 +17,11 @@ code. Use at your own risk!
 
 In fact, I just found a sporadic bug that occurs only in a specific case and only very rarely at
 that (and maybe only on ARM?), and I left it in as an "Easter Egg" for any enterprising bug-hunters
-out there. I'll try to remember to go back and take it out before I consider removing this warning
-not to rely on `smalloc`.
+out there. I'll try to remember to go back and fix it before I remove this warning not to rely on
+`smalloc`.
 
-I will give a bounty of 100 Zcash (ZEC) to the first person who submits a pull request on github
-that fixes this Easter Egg bug. :-)
+I will give a bounty of 10 Zcash (ZEC) to the first person who submits a pull request on github
+that fixes this Easter Egg bug, if they do so before I get around to committing the fix myself. :-)
 
 
 # Usage
@@ -1035,9 +1035,9 @@ goals, written here in roughly descending order of importance:
   * step 3: change layout so that optimized bittwiddling works for decoding addresses to slots :-)
   * step 4: let's have 8 Mi slots of 8 MiB each instead of 1 Mi slots of 64 MiB each
 
-* add benchmarks of 1000-threads-colliding tests e.g. `threads_1000_large_alloc_dealloc_x()`
-
 * experiment with std::intrinsics::likely/unlikely
+
+* fix that one bug that I'm offering a bounty for
 
 * Port to Cheri, add capability-safety
 
