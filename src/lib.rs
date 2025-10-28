@@ -837,7 +837,7 @@ pub mod benchmarks {
     use crate::smallocb_allocator_config::AllocatorType;
     pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: Arc<AllocatorType>, ls: Arc<Vec<Layout>>)
     where
-        F: Fn(&Arc<AllocatorType>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+        F: Fn(&Arc<AllocatorType>, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
     {
         let arcal = Arc::clone(&al);
         let arcls = Arc::clone(&ls);
@@ -884,102 +884,98 @@ const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
 use benchmarks::TestState;
 use crate::smallocb_allocator_config::AllocatorType;
-pub fn help_test_alloc_dealloc_realloc_with_writes(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
-    for _i in 0..iters {
-        // random coin
-        let coin = s.r.random_range(0..3);
-        if coin == 0 {
-            // Free
-            if !s.ps.is_empty() {
-                let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-                s.m.remove(&(p, lt));
-                unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
-                unsafe { al.dealloc(p as *mut u8, lt) };
-
-                // Write to a random (other) allocation...
-                if !s.ps.is_empty() {
-                    let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
-                }
-            }
-        } else if coin == 1 {
-            // Malloc
-            let lt = ls.choose(&mut s.r).unwrap();
-            let p = unsafe { al.alloc(*lt) };
-            debug_assert!(!p.is_null());
-            unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.insert((p as usize, *lt));
-            s.ps.push((p as usize, *lt));
+pub fn help_test_alloc_dealloc_realloc_with_writes(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    // random coin
+    let coin = s.r.random_range(0..3);
+    if coin == 0 {
+        // Free
+        if !s.ps.is_empty() {
+            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
+            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
+            unsafe { al.dealloc(p as *mut u8, lt) };
 
             // Write to a random (other) allocation...
             if !s.ps.is_empty() {
                 let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
             }
-        } else {
-            // Realloc
-            if !s.ps.is_empty() {
-                let i = s.r.random_range(0..s.ps.len());
-                let (p, lt) = s.ps.swap_remove(i);
-                debug_assert_ne!(p, 0);
-                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-                s.m.remove(&(p, lt));
+        }
+    } else if coin == 1 {
+        // Malloc
+        let lt = ls.choose(&mut s.r).unwrap();
+        let p = unsafe { al.alloc(*lt) };
+        debug_assert!(!p.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.insert((p as usize, *lt));
+        s.ps.push((p as usize, *lt));
 
-                let newlt = ls.choose(&mut s.r).unwrap();
-                let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
-                unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
+        // Write to a random (other) allocation...
+        if !s.ps.is_empty() {
+            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+        }
+    } else {
+        // Realloc
+        if !s.ps.is_empty() {
+            let i = s.r.random_range(0..s.ps.len());
+            let (p, lt) = s.ps.swap_remove(i);
+            debug_assert_ne!(p, 0);
+            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
 
-                debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
-                s.m.insert((newp as usize, *newlt));
-                s.ps.push((newp as usize, *newlt));
+            let newlt = ls.choose(&mut s.r).unwrap();
+            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+            unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
 
-                // Write to a random (other) allocation...
-                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
-            }
+            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+            s.m.insert((newp as usize, *newlt));
+            s.ps.push((newp as usize, *newlt));
+
+            // Write to a random (other) allocation...
+            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+            unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
         }
     }
 }
 
-pub fn help_test_alloc_dealloc_realloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>)
+pub fn help_test_alloc_dealloc_realloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>)
 {
-    for _i in 0..iters {
-        // random coin
-        let coin = s.r.random_range(0..3);
-        if coin == 0 {
-            // Free
-            if !s.ps.is_empty() {
-                let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-                s.m.remove(&(p, lt));
-                unsafe { al.dealloc(p as *mut u8, lt) };
-            }
-        } else if coin == 1 {
-            // Malloc
-            let lt = ls.choose(&mut s.r).unwrap();
-            let p = unsafe { al.alloc(*lt) };
-            debug_assert!(!p.is_null(), "{lt:?}");
-            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.insert((p as usize, *lt));
-            s.ps.push((p as usize, *lt));
-        } else {
-            // Realloc
-            if !s.ps.is_empty() {
-                let i = s.r.random_range(0..s.ps.len());
-                let (p, lt) = s.ps.swap_remove(i);
-                debug_assert_ne!(p, 0);
-                debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-                s.m.remove(&(p, lt));
+    // random coin
+    let coin = s.r.random_range(0..3);
+    if coin == 0 {
+        // Free
+        if !s.ps.is_empty() {
+            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
+            unsafe { al.dealloc(p as *mut u8, lt) };
+        }
+    } else if coin == 1 {
+        // Malloc
+        let lt = ls.choose(&mut s.r).unwrap();
+        let p = unsafe { al.alloc(*lt) };
+        debug_assert!(!p.is_null(), "{lt:?}");
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.insert((p as usize, *lt));
+        s.ps.push((p as usize, *lt));
+    } else {
+        // Realloc
+        if !s.ps.is_empty() {
+            let i = s.r.random_range(0..s.ps.len());
+            let (p, lt) = s.ps.swap_remove(i);
+            debug_assert_ne!(p, 0);
+            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+            s.m.remove(&(p, lt));
 
-                let newlt = ls.choose(&mut s.r).unwrap();
-                let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+            let newlt = ls.choose(&mut s.r).unwrap();
+            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
 
-                debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
-                s.m.insert((newp as usize, *newlt));
-                s.ps.push((newp as usize, *newlt));
-            }
+            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+            s.m.insert((newp as usize, *newlt));
+            s.ps.push((newp as usize, *newlt));
         }
     }
 }
@@ -1004,68 +1000,51 @@ pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestS
     }
 }
 
-pub fn help_test_alloc_dealloc_with_writes(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
-    for _i in 0..iters {
-        // random coin
-        if s.r.random::<bool>() && !s.ps.is_empty() {
-            // Free
-            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
-            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
-            unsafe { al.dealloc(p as *mut u8, lt) };
+pub fn help_test_alloc_dealloc_with_writes(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    // random coin
+    if s.r.random::<bool>() && !s.ps.is_empty() {
+        // Free
+        let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.remove(&(p, lt));
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
+        unsafe { al.dealloc(p as *mut u8, lt) };
 
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
-            }
-        } else {
-            // Malloc
-            let lt = ls.choose(&mut s.r).unwrap();
-            let p = unsafe { al.alloc(*lt) };
-            debug_assert!(!p.is_null());
-            unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-            debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.insert((p as usize, *lt));
-            s.ps.push((p as usize, *lt));
+        // Write to a random (other) allocation...
+        if !s.ps.is_empty() {
+            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+            unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+        }
+    } else {
+        // Malloc
+        let lt = ls.choose(&mut s.r).unwrap();
+        let p = unsafe { al.alloc(*lt) };
+        debug_assert!(!p.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.insert((p as usize, *lt));
+        s.ps.push((p as usize, *lt));
 
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
-            }
+        // Write to a random (other) allocation...
+        if !s.ps.is_empty() {
+            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
+            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
         }
     }
 }
 
-pub fn help_test_alloc_dealloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
-    for _i in 0..iters {
-        if s.r.random::<bool>() && !s.ps.is_empty() {
-            // Free
-            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-            assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
-            unsafe { al.dealloc(p as *mut u8, lt) };
-        } else {
-            // Malloc
-            let l = *(ls.choose(&mut s.r).unwrap());
-            let p = unsafe { al.alloc(l) };
-            assert!(!p.is_null());
-            let pu = p as usize;
-            assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-            s.m.insert((pu, l));
-            s.ps.push((pu, l));
-        }
-    }
-}
-
-pub fn help_test_alloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
-    for _i in 0..iters {
+pub fn help_test_alloc_dealloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    if s.r.random::<bool>() && !s.ps.is_empty() {
+        // Free
+        let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+        assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.remove(&(p, lt));
+        unsafe { al.dealloc(p as *mut u8, lt) };
+    } else {
         // Malloc
         let l = *(ls.choose(&mut s.r).unwrap());
         let p = unsafe { al.alloc(l) };
-        assert!(!p.is_null(), "l: {l:?}");
+        assert!(!p.is_null());
         let pu = p as usize;
         assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
         s.m.insert((pu, l));
@@ -1073,10 +1052,21 @@ pub fn help_test_alloc(al: &Arc<AllocatorType>, iters: u32, s: &mut TestState, l
     }
 }
 
+pub fn help_test_alloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+    // Malloc
+    let l = *(ls.choose(&mut s.r).unwrap());
+    let p = unsafe { al.alloc(l) };
+    assert!(!p.is_null(), "l: {l:?}");
+    let pu = p as usize;
+    assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
+    s.m.insert((pu, l));
+    s.ps.push((pu, l));
+}
+
 use std::sync::Arc;
 pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: &Arc<AllocatorType>, ls: &Arc<Vec<Layout>>)
 where
-    F: Fn(&Arc<AllocatorType>, u32, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+    F: Fn(&Arc<AllocatorType>, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
 {
     thread::scope(|scope| {
         for _t in 0..threads {
@@ -1085,7 +1075,9 @@ where
             scope.spawn(move || {
                 let mut s = TestState::new(iters);
 
-                f(&inneral, iters, &mut s, &innerls);
+                for _i in 0..iters {
+                    f(&inneral, &mut s, &innerls);
+                }
             });
         }
     });
