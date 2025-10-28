@@ -51,6 +51,54 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
     let al = gen_allocator();
 
     [
+        benchmark_fn("alloc-free-re-and-write-0-threads-1-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-0-threads-10-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 10, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-0-threads-100-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 100, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-0-threads-1K-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 1000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-0-threads-8K-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 8000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-0-threads-10K-iters",
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-1-threads-1K-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 1000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-32-threads-10K-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 32, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-32-threads-100K-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 32, 100_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-512-threads-10K-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-512-threads-100K-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 100_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
+        benchmark_fn("alloc-free-re-and-write-512-threads-1M-iters",
+                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 1_000_000, Arc::clone(&ls), Arc::clone(&al))
+        ),
+
         // benchmark_fn("alloc-free-re-and-write-1-threads-1-iters",
         //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 1, Arc::clone(&ls))
         //              // gen_mt_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
@@ -59,12 +107,8 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
         //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 10, Arc::clone(&ls))
         //              // gen_mt_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
         // ),
-        benchmark_fn("alloc-free-re-and-write-1-threads-100-iters",
-                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 100, Arc::clone(&ls), Arc::clone(&al))
-                     // gen_mt_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        ),
-        // benchmark_fn("alloc-free-re-and-write-1-threads-1K-iters",
-        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 1000, Arc::clone(&ls), Arc::clone(&al))
+        // benchmark_fn("alloc-free-re-and-write-1-threads-100-iters",
+        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, 100, Arc::clone(&ls), Arc::clone(&al))
         //              // gen_mt_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
         // ),
         // benchmark_fn("alloc-free-re-and-write-1-threads-10K-iters",
@@ -108,26 +152,6 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
         //              // gen_mt_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
         // ),
 
-        benchmark_fn("alloc-free-re-and-write-0-threads-1-iters",
-                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 1, Arc::clone(&ls), Arc::clone(&al))
-                     // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        ),
-        benchmark_fn("alloc-free-re-and-write-0-threads-10-iters",
-                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 10, Arc::clone(&ls), Arc::clone(&al))
-                     // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        ),
-        benchmark_fn("alloc-free-re-and-write-0-threads-100-iters",
-                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 100, Arc::clone(&ls), Arc::clone(&al))
-                     // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        ),
-        // benchmark_fn("alloc-free-re-and-write-0-threads-1K-iters",
-        //              gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 1000, Arc::clone(&ls), Arc::clone(&al))
-        //              // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        // ),
-        // benchmark_fn("alloc-free-re-and-write-0-threads-10K-iters",
-        //              gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 10_000, Arc::clone(&ls), Arc::clone(&al))
-        //              // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        // ),
         // benchmark_fn("alloc-free-re-and-write-0-threads-100K-iters",
         //              gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, 100_000, Arc::clone(&ls), Arc::clone(&al))
         //              // gen_st_bencher(help_test_dummy_func, 1, 100_000, /* Arc::clone(&al), */Arc::clone(&ls))
@@ -143,10 +167,6 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
 //xxx                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 32, 1_000_000, /* Arc::clone(&al), */Arc::clone(&ls))
 //xxx                     // gen_mt_bencher(help_test_dummy_func, 32, 1_000_000, /* Arc::clone(&al), */Arc::clone(&ls))
 //xxx        ),
-        benchmark_fn("alloc-free-re-and-write-512-threads-1K-iters",
-                     gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 1_000, Arc::clone(&ls), Arc::clone(&al))
-                     // gen_mt_bencher(help_test_dummy_func, 512, 1_000, /* Arc::clone(&al), */Arc::clone(&ls))
-        ),
         // benchmark_fn("alloc-free-re-and-write-512-threads-10K-iters",
         //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 10_000, Arc::clone(&ls), Arc::clone(&al))
         //              // gen_mt_bencher(help_test_dummy_func, 512, 10_000, /* Arc::clone(&al), */Arc::clone(&ls))
@@ -170,8 +190,6 @@ use tango_bench::MeasurementSettings;
 
 tango_main!(
     MeasurementSettings {
-        cache_firewall: Some(36864), // For my Apple M4 Max
-
         ..Default::default()
     }
 );

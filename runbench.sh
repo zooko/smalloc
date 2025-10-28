@@ -43,5 +43,5 @@ cd src &&
     rm "${LINKFILE}" &&
     cp "${SMALLOC}" "${LINKFILE}" &&
 cd .. &&
-cargo --frozen bench -q --bench=smallocb -- compare &&
+time cargo --frozen bench -q --bench=smallocb -- compare -t 1 -d benchresults --gnuplot -f alloc-free-re-and-write-0-threads-1-iters &&
 echo done   

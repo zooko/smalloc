@@ -9,5 +9,7 @@ use crate::Smalloc;
 pub type AllocatorType = Smalloc;
 
 pub fn gen_allocator() -> Arc<AllocatorType> {
-    Arc::new(Smalloc::new())
+    let s = Smalloc::new();
+    s.idempotent_init().unwrap();
+    Arc::new(s)
 }
