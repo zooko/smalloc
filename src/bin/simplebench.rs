@@ -31,19 +31,29 @@ mod notests {
     use std::thread::JoinHandle;
 
     pub fn main() {
-        const ITERS: u32 = 1_850_000;
-
 //xxx        let sm = Arc::new(Smalloc::new());
 //xxx        let bi = Arc::new(GlobalAllocWrap);
         let ls = gen_layouts();
 
         let al = gen_allocator();
 
-        thread::scope(|scope| {
-            scope.spawn(|| {
-                singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, ITERS, "default adrww    0", &al, ls);
-            });
-        });
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 1, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 10, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 1000, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 10_000, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100_000, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 1_000_000, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 10_000_000, "default adrww    0", &al, ls);
+
+	singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100_000_000, "default adrww    0", &al, ls);
 
 //         thread::scope(|scope| {
 //             scope.spawn(|| {

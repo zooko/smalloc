@@ -15,7 +15,6 @@ impl fmt::Display for AllocFailed {
 }
 
 pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
-    // xxx add unit tests?
     let size = layout.size();
     debug_assert!(size > 0);
     let alignment = layout.align();
@@ -29,7 +28,6 @@ pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
 }
 
 pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
-    // xxx add tests?
     let size = layout.size();
     debug_assert!(size > 0);
     let alignment = layout.align();
@@ -54,16 +52,12 @@ pub mod vendor {
     // entire design of `smalloc`, really.)
     pub const PAGE_SIZE: usize = 4096;
 
-    // But the cache line size is pretty much universally true of Intel, AMD, and non-Apple ARM chips.
-    pub const CACHE_LINE_SIZE: usize = 64;
-
-    // This const is set for my Linux Intel(R) Xeon(R) CPU E5-2698 v4.
-    pub const CACHE_SIZE: usize = 2usize.pow(24);
-
     use crate::platformalloc::AllocFailed;
-    use rustix::mm::{MapFlags, MremapFlags, ProtFlags, mmap_anonymous, mremap, munmap};
+    use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
     use std::ffi::c_void;
     use std::ptr;
+
+    pub type ClockType = i32;
 
 // inline
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
@@ -86,19 +80,6 @@ pub mod vendor {
             munmap(p as *mut c_void, size).ok();
         }
     }
-
-// inline
-    // Investigating the effects of MADV_RANDOM:
-    // mm/madvise.c: MADV_RANDOM -> VM_RAND_READ
-    // Documentation/mm/multigen_lru.rst: VM_RAND_READ means do not assume that accesses through page tables will exhibit temporal locality. 🤔
-
-    // filemap.c: it looks like VM_RAND_READ disables readahead, although I don't know if that's true only for file-backed mmaps or also for anonymous mmaps.
-
-    // vma_has_recency() always returns false if VM_RAND_READ
-    // memory.c: if !vma_has_recency() then in_lru_fault = false
-    // workingset.c, skip LRU
-    // vmscan.c: should_skip_vma(). It always "skips" if !vma_has_recency(). What does "skipping" do? should_skip_vma() is used in get_next_vma(). What does get_next_vma() do? It's used from walk_pte_range(), walk_pmd_range(), and walk_pud_range()... and there are functions of the same names but different arguments in pagewalk.c. 🤔 I'm guessing vmscan.c is for evicting pages to repurpose physical memory and pagewalk.c is for something else... let's see if I can confirm that... Well, I couldn't confirm it by looking at the linux source code, but I asked the Brave AI what was the difference and it said what I thought -- vmscan is for reclamation of memory.
-    // Okay I'm going to give up on this research project and just conclude that *default* behavior (not MADV_RANDOM) is probably good for smalloc's purposes. I have no idea what it would mean to exclude certain pages from an LRU policy, nor what it means to skip these vma's when walking page tables. But neither of them sound like something we really want for smalloc's allocations.
 }
 
 #[cfg(any(target_vendor = "apple", doc))]
@@ -125,6 +106,8 @@ pub mod vendor {
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use std::mem::size_of;
+
+    pub type ClockType = u32;
 
 // inline
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
@@ -154,29 +137,6 @@ pub mod vendor {
         }
     }
 }
-
-// -> mach_vm_remap(target_task, newaddress-out, newsize, anywhere, src_task, memory_address_u, ...);
-// -> mach_vm_remap_external(target_map, address, size, mask, flags, src_map, memory_address, ...);
-//     ... (target_map, address, size, mask, flags, src_map memory_address, ...)
-//       -> vm_map_remap(target_map, address, size, mask, ..., src_map, memory_address, ...);
-// vm_map.c @ 18927 vm_map_remap(target_map, address_u, size_u, ..., ..., src_map, memory_address_u, ...) {
-// vm_map_remap_sanitize() -> vm_sanitize_addr_size()
-//    src_map -> pgmask
-// results in:
-//       *addr (6th arg to vm_sanitize_addr_size which is memory_address in vm_map_remap_sanitize, which is memory_address_u in vm_map_remap) <= truncated copy of addr_u (1st argument of vm_sanitize_addr_size which is memory_address_u in vm_map_remap_sanitize, which is memory_address_u in vm_map_remap)
-//             ===> so the only effect of this part is to truncate the value in memory_address_u which doesn't matter to us because it was already page-aligned
-//       *end (7th arg of vm_sanitize_addr_size which is memory_end (arg 14) in vm_map_remap_sanitize, which is &memory_end in vm_map_remap) <- rounded-up *addr (6th arg which is memory_address in vm_map_remap_sanitize, which is vm_map_remap's memory_address_u) + size_u (2nd arg to vm_sanitize_addr_size, which is size_u (4th arg) of vm_map_remap_sanitize, which is size_u (3rd arg) of vm_map_remap)
-//             ===> so the effect of this part is the value in vm_map_remap's memory_end is set to vm_map_remap's memory_address_u rounded-up + size_u
-//             ===> and then it set size = memory_end - memory_address_u
-// vm_map_remap_sanitize() -> vm_sanitize_addr()
-//    target_map -> map
-//    address_u -> addr_u
-// results in *target_addr (11th arg of vm_map_remap_sanitize) being truncated copy of address_u (3rd arg of vm_map_remap_sanitize)
-// 
-// memory_address, memory_size <-
-// vm_sanitize_addr_size(memory_address_u, size_u
-// 
-//  -> vm_map_copy_extract(src_map, memory_address, memory_size, ...)
 
 // for Windows, check out VirtualAllocEx with MEM_RESERVE flag: https://learn.microsoft.com/en-us/windows/win32/memory/page-state
 // https://stackoverflow.com/questions/15261527/how-can-i-reserve-virtual-memory-in-linux?rq=1

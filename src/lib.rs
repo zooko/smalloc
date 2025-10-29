@@ -585,124 +585,6 @@ const fn help_trailing_zeros_usize(x: usize) -> u8 {
 
 // --- Code for development (e.g benchmarks, tests, development utilities) ---
 
-#[cfg(target_vendor = "apple")]
-pub mod plat {
-    use mach_sys::mach_time::{mach_absolute_time, mach_timebase_info};
-    use mach_sys::kern_return::KERN_SUCCESS;
-    use std::mem::MaybeUninit;
-    use thousands::Separable;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
-    use rand::Rng;
-    use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
-
-    pub fn dev_measure_cache_behavior() {
-        let mut mmtt: MaybeUninit<mach_timebase_info> = MaybeUninit::uninit();
-        let retval = unsafe { mach_timebase_info(mmtt.as_mut_ptr()) };
-        assert_eq!(retval, KERN_SUCCESS);
-        let mtt = unsafe { mmtt.assume_init() };
-
-        const BUFSIZ: usize = 1_000_000_000;
-        let mut bs: Box<Vec<u8>> = Box::default();
-        bs.resize(BUFSIZ, 0);
-
-        let mut r = StdRng::seed_from_u64(0);
-        let mut i = 0;
-        while i < bs.len() {
-            bs[i] = r.random();
-            i += 1;
-        }
-
-        let mut stride = 1;
-        while stride < 50_000 {
-            // Okay now we need to blow out the cache! To do that, we need
-            // to touch at least NUM_CACHE_LINES different cache lines
-            // that aren't the ones we want to benchmark.
-
-            const MEM_TO_USE: usize = CACHE_SIZE * 127 + 1_000_000;
-
-            let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
-            let mut i = 0;
-            while i < MEM_TO_USE {
-                blowoutarea[i] = b'9';
-                i += CACHE_LINE_SIZE;
-            }
-
-            i = 0;
-            let start_ticks = unsafe { mach_absolute_time() };
-            while i < BUFSIZ {
-                // copy a byte from bs to blowoutarea
-                blowoutarea[i % MEM_TO_USE] = bs[i];
-
-                i += stride;
-            }
-            let stop_ticks = unsafe { mach_absolute_time() };
-
-            let steps = BUFSIZ / stride;
-            let nanos = (stop_ticks - start_ticks) * (mtt.numer as u64) / (mtt.denom as u64);
-            let nanos_per_step = nanos as f64 / steps as f64;
-
-            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop_ticks - start_ticks).separate_with_commas(), nanos.separate_with_commas());
-
-            stride += 1;
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-pub mod plat {
-    use cpuid;
-    use core::arch::x86_64;
-    use crate::platformalloc::vendor::{CACHE_SIZE, CACHE_LINE_SIZE};
-    use thousands::Separable;
-
-    pub fn dev_measure_cache_behavior() {
-        let ofreq = cpuid::clock_frequency();
-        assert!(ofreq.is_some());
-        let freq_mhz = ofreq.unwrap();
-
-        const BUFSIZ: usize = 1_000_000_000;
-        let mut bs: Box<Vec<u8>> = Box::new(Vec::new());
-        bs.resize(BUFSIZ, 0);
-
-        let mut stride = 1;
-        while stride < 50_000 {
-            // Okay now we need to blow out the cache! To do that, we need
-            // to touch at least NUM_CACHE_LINES different cache lines
-            // that aren't the ones we want to benchmark.
-
-            const MEM_TO_USE: usize = 100_000_000;
-
-            let mut blowoutarea: Vec<u8> = vec![0; MEM_TO_USE];
-            let mut i = 0;
-            while i < MEM_TO_USE {
-                blowoutarea[i] = b'9';
-                i += CACHE_LINE_SIZE;
-            }
-
-            i = 0;
-            let mut start_aux = 0;
-            let start_cycs = unsafe { x86_64::__rdtscp(&mut start_aux) };
-            while i < BUFSIZ {
-                bs[i] = b'0';
-
-                i += stride;
-            }
-            let mut stop_aux = 0;
-            let stop_cycs = unsafe { x86_64::__rdtscp(&mut stop_aux) };
-            assert!(stop_cycs > start_cycs);
-
-            let steps = BUFSIZ / stride;
-            let nanos = (stop_cycs - start_cycs) * 1000 / freq_mhz as u64;
-            let nanos_per_step = nanos / steps as u64;
-
-            eprintln!("stride: {:>6}: steps: {:>13}, ticks: {:>9}, nanos: {:>11}, nanos/step: {nanos_per_step}", stride.separate_with_commas(), steps.separate_with_commas(), (stop_cycs - start_cycs).separate_with_commas(), nanos.separate_with_commas());
-
-            stride += 1;
-        }
-    }
-}
-
 // I read in the "The Linux Programming Interface" book that glibc's malloc's default size to fall back to system allocation (mmap) -- MMAP_THRESHOLD -- is 128 KiB. But according to https://sourceware.org/glibc/wiki/MallocInternals the threshold is dynamic unless overridden.
 
 // The following are tools I used during development of smalloc, which
@@ -773,10 +655,11 @@ pub mod benchmarks {
     use ahash::HashSet;
 
     // use crate::{help_test_multithreaded_with_allocator, help_test_singlethreaded_with_allocator};
-    use crate::help_test_singlethreaded_with_allocator;
 
+    use crate::platformalloc::vendor::ClockType;
     use std::mem::MaybeUninit;
-    pub fn clock(clocktype: u32) -> u64 {
+
+    pub fn clock(clocktype: ClockType) -> u64 {
         let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
         let retval = unsafe { libc::clock_gettime(clocktype, tp.as_mut_ptr()) };
         debug_assert_eq!(retval, 0);
@@ -813,7 +696,7 @@ pub mod benchmarks {
     }
 
     #[inline(never)]
-    pub fn bench_itered<F: FnMut()>(name: &str, iters: usize, mut f: F, clocktype: u32) {
+    pub fn bench_itered<F: FnMut()>(name: &str, iters: usize, mut f: F, clocktype: ClockType) {
         let start = clock(clocktype);
         for _i in 0..iters {
             f();
@@ -824,7 +707,7 @@ pub mod benchmarks {
 
     use thousands::Separable;
     #[inline(never)]
-    pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: u32) {
+    pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
         let start = clock(clocktype);
         f();
         let elap = clock(clocktype) - start;
@@ -840,13 +723,17 @@ pub mod benchmarks {
     where
         F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
     {
-        let start = clock(libc::CLOCK_UPTIME_RAW);
+        let mut s = TestState::new(iters);
 
-        help_test_singlethreaded_with_allocator(bf, iters, al, ls);
+        let start = clock(libc::CLOCK_PROCESS_CPUTIME_ID);
 
-        let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
+        for _i in 0..iters {
+            bf(al, &mut s, ls);
+    	}
 
-        eprintln!("name: {name:>12}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+        let elap = clock(libc::CLOCK_PROCESS_CPUTIME_ID) - start;
+
+        eprintln!("name: {name:>12}, iters: {:>11}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     }
 
     // pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: AllocatorType, ls: [Layout; 24])
@@ -1072,17 +959,6 @@ pub fn help_test_alloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) 
     assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
     s.m.insert((pu, l));
     s.ps.push((pu, l));
-}
-
-pub fn help_test_singlethreaded_with_allocator<F>(f: F, iters: u32, al: &AllocatorType, ls: [Layout; 24])
-where
-    F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
-{
-    let mut s = TestState::new(iters);
-        
-    for _i in 0..iters {
-        f(al, &mut s, ls);
-    }
 }
 
 use std::sync::Arc;
