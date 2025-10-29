@@ -3,13 +3,12 @@
 // runs "runbench.sh". This variant -- the Smalloc variant -- has to be in place to run the smalloc
 // unit tests.
 
-use std::sync::Arc;
 use crate::Smalloc;
 
 pub type AllocatorType = Smalloc;
 
-pub fn gen_allocator() -> Arc<AllocatorType> {
+pub fn gen_allocator() -> AllocatorType {
     let s = Smalloc::new();
     s.idempotent_init().unwrap();
-    Arc::new(s)
+    s
 }

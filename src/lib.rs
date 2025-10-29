@@ -125,7 +125,6 @@ impl Drop for Smalloc {
     }
 }
 
-
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
@@ -295,6 +294,7 @@ impl Smalloc {
 
 use std::cmp::max;
 use std::thread;
+
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.idempotent_init() {
@@ -772,7 +772,8 @@ pub mod benchmarks {
     use rand::rngs::StdRng;
     use ahash::HashSet;
 
-    use crate::help_test_multithreaded_with_allocator;
+    // use crate::{help_test_multithreaded_with_allocator, help_test_singlethreaded_with_allocator};
+    use crate::help_test_singlethreaded_with_allocator;
 
     use std::mem::MaybeUninit;
     pub fn clock(clocktype: u32) -> u64 {
@@ -835,21 +836,31 @@ pub mod benchmarks {
     use rand::Rng;
 
     use crate::smallocb_allocator_config::AllocatorType;
-    pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: Arc<AllocatorType>, ls: Arc<Vec<Layout>>)
+    pub fn singlethread_bench<F>(bf: F, iters: u32, name: &str, al: &AllocatorType, ls: [Layout; 24])
     where
-        F: Fn(&Arc<AllocatorType>, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+        F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
     {
-        let arcal = Arc::clone(&al);
-        let arcls = Arc::clone(&ls);
-
         let start = clock(libc::CLOCK_UPTIME_RAW);
 
-        help_test_multithreaded_with_allocator(bf, threads, iters, &arcal, &arcls);
+        help_test_singlethreaded_with_allocator(bf, iters, al, ls);
 
         let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
 
-        eprintln!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+        eprintln!("name: {name:>12}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     }
+
+    // pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: AllocatorType, ls: [Layout; 24])
+    // where
+    //     F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
+    // {
+    //     let start = clock(libc::CLOCK_UPTIME_RAW);
+
+    //     help_test_multithreaded_with_allocator(bf, threads, iters, al, ls);
+
+    //     let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
+
+    //     eprintln!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+    // }
 
     pub struct TestState {
         pub r: StdRng,
@@ -884,7 +895,7 @@ const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
 use benchmarks::TestState;
 use crate::smallocb_allocator_config::AllocatorType;
-pub fn help_test_alloc_dealloc_realloc_with_writes(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc_dealloc_realloc_with_writes(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
     // random coin
     let coin = s.r.random_range(0..3);
     if coin == 0 {
@@ -941,7 +952,7 @@ pub fn help_test_alloc_dealloc_realloc_with_writes(al: &Arc<AllocatorType>, s: &
     }
 }
 
-pub fn help_test_alloc_dealloc_realloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>)
+pub fn help_test_alloc_dealloc_realloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24])
 {
     // random coin
     let coin = s.r.random_range(0..3);
@@ -1000,7 +1011,7 @@ pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestS
     }
 }
 
-pub fn help_test_alloc_dealloc_with_writes(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc_dealloc_with_writes(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
     // random coin
     if s.r.random::<bool>() && !s.ps.is_empty() {
         // Free
@@ -1033,7 +1044,7 @@ pub fn help_test_alloc_dealloc_with_writes(al: &Arc<AllocatorType>, s: &mut Test
     }
 }
 
-pub fn help_test_alloc_dealloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc_dealloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
     if s.r.random::<bool>() && !s.ps.is_empty() {
         // Free
         let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
@@ -1052,7 +1063,7 @@ pub fn help_test_alloc_dealloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &
     }
 }
 
-pub fn help_test_alloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<Layout>>) {
+pub fn help_test_alloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
     // Malloc
     let l = *(ls.choose(&mut s.r).unwrap());
     let p = unsafe { al.alloc(l) };
@@ -1063,27 +1074,36 @@ pub fn help_test_alloc(al: &Arc<AllocatorType>, s: &mut TestState, ls: &Arc<Vec<
     s.ps.push((pu, l));
 }
 
-use std::sync::Arc;
-pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: &Arc<AllocatorType>, ls: &Arc<Vec<Layout>>)
+pub fn help_test_singlethreaded_with_allocator<F>(f: F, iters: u32, al: &AllocatorType, ls: [Layout; 24])
 where
-    F: Fn(&Arc<AllocatorType>, &mut TestState, &Arc<Vec<Layout>>) + Sync + Send + Copy + 'static
+    F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
+{
+    let mut s = TestState::new(iters);
+        
+    for _i in 0..iters {
+        f(al, &mut s, ls);
+    }
+}
+
+use std::sync::Arc;
+pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: AllocatorType, ls: [Layout; 24])
+where
+    F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
 {
     thread::scope(|scope| {
         for _t in 0..threads {
-            let inneral = Arc::clone(al);
-            let innerls = Arc::clone(ls);
-            scope.spawn(move || {
+            scope.spawn(|| {
                 let mut s = TestState::new(iters);
 
                 for _i in 0..iters {
-                    f(&inneral, &mut s, &innerls);
+                    f(&al, &mut s, ls);
                 }
             });
         }
     });
 }
 
-pub fn gen_layouts() -> Vec<Layout> {
+pub fn gen_layouts() -> [Layout; 24] {
     let mut ls = Vec::new();
     for siz in [35, 64, 128, 500, 2000, 10_000] {
         ls.push(Layout::from_size_align(siz, 1).unwrap());
@@ -1092,7 +1112,7 @@ pub fn gen_layouts() -> Vec<Layout> {
         ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
     }
 
-    ls
+    ls.try_into().unwrap()
 }
 
 #[cfg(test)]
@@ -1560,9 +1580,10 @@ pub mod tests {
         help_test_multithreaded(1, 100, false, false, false);
     }
 
+    use crate::smallocb_allocator_config::gen_allocator;
     fn help_test_multithreaded(threads: u32, iters: u32, dealloc: bool, realloc: bool, writes: bool)  {
-        let al = Arc::new(Smalloc::new());
-        let ls = Arc::new(gen_layouts());
+        let al = gen_allocator();
+        let ls = gen_layouts();
 
         let f = match (dealloc, realloc, writes) {
             (true, true, true) => { help_test_alloc_dealloc_realloc_with_writes }
@@ -1573,7 +1594,7 @@ pub mod tests {
             (false, _, _) => panic!()
         };
 
-        help_test_multithreaded_with_allocator(f, threads, iters, &al, &ls);
+        help_test_multithreaded_with_allocator(f, threads, iters, al, ls);
     }
 
     fn help_slotsize(sc: u8) -> usize {
@@ -1749,7 +1770,7 @@ pub mod tests {
         THREAD_NUM.set(Some(320));
         help_test_overflow_to_other_slab(0);
     }
-    
+
     #[test]
     /// If we've allocated all of the slots from the largest large-slots slab, the next allocation
     /// fails.

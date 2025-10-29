@@ -3,11 +3,10 @@
 // runs "runbench.sh". This variant -- the global alloc variant -- is for running the benchmarks and
 // the other one -- the Smalloc variant -- has to be in place to run the Smalloc unit tests.
 
-use std::sync::Arc;
 use crate::benchmarks::GlobalAllocWrap;
 
 pub type AllocatorType = GlobalAllocWrap;
 
-pub fn gen_allocator() -> Arc<AllocatorType> {
-    Arc::new(GlobalAllocWrap)
+pub fn gen_allocator() -> AllocatorType {
+    GlobalAllocWrap
 }
