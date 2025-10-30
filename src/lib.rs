@@ -670,9 +670,10 @@ pub mod benchmarks {
         instsec as u64 * 1_000_000_000 + instnsec as u64
     }
 
+    use std::alloc::{System, Layout};
+
     pub struct GlobalAllocWrap;
 
-    use std::alloc::{System, Layout};
     unsafe impl GlobalAlloc for GlobalAllocWrap {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             unsafe { System.alloc(layout) }
@@ -702,7 +703,7 @@ pub mod benchmarks {
             f();
         }
         let elap = clock(clocktype) - start;
-        eprintln!("name: {name}, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
+        println!("name: {name}, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
     }
 
     use thousands::Separable;
@@ -711,29 +712,29 @@ pub mod benchmarks {
         let start = clock(clocktype);
         f();
         let elap = clock(clocktype) - start;
-        eprintln!("name: {name}, ns: {}", elap.separate_with_commas());
+        println!("name: {name}, ns: {}", elap.separate_with_commas());
     }
 
     use ahash::RandomState;
     use rand::SeedableRng;
     use rand::Rng;
 
-    use crate::smallocb_allocator_config::AllocatorType;
-    pub fn singlethread_bench<F>(bf: F, iters: u32, name: &str, al: &AllocatorType, ls: [Layout; 24])
+    pub fn singlethread_bench<T, F>(bf: F, iters: u32, name: &str, al: &T, ls: &[Layout])
     where
-        F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
+        T: GlobalAlloc,
+        F: Fn(&T, &mut TestState, &[Layout]) + Sync + Send + Copy + 'static
     {
         let mut s = TestState::new(iters);
 
-        let start = clock(libc::CLOCK_PROCESS_CPUTIME_ID);
+        let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
 
         for _i in 0..iters {
             bf(al, &mut s, ls);
     	}
 
-        let elap = clock(libc::CLOCK_PROCESS_CPUTIME_ID) - start;
+        let elap = clock(libc::CLOCK_THREAD_CPUTIME_ID) - start;
 
-        eprintln!("name: {name:>12}, iters: {:>11}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+        println!("name: {name:>12}, iters: {:>11}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     }
 
     // pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: AllocatorType, ls: [Layout; 24])
@@ -746,7 +747,7 @@ pub mod benchmarks {
 
     //     let elap = clock(libc::CLOCK_UPTIME_RAW) - start;
 
-    //     eprintln!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+    //     println!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     // }
 
     pub struct TestState {
@@ -782,7 +783,7 @@ const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
 use benchmarks::TestState;
 use crate::smallocb_allocator_config::AllocatorType;
-pub fn help_test_alloc_dealloc_realloc_with_writes(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
+pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     // random coin
     let coin = s.r.random_range(0..3);
     if coin == 0 {
@@ -839,8 +840,7 @@ pub fn help_test_alloc_dealloc_realloc_with_writes(al: &AllocatorType, s: &mut T
     }
 }
 
-pub fn help_test_alloc_dealloc_realloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24])
-{
+pub fn help_test_alloc_dealloc_realloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     // random coin
     let coin = s.r.random_range(0..3);
     if coin == 0 {
@@ -880,7 +880,7 @@ pub fn help_test_alloc_dealloc_realloc(al: &AllocatorType, s: &mut TestState, ls
 
 use std::hint::black_box;
 #[inline(never)]
-pub fn dummy_func(maxi: u8, maxj: u8) -> u8 {
+pub fn dummy_func(maxi: u64, maxj: u64) -> u64 {
     let mut a = Arc::new(0);
     for i in 0..maxi {
         for j in 0..maxj {
@@ -898,7 +898,7 @@ pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestS
     }
 }
 
-pub fn help_test_alloc_dealloc_with_writes(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
+pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     // random coin
     if s.r.random::<bool>() && !s.ps.is_empty() {
         // Free
@@ -931,40 +931,48 @@ pub fn help_test_alloc_dealloc_with_writes(al: &AllocatorType, s: &mut TestState
     }
 }
 
-pub fn help_test_alloc_dealloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
+pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     if s.r.random::<bool>() && !s.ps.is_empty() {
         // Free
         let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-        assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
         s.m.remove(&(p, lt));
         unsafe { al.dealloc(p as *mut u8, lt) };
     } else {
         // Malloc
         let l = *(ls.choose(&mut s.r).unwrap());
         let p = unsafe { al.alloc(l) };
-        assert!(!p.is_null());
+        debug_assert!(!p.is_null());
         let pu = p as usize;
-        assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
+        debug_assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
         s.m.insert((pu, l));
         s.ps.push((pu, l));
     }
 }
 
-pub fn help_test_alloc(al: &AllocatorType, s: &mut TestState, ls: [Layout; 24]) {
+pub fn help_test_alloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     // Malloc
     let l = *(ls.choose(&mut s.r).unwrap());
     let p = unsafe { al.alloc(l) };
-    assert!(!p.is_null(), "l: {l:?}");
+    debug_assert!(!p.is_null(), "l: {l:?}");
+    unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), l.size())) };
+}
+
+pub fn help_test_alloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
+    // Malloc
+    let l = *(ls.choose(&mut s.r).unwrap());
+    let p = unsafe { al.alloc(l) };
+    debug_assert!(!p.is_null(), "l: {l:?}");
     let pu = p as usize;
-    assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
+    debug_assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
     s.m.insert((pu, l));
     s.ps.push((pu, l));
 }
 
 use std::sync::Arc;
-pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: AllocatorType, ls: [Layout; 24])
+pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: AllocatorType, ls: &[Layout])
 where
-    F: Fn(&AllocatorType, &mut TestState, [Layout; 24]) + Sync + Send + Copy + 'static
+    F: Fn(&AllocatorType, &mut TestState, &[Layout]) + Sync + Send + Copy + 'static
 {
     thread::scope(|scope| {
         for _t in 0..threads {
@@ -978,6 +986,11 @@ where
         }
     });
 }
+
+// pub fn gen_layouts() -> [Layout; 1] {
+//     let ls = vec![Layout::from_size_align(35, 1).unwrap()];
+//     ls.try_into().unwrap()
+// }
 
 pub fn gen_layouts() -> [Layout; 24] {
     let mut ls = Vec::new();
@@ -1470,7 +1483,7 @@ pub mod tests {
             (false, _, _) => panic!()
         };
 
-        help_test_multithreaded_with_allocator(f, threads, iters, al, ls);
+        help_test_multithreaded_with_allocator(f, threads, iters, al, &ls);
     }
 
     fn help_slotsize(sc: u8) -> usize {

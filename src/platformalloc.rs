@@ -93,10 +93,6 @@ pub mod vendor {
 
     // These consts are set for my Apple M4 Max -- they're not *really* true of all Apple products.
     pub const PAGE_SIZE: usize = 16384;
-    pub const CACHE_LINE_SIZE: usize = 128;
-
-    // This const is set for my Apple M4 Max -- it's not *really* true of all Apple products.
-    pub const CACHE_SIZE: usize = 20 * 2usize.pow(20);
 
     use crate::platformalloc::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
