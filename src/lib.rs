@@ -425,6 +425,7 @@ unsafe impl GlobalAlloc for Smalloc {
         // The "growers" rule: use the smallest of the following size classes that will fit: 64
         // bytes (size class 4), 4096 bytes (size class 10), 16,384 bites (size class 14), 1 MiB
         // (size class 18), or just requested size.
+        // xxx LUT
         let newsc = if reqsc <= 4 {
             4
         } else if reqsc <= 10 {
@@ -432,8 +433,8 @@ unsafe impl GlobalAlloc for Smalloc {
         } else if reqsc <= 14 {
             14
         } else if reqsc <= 18 {
-            18}
-        else {
+            18
+        } else {
             reqsc
         };
 
