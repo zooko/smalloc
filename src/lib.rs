@@ -719,6 +719,7 @@ pub mod benchmarks {
     use rand::SeedableRng;
     use rand::Rng;
 
+    use std::time::Instant;
     pub fn singlethread_bench<T, F>(bf: F, iters: u32, name: &str, al: &T, ls: &[Layout])
     where
         T: GlobalAlloc,
@@ -726,13 +727,13 @@ pub mod benchmarks {
     {
         let mut s = TestState::new(iters);
 
-        let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        let start = Instant::now();
 
         for _i in 0..iters {
             bf(al, &mut s, ls);
     	}
 
-        let elap = clock(libc::CLOCK_THREAD_CPUTIME_ID) - start;
+        let elap = (Instant::now() - start).as_nanos() as u64;
 
         println!("name: {name:>12}, iters: {:>11}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     }
