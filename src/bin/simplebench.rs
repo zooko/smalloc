@@ -30,11 +30,11 @@ mod notests {
     use std::thread::JoinHandle;
 
     pub fn main() {
+        let ls = gen_layouts();
+
         let sm = Smalloc::new();
         sm.idempotent_init().unwrap();
         let bi = GlobalAllocWrap;
-        let ls = gen_layouts();
-
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100_000, "builtin adrww    0 thr 100K it", &bi, &ls);
@@ -47,6 +47,9 @@ mod notests {
 
         println!();
         
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+        let bi = GlobalAllocWrap;
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc_dealloc_realloc, 100_000, "builtin adr      0 thr 100K it", &bi, &ls);
@@ -59,6 +62,9 @@ mod notests {
 
         println!();
 
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+        let bi = GlobalAllocWrap;
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc_dealloc_with_writes, 100_000, "builtin adww     0 thr 100K it", &bi, &ls);
@@ -71,6 +77,9 @@ mod notests {
 
         println!();
 
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+        let bi = GlobalAllocWrap;
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc_dealloc, 100_000, "builtin ad       0 thr 100K it", &bi, &ls);
@@ -83,6 +92,9 @@ mod notests {
 
         println!();
 
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+        let bi = GlobalAllocWrap;
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc_with_writes, 100_000, "builtin aww      0 thr 100K it", &bi, &ls);
@@ -95,6 +107,9 @@ mod notests {
 
         println!();
 
+        let sm = Smalloc::new();
+        sm.idempotent_init().unwrap();
+        let bi = GlobalAllocWrap;
         thread::scope(|scope| {
             scope.spawn(|| {
 	        singlethread_bench(help_test_alloc, 100_000, "builtin a        0 thr 100K it", &bi, &ls);

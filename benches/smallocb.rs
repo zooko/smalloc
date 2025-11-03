@@ -30,17 +30,20 @@ use smalloc::smallocb_allocator_config::AllocatorType;
 //     }
 // }
 
-fn gen_st_bencher<F>(f: F, ls: &[Layout], al: &'static AllocatorType) -> impl FnMut(Bencher) -> Box<dyn ErasedSampler>
+fn gen_st_bencher<F>(f: F, ls: &[Layout]) -> impl FnMut(Bencher) -> Box<dyn ErasedSampler>
 where
     F: Fn(&AllocatorType, &mut TestState, &[Layout]) + Sync + Send + 'static + Copy
 {
+    use smalloc::smallocb_allocator_config::gen_allocator;
+    let al_ptr = Box::leak(Box::new(gen_allocator())) as *const AllocatorType;
+
     let ts_ptr = Box::leak(Box::new(TestState::new(1_000_000))) as *mut TestState;
     let ls_static: &'static [Layout] = Box::leak(ls.to_vec().into_boxed_slice());
 
     move |b: Bencher| {
         b.iter(move || {
             unsafe {
-                f(al, &mut *ts_ptr, ls_static);
+                f(&*al_ptr, &mut *ts_ptr, ls_static);
             }
         })
     }
@@ -51,44 +54,29 @@ fn smallocb_benchmarks() -> impl IntoBenchmarks {
 
     let ls_static: &'static [Layout] = Box::leak(ls.to_vec().into_boxed_slice());
 
-    use smalloc::smallocb_allocator_config::gen_allocator;
-    let al_ptr = Box::leak(Box::new(gen_allocator())) as *const AllocatorType;
-
     [
         benchmark_fn("help_test_alloc_dealloc_realloc_with_writes",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes, ls_static)
         ),
 
         benchmark_fn("help_test_alloc_dealloc_realloc",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc_dealloc_realloc, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc_dealloc_realloc, ls_static)
         ),
 
         benchmark_fn("help_test_alloc_dealloc_with_writes",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc_dealloc_with_writes, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc_dealloc_with_writes, ls_static)
         ),
 
         benchmark_fn("help_test_alloc_dealloc",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc_dealloc, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc_dealloc, ls_static)
         ),
 
         benchmark_fn("help_test_alloc_with_writes",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc_with_writes, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc_with_writes, ls_static)
         ),
 
         benchmark_fn("help_test_alloc",
-                     unsafe {
-                         gen_st_bencher(help_test_alloc, ls_static, &*al_ptr)
-                     }
+                     gen_st_bencher(help_test_alloc, ls_static)
         ),
 
         // benchmark_fn("alloc-free-re-and-write-32-threads-10K-iters",
