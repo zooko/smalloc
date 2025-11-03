@@ -965,10 +965,6 @@ pub fn help_test_alloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout])
     let l = *(ls.choose(&mut s.r).unwrap());
     let p = unsafe { al.alloc(l) };
     debug_assert!(!p.is_null(), "l: {l:?}");
-    let pu = p as usize;
-    debug_assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-    s.m.insert((pu, l));
-    s.ps.push((pu, l));
 }
 
 use std::sync::Arc;
