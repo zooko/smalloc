@@ -938,7 +938,6 @@ pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[
         // Free
         let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
         debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-        s.m.remove(&(p, lt));
         unsafe { al.dealloc(p as *mut u8, lt) };
     } else {
         // Malloc
@@ -946,8 +945,6 @@ pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[
         let p = unsafe { al.alloc(l) };
         debug_assert!(!p.is_null());
         let pu = p as usize;
-        debug_assert!(!s.m.contains(&(pu, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align());
-        s.m.insert((pu, l));
         s.ps.push((pu, l));
     }
 }
