@@ -36,72 +36,6 @@ mod notests {
         sm.idempotent_init().unwrap();
         let bi = GlobalAllocWrap;
         thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100_000, "builtin adrww    0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 100_000, "smalloc adrww    0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-        
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc, 100_000, "builtin adr      0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc, 100_000, "smalloc adr      0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_with_writes, 100_000, "builtin adww     0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_with_writes, 100_000, "smalloc adww     0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc, 100_000, "builtin ad       0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc, 100_000, "smalloc ad       0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc_with_writes, 100_000, "builtin aww      0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc_with_writes, 100_000, "smalloc aww      0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
-            scope.spawn(|| { singlethread_bench(help_test_alloc, 100_000, "builtin a        0 thr 100K it", &bi, &ls); });
-            scope.spawn(|| { singlethread_bench(help_test_alloc, 100_000, "smalloc a        0 thr 100K it", &sm, &ls); });
-        });
-
-        println!();
-        
-        drop(sm);
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
-        let bi = GlobalAllocWrap;
-        thread::scope(|scope| {
             scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 1_000_000, "builtin adrww    0 thr 1M   it", &bi, &ls); });
             scope.spawn(|| { singlethread_bench(help_test_alloc_dealloc_realloc_with_writes, 1_000_000, "smalloc adrww    0 thr 1M   it", &sm, &ls); });
         });
@@ -160,6 +94,7 @@ mod notests {
             scope.spawn(|| { singlethread_bench(help_test_alloc, 1_000_000, "builtin a        0 thr 1M   it", &bi, &ls); });
             scope.spawn(|| { singlethread_bench(help_test_alloc, 1_000_000, "smalloc a        0 thr 1M   it", &sm, &ls); });
         });
+
     }
 }
 

@@ -24,12 +24,6 @@ rustix = { version = "1.0.7", features = ["mm"] }
 [lib]
 name = "smalloc"
 
-[[bench]]
-inherits = "release"
-name = "smallocb"
-harness = false
-
-# For optimized release build:
 [profile.release]
 opt-level = 3
 debug = false
@@ -44,3 +38,8 @@ inherits = "release"
 debug = true
 lto = false
 # split-debuginfo = "packed" # ??? do we want this?
+
+[[bench]]
+name = "smallocb"
+harness = false
+
