@@ -784,6 +784,27 @@ const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 const BYTES6: [u8; 8] = [0xFE, 0xFD, 0xF6, 0xF5, 0xFA, 0xF9, 0xF8, 0xF7];
 use benchmarks::TestState;
 use crate::smallocb_allocator_config::AllocatorType;
+use std::hint::black_box;
+
+#[inline(never)]
+pub fn dummy_func(maxi: u64, maxj: u64) -> u64 {
+    let mut a = Arc::new(0);
+    for i in 0..maxi {
+        for j in 0..maxj {
+            *Arc::make_mut(&mut a) ^= black_box(i.wrapping_mul(j));
+        }
+    }
+
+    *a
+}
+
+pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestState, _ls: &Arc<Vec<Layout>>) {
+    for _i in 0..iters {
+        //dummy_func(9, 7); // This crashed with heap corruption twice out of about 10 runs.
+        dummy_func(2, 3);
+    }
+}
+
 pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
     // random coin
     let coin = s.r.random_range(0..3);
@@ -808,7 +829,7 @@ pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &m
         let p = unsafe { al.alloc(*lt) };
         debug_assert!(!p.is_null());
         unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
         s.m.insert((p as usize, *lt));
         s.ps.push((p as usize, *lt));
 
@@ -830,7 +851,7 @@ pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &m
             let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
             unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
 
-            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
             s.m.insert((newp as usize, *newlt));
             s.ps.push((newp as usize, *newlt));
 
@@ -857,7 +878,7 @@ pub fn help_test_alloc_dealloc_realloc<T: GlobalAlloc>(al: &T, s: &mut TestState
         let lt = ls.choose(&mut s.r).unwrap();
         let p = unsafe { al.alloc(*lt) };
         debug_assert!(!p.is_null(), "{lt:?}");
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
         s.m.insert((p as usize, *lt));
         s.ps.push((p as usize, *lt));
     } else {
@@ -872,30 +893,10 @@ pub fn help_test_alloc_dealloc_realloc<T: GlobalAlloc>(al: &T, s: &mut TestState
             let newlt = ls.choose(&mut s.r).unwrap();
             let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
 
-            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align());
+            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
             s.m.insert((newp as usize, *newlt));
             s.ps.push((newp as usize, *newlt));
         }
-    }
-}
-
-use std::hint::black_box;
-#[inline(never)]
-pub fn dummy_func(maxi: u64, maxj: u64) -> u64 {
-    let mut a = Arc::new(0);
-    for i in 0..maxi {
-        for j in 0..maxj {
-            *Arc::make_mut(&mut a) ^= black_box(i.wrapping_mul(j));
-        }
-    }
-
-    *a
-}
-
-pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestState, _ls: &Arc<Vec<Layout>>) {
-    for _i in 0..iters {
-        //dummy_func(9, 7); // This crashed with heap corruption twice out of about 10 runs.
-        dummy_func(2, 3);
     }
 }
 
@@ -920,7 +921,7 @@ pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestS
         let p = unsafe { al.alloc(*lt) };
         debug_assert!(!p.is_null());
         unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
         s.m.insert((p as usize, *lt));
         s.ps.push((p as usize, *lt));
 
@@ -937,12 +938,15 @@ pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[
         // Free
         let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
         debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        s.m.remove(&(p, lt));
         unsafe { al.dealloc(p as *mut u8, lt) };
     } else {
         // Malloc
         let l = *(ls.choose(&mut s.r).unwrap());
         let p = unsafe { al.alloc(l) };
         debug_assert!(!p.is_null());
+        debug_assert!(!s.m.contains(&(p as usize, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align()); // This line is the only reason s.m exists.
+        s.m.insert((p as usize, l));
         let pu = p as usize;
         s.ps.push((pu, l));
     }
