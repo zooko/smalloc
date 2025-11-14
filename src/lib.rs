@@ -491,23 +491,7 @@ unsafe impl GlobalAlloc for Smalloc {
             return ptr;
         }
 
-        let reqsc = max(NUM_SMALLEST_SLOT_SIZE_BITS, reqsizbits) - NUM_SMALLEST_SLOT_SIZE_BITS;
-
-        // The "growers" rule: use the smallest of the following size classes that will fit: 64
-        // bytes (size class 4), 4096 bytes (size class 10), 16,384 bites (size class 14), 1 MiB
-        // (size class 18), or just requested size.
-        // xxx LUT
-        let newsc = if reqsc <= 4 {
-            4
-        } else if reqsc <= 10 {
-            10
-        } else if reqsc <= 14 {
-            14
-        } else if reqsc <= 18 {
-            18
-        } else {
-            reqsc
-        };
+        let newsc = max(NUM_SMALLEST_SLOT_SIZE_BITS, reqsizbits) - NUM_SMALLEST_SLOT_SIZE_BITS;
 
         let l = unsafe { Layout::from_size_align_unchecked(const_one_shl_usize(newsc + NUM_SMALLEST_SLOT_SIZE_BITS), oldalignment) };
         let newp = unsafe { self.alloc(l) };
