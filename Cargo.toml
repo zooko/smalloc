@@ -29,11 +29,9 @@ name = "smalloc"
 
 [profile.release]
 opt-level = 3
-# debug = true
 debug = false
 codegen-units = 1
 lto = "fat"
-# lto = "none"
 debug-assertions = false
 overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
@@ -41,3 +39,8 @@ rustflags = ["-C", "target-cpu=native"]
 [[bench]]
 name = "smallocb"
 harness = false
+
+[profile.profiling]
+inherits = "release"
+debug = true           # Enable debug symbols for profiling
+lto = false           # Disable LTO for faster builds and better symbol info

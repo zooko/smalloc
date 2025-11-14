@@ -786,7 +786,7 @@ pub mod benchmarks {
         assert!(end > start);
         let elap_ns = (end - start).as_nanos() as u64;
         let ns_per_iter = elap_ns / iters;
-        println!("name: {name:>12}, iters: {:>11}, ns: {:>10}, ns/i: {:>10}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
+        println!("name: {name:>12}, iters: {:>11}, ns: {:>11}, ns/i: {:>10}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
 
         elap_ns
     }
