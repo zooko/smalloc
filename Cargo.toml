@@ -7,8 +7,11 @@ edition = "2024"
 
 [dependencies]
 ahash = "0.8.11"
+libc = "0.2.177"
 rand = "0.9.0"
 thousands = "0.2.0"
+wyhash = "0.6.0"
+wyrand = "0.3.2"
 
 [dev-dependencies]
 cargo-nextest = "0.9.96"
@@ -26,20 +29,15 @@ name = "smalloc"
 
 [profile.release]
 opt-level = 3
+# debug = true
 debug = false
 codegen-units = 1
-# lto = "fat" # This causes segfaults etc on linux in benchmarks, probably because of the way tango dynamically loads code to be benchmarked
+lto = "fat"
+# lto = "none"
 debug-assertions = false
 overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
 
-[profile.profiling]
-inherits = "release"
-debug = true
-lto = false
-# split-debuginfo = "packed" # ??? do we want this?
-
 [[bench]]
 name = "smallocb"
 harness = false
-

@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![feature(rustc_private)]
+#![feature(likely_unlikely)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::assertions_on_constants)]
 #![feature(pointer_is_aligned_to)]
@@ -158,6 +158,41 @@ impl Smalloc {
             sm_baseptr: AtomicUsize::new(0),
             flhs_baseptr: AtomicUsize::new(0),
         }
+    }
+
+    pub fn dump_map_of_slabs(&self) {
+        // Dump a map of the slabs
+        let mut fullslots = 0;
+        let mut fulltotsize = 0;
+        let flhbp = self.get_flhs_baseptr();
+        for sc in 0..NUM_SCS {
+            let mut scfullslots = 0;
+            let mut scfulltotsize = 0;
+
+            print!("sc: {sc} ");
+
+            let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
+            let slotsize = 2u64.pow((sc + NUM_SMALLEST_SLOT_SIZE_BITS) as u32);
+            println!("slots: {}, slotsize: {}", highestslotnum, slotsize);
+
+            for slabnum in 0..NUM_SLABS {
+                print!("sn: {slabnum} ");
+                
+                let headelement = help_get_flh(flhbp, sc, slabnum);
+                if headelement == highestslotnum {
+                    // full
+                    print!("X ");
+                    scfullslots += highestslotnum;
+                    scfulltotsize += (highestslotnum as u64) * slotsize;
+                } else {
+                    print!(". ");
+                }
+            }
+            println!(" slots: {scfullslots} size: {scfulltotsize}");
+            fullslots += scfullslots;
+            fulltotsize += scfulltotsize;
+        }
+        println!(" totslots: {fullslots}, totsize: {fulltotsize}");
     }
 
     pub fn idempotent_init(&self) -> Result<usize, AllocFailed> {
@@ -320,6 +355,14 @@ impl Smalloc {
 use std::cmp::max;
 use std::thread;
 
+pub fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
+    let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
+    let flhptr = flhbp | const_shl_u16_usize(flhi, 3);
+    let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+    let flhdword = flha.load(Relaxed);
+    (flhdword & u32::MAX as u64) as u32
+}
+
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.idempotent_init() {
@@ -339,6 +382,9 @@ unsafe impl GlobalAlloc for Smalloc {
                 let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
                 if sc >= NUM_SCS {
                     eprintln!("smalloc exhausted");
+
+                    self.dump_map_of_slabs();
+                    
                     // This request exceeds our largest slot size, so we return null ptr.
                     return null_mut();
                 };
@@ -675,10 +721,7 @@ pub fn dev_find_max_vm_space_allocatable() {
 pub mod smallocb_allocator_config;
 
 pub mod benchmarks {
-    extern crate libc;
     use std::alloc::GlobalAlloc;
-    use rand::rngs::StdRng;
-    use ahash::HashSet;
 
     // use crate::{help_test_multithreaded_with_allocator, help_test_singlethreaded_with_allocator};
 
@@ -741,28 +784,63 @@ pub mod benchmarks {
         println!("name: {name}, ns: {}", elap.separate_with_commas());
     }
 
-    use ahash::RandomState;
-    use rand::SeedableRng;
-    use rand::Rng;
-
     use std::time::Instant;
-    pub fn singlethread_bench<T, F>(bf: F, iters: u32, name: &str, al: &T, ls: &[Layout])
+    pub fn singlethread_bench<T, F>(bf: F, iters: u64, name: &str, al: &T) -> u64
     where
         T: GlobalAlloc,
-        F: Fn(&T, &mut TestState, &[Layout]) + Sync + Send + Copy + 'static
+        F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
     {
         let mut s = TestState::new(iters);
 
         let start = Instant::now();
 
         for _i in 0..iters {
-            bf(al, &mut s, ls);
+            bf(al, &mut s);
     	}
 
-        let elap = (Instant::now() - start).as_nanos() as u64;
+        let end = Instant::now();
+        assert!(end > start);
+        let elap_ns = (end - start).as_nanos() as u64;
+        let ns_per_iter = elap_ns / iters;
+        println!("name: {name:>12}, iters: {:>11}, ns: {:>10}, ns/i: {:>10}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
 
-        println!("name: {name:>12}, iters: {:>11}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
+        elap_ns
     }
+
+    #[macro_export]
+        macro_rules! compare_bench {
+        ($func:path, $iters:expr, $name:expr) => {{
+            let mut baseline_ns = 42;
+            let mut candidat_ns = 42;
+
+            let sm = $crate::Smalloc::new();
+            sm.idempotent_init().unwrap();
+            let bi = $crate::benchmarks::GlobalAllocWrap;
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| { 
+                    // Create a closure that specifies the type
+                    let f = |al: &$crate::benchmarks::GlobalAllocWrap, s: &mut $crate::benchmarks::TestState| {
+                        $func(al, s)
+                    };
+                    let bi_name = format!("bi {}", $name);
+                    baseline_ns = $crate::benchmarks::singlethread_bench(f, $iters, &bi_name, &bi); 
+                });
+                scope.spawn(|| { 
+                    // Create a closure that specifies the type
+                    let f = |al: &$crate::Smalloc, s: &mut $crate::benchmarks::TestState| {
+                        $func(al, s)
+                    };
+                    let sm_name = format!("sm {}", $name);
+                    candidat_ns = $crate::benchmarks::singlethread_bench(f, $iters, &sm_name, &sm); 
+                });
+            });
+
+            let diffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+            println!("diff: {diffperc:.0}%");
+        }}
+    }
+
 
     // pub fn multithread_bench<F>(bf: F, threads: u32, iters: u32, name: &str, al: AllocatorType, ls: [Layout; 24])
     // where
@@ -777,18 +855,50 @@ pub mod benchmarks {
     //     println!("name: {name:>12}, threads: {threads:>4}, iters: {:>7}, ms: {:>9}, ns/i: {:>10}", iters.separate_with_commas(), (elap/1_000_000).separate_with_commas(), (elap / iters as u64).separate_with_commas());
     // }
 
+    pub const NUMCOINS: usize = 512;
+    pub const NUMLAYOUTS: usize = 24;
+    use std::collections::HashSet;
     pub struct TestState {
-        pub r: StdRng,
+        pub coins: [u32; NUMCOINS],
+        pub nextcoin: usize,
+        pub layouts: [Layout; NUMLAYOUTS],
+        pub nextlayout: usize,
+        pub r: WyRand,
         pub ps: Vec<(usize, Layout)>,
-        pub m: HashSet<(usize, Layout)>,
+        pub m: HashSet<(usize, Layout), WyHashBuilder>,
     }
 
+    use wyhash::WyHash;
+
+    // Simple wrapper
+    #[derive(Clone)]
+    pub struct WyHashBuilder(u64);
+
+    impl std::hash::BuildHasher for WyHashBuilder {
+        type Hasher = WyHash;
+        fn build_hasher(&self) -> Self::Hasher {
+            WyHash::with_seed(self.0)
+        }
+    }
+
+    use crate::gen_layouts;
+    use wyrand::WyRand;
+    use rand::seq::SliceRandom;
     impl TestState {
-        pub fn new(iters: u32) -> Self {
-            let mut r = StdRng::seed_from_u64(0);
-            let m = HashSet::with_capacity_and_hasher(iters as usize, RandomState::with_seed(r.random::<u64>() as usize));
+        pub fn new(iters: u64) -> Self {
+            let mut r = WyRand::new(6);
+            let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(42));
+            let coins: [u32; NUMCOINS] = std::array::from_fn(|_| r.rand() as u32);
+            let nextcoin = 0;
+            let mut layouts = gen_layouts();
+            layouts.shuffle(&mut r);
+            let nextlayout = 0;
 
             Self {
+                coins,
+                nextcoin,
+                layouts,
+                nextlayout,
                 r,
                 m,
                 ps: Vec::with_capacity(iters as usize),
@@ -800,8 +910,6 @@ pub mod benchmarks {
 // xxx move tests and benchmarks to a separate file
 
 // These functions are used in both tests and benchmarks.
-use rand::Rng;
-use rand::prelude::IndexedRandom;
 pub const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
 const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
 const BYTES3: [u8; 8] = [0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11];
@@ -831,172 +939,198 @@ pub fn help_test_dummy_func(_al: &Arc<AllocatorType>, iters: u32, _s: &mut TestS
     }
 }
 
-pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
-    // random coin
-    let coin = s.r.random_range(0..3);
-    if coin == 0 {
-        // Free
-        if !s.ps.is_empty() {
-            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
-            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
-            unsafe { al.dealloc(p as *mut u8, lt) };
-
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
-            }
-        }
-    } else if coin == 1 {
-        // Malloc
-        let lt = ls.choose(&mut s.r).unwrap();
-        let p = unsafe { al.alloc(*lt) };
-        debug_assert!(!p.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-        s.m.insert((p as usize, *lt));
-        s.ps.push((p as usize, *lt));
-
-        // Write to a random (other) allocation...
-        if !s.ps.is_empty() {
-            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
-        }
-    } else {
-        // Realloc
-        if !s.ps.is_empty() {
-            let i = s.r.random_range(0..s.ps.len());
-            let (p, lt) = s.ps.swap_remove(i);
-            debug_assert_ne!(p, 0);
-            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
-
-            let newlt = ls.choose(&mut s.r).unwrap();
-            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
-            unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
-
-            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
-            s.m.insert((newp as usize, *newlt));
-            s.ps.push((newp as usize, *newlt));
-
-            // Write to a random (other) allocation...
-            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
-        }
-    }
+use crate::benchmarks::NUMCOINS;
+fn next_coin(s: &mut TestState) -> u32 {
+    let coin = s.coins[s.nextcoin]; s.nextcoin = (s.nextcoin + 1) % NUMCOINS;
+    coin
 }
 
-pub fn help_test_alloc_dealloc_realloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
+use crate::benchmarks::NUMLAYOUTS;
+fn next_layout(s: &mut TestState) -> Layout {
+    let layout = s.layouts[s.nextlayout]; s.nextlayout = (s.nextlayout + 1) % NUMLAYOUTS;
+    layout
+}
+
+use std::hint::unlikely;
+pub fn help_test_alloc_dealloc_realloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
-    let coin = s.r.random_range(0..3);
-    if coin == 0 {
-        // Free
-        if !s.ps.is_empty() {
-            let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
-            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
-            unsafe { al.dealloc(p as *mut u8, lt) };
-        }
-    } else if coin == 1 {
+    let coin = next_coin(s) % 3;
+    if unlikely(s.ps.is_empty()) || coin == 0 {
         // Malloc
-        let lt = ls.choose(&mut s.r).unwrap();
-        let p = unsafe { al.alloc(*lt) };
+        let lt = next_layout(s);
+        let p = unsafe { al.alloc(lt) };
         debug_assert!(!p.is_null(), "{lt:?}");
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-        s.m.insert((p as usize, *lt));
-        s.ps.push((p as usize, *lt));
-    } else {
-        // Realloc
-        if !s.ps.is_empty() {
-            let i = s.r.random_range(0..s.ps.len());
-            let (p, lt) = s.ps.swap_remove(i);
-            debug_assert_ne!(p, 0);
-            debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-            s.m.remove(&(p, lt));
+        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((p as usize, lt)); }
+        s.ps.push((p as usize, lt));
 
-            let newlt = ls.choose(&mut s.r).unwrap();
-            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
-
-            debug_assert!(!s.m.contains(&(newp as usize, *newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
-            s.m.insert((newp as usize, *newlt));
-            s.ps.push((newp as usize, *newlt));
-        }
-    }
-}
-
-pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
-    // random coin
-    if s.r.random::<bool>() && !s.ps.is_empty() {
+        // Write to a random allocation...
+        let i = next_coin(s) as usize % s.ps.len();
+        let (po, lto) = unsafe { s.ps.get_unchecked(i) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+    } else if coin == 1 {
         // Free
-        let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+        debug_assert!(!s.ps.is_empty());
+
+        // Write to a random allocation...
+        let i = next_coin(s) as usize % s.ps.len();
+        let (po, lto) = unsafe { s.ps.get_unchecked(i) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
         debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-        s.m.remove(&(p, lt));
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
+
         unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
         unsafe { al.dealloc(p as *mut u8, lt) };
-
-        // Write to a random (other) allocation...
-        if !s.ps.is_empty() {
-            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
-        }
     } else {
-        // Malloc
-        let lt = ls.choose(&mut s.r).unwrap();
-        let p = unsafe { al.alloc(*lt) };
-        debug_assert!(!p.is_null());
-        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
-        debug_assert!(!s.m.contains(&(p as usize, *lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-        s.m.insert((p as usize, *lt));
-        s.ps.push((p as usize, *lt));
+        // Realloc
+        debug_assert!(!s.ps.is_empty());
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
+        debug_assert_ne!(p, 0);
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
 
-        // Write to a random (other) allocation...
-        if !s.ps.is_empty() {
-            let (po, lto) = s.ps.choose(&mut s.r).unwrap();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
-        }
+        let newlt = next_layout(s);
+        let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), newp, min(BYTES5.len(), lt.size())) };
+
+        debug_assert!(!s.m.contains(&(newp as usize, newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((newp as usize, newlt)); }
+        s.ps.push((newp as usize, newlt));
+
+        // Write to a random allocation...
+        let i = next_coin(s) as usize % s.ps.len();
+        let (po, lto) = unsafe { s.ps.get_unchecked(i) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES6.as_ptr(), (*po) as *mut u8, min(BYTES6.len(), lto.size())) };
     }
 }
 
-pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
-    if s.r.random::<bool>() && !s.ps.is_empty() {
+pub fn help_test_alloc_dealloc_realloc<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // random coin
+    let coin = next_coin(s) % 3;
+    if unlikely(s.ps.is_empty()) || coin == 0 {
+        // Malloc
+        let lt = next_layout(s);
+        let p = unsafe { al.alloc(lt) };
+        debug_assert!(!p.is_null(), "{lt:?}");
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((p as usize, lt)); }
+        s.ps.push((p as usize, lt));
+    } else if coin == 1 {
         // Free
-        let (p, lt) = s.ps.swap_remove(s.r.random_range(0..s.ps.len()));
+        debug_assert!(!s.ps.is_empty());
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
         debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
-        s.m.remove(&(p, lt));
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
         unsafe { al.dealloc(p as *mut u8, lt) };
     } else {
-        // Malloc
-        let l = *(ls.choose(&mut s.r).unwrap());
-        let p = unsafe { al.alloc(l) };
-        debug_assert!(!p.is_null());
-        debug_assert!(!s.m.contains(&(p as usize, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align()); // This line is the only reason s.m exists.
-        s.m.insert((p as usize, l));
-        let pu = p as usize;
-        s.ps.push((pu, l));
+        // Realloc
+        debug_assert!(!s.ps.is_empty());
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
+        debug_assert_ne!(p, 0);
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
+
+        let newlt = next_layout(s);
+        let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+
+        debug_assert!(!s.m.contains(&(newp as usize, newlt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((newp as usize, newlt)); }
+        s.ps.push((newp as usize, newlt));
     }
 }
 
-pub fn help_test_alloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
-    // Malloc
-    let l = *(ls.choose(&mut s.r).unwrap());
-    let p = unsafe { al.alloc(l) };
-    debug_assert!(!p.is_null(), "l: {l:?}");
-    unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), l.size())) };
+pub fn help_test_alloc_dealloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // random coin
+    let coin = next_coin(s) % 2;
+    if unlikely(s.ps.is_empty()) || coin == 0 {
+        // Malloc
+        let lt = next_layout(s);
+        let p = unsafe { al.alloc(lt) };
+        debug_assert!(!p.is_null(), "{lt:?}");
+        unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), lt.size())) };
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((p as usize, lt)); }
+        s.ps.push((p as usize, lt));
+
+        // Write to a random allocation...
+        let i = next_coin(s) as usize % s.ps.len();
+        let (po, lto) = unsafe { s.ps.get_unchecked(i) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), (*po) as *mut u8, min(BYTES4.len(), lto.size())) };
+    } else {
+        // Free
+        debug_assert!(!s.ps.is_empty());
+
+        // Write to a random allocation...
+        let i = next_coin(s) as usize % s.ps.len();
+        let (po, lto) = unsafe { s.ps.get_unchecked(i) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), (*po) as *mut u8, min(BYTES2.len(), lto.size())) };
+
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
+
+        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p as *mut u8, min(BYTES1.len(), lt.size())) };
+        unsafe { al.dealloc(p as *mut u8, lt) };
+    }
 }
 
-pub fn help_test_alloc<T: GlobalAlloc>(al: &T, s: &mut TestState, ls: &[Layout]) {
+pub fn help_test_alloc_dealloc<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // random coin
+    let coin = next_coin(s) % 2;
+    if unlikely(s.ps.is_empty()) || coin == 0 {
+        // Malloc
+        let lt = next_layout(s);
+        let p = unsafe { al.alloc(lt) };
+        debug_assert!(!p.is_null(), "{lt:?}");
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(test)] { s.m.insert((p as usize, lt)); }
+        s.ps.push((p as usize, lt));
+    } else {
+        // Free
+        debug_assert!(!s.ps.is_empty());
+
+        let i = next_coin(s) as usize % s.ps.len();
+        let (p, lt) = s.ps.swap_remove(i);
+        debug_assert!(s.m.contains(&(p, lt)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, lt.size(), lt.align());
+        #[cfg(test)] { s.m.remove(&(p, lt)); }
+
+        unsafe { al.dealloc(p as *mut u8, lt) };
+    }
+}
+
+pub fn help_test_alloc_with_writes<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // Malloc
-    let l = *(ls.choose(&mut s.r).unwrap());
+    let l = next_layout(s);
     let p = unsafe { al.alloc(l) };
     debug_assert!(!p.is_null(), "l: {l:?}");
+    debug_assert!(!s.m.contains(&(p as usize, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align()); // This line is the only reason s.m exists.
+    #[cfg(test)] { s.m.insert((p as usize, l)); }
+    unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), p, min(BYTES3.len(), l.size())) };
+    s.ps.push((p as usize, l));
+}
+
+pub fn help_test_alloc<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // Malloc
+    let l = next_layout(s);
+    let p = unsafe { al.alloc(l) };
+    debug_assert!(!p.is_null(), "l: {l:?}");
+    debug_assert!(!s.m.contains(&(p as usize, l)), "thread: {:>3}, {:?} {}-{}", get_thread_num(), p, l.size(), l.align()); // This line is the only reason s.m exists.
+    #[cfg(test)] { s.m.insert((p as usize, l)); }
+    s.ps.push((p as usize, l));
 }
 
 use std::sync::Arc;
-pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u32, al: AllocatorType, ls: &[Layout])
+pub fn help_test_multithreaded_with_allocator<F>(f: F, threads: u32, iters: u64, al: AllocatorType)
 where
-    F: Fn(&AllocatorType, &mut TestState, &[Layout]) + Sync + Send + Copy + 'static
+    F: Fn(&AllocatorType, &mut TestState) + Sync + Send + Copy + 'static
 {
     thread::scope(|scope| {
         for _t in 0..threads {
@@ -1004,24 +1138,20 @@ where
                 let mut s = TestState::new(iters);
 
                 for _i in 0..iters {
-                    f(&al, &mut s, ls);
+                    f(&al, &mut s);
                 }
             });
         }
     });
 }
 
-// pub fn gen_layouts() -> [Layout; 1] {
-//     let ls = vec![Layout::from_size_align(35, 1).unwrap()];
-//     ls.try_into().unwrap()
-// }
-
 pub fn gen_layouts() -> [Layout; 24] {
     let mut ls = Vec::new();
-    for siz in [35, 64, 128, 500, 2000, 10_000] {
+    for siz in [4, 35, 64, 128, 2000, 8_000] {
         ls.push(Layout::from_size_align(siz, 1).unwrap());
+
         ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
-        ls.push(Layout::from_size_align(siz - 10, 1).unwrap());
+        ls.push(Layout::from_size_align(max(siz, 11) - 10, 1).unwrap());
         ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
     }
 
@@ -1036,7 +1166,7 @@ pub mod tests {
         2usize.pow(bits as u32)
     }
     
-    const fn help_pow2_u32(bits: u8) -> u32 {
+    pub const fn help_pow2_u32(bits: u8) -> u32 {
         2u32.pow(bits as u32)
     }
     
@@ -1494,9 +1624,8 @@ pub mod tests {
     }
 
     use crate::smallocb_allocator_config::gen_allocator;
-    fn help_test_multithreaded(threads: u32, iters: u32, dealloc: bool, realloc: bool, writes: bool)  {
+    fn help_test_multithreaded(threads: u32, iters: u64, dealloc: bool, realloc: bool, writes: bool)  {
         let al = gen_allocator();
-        let ls = gen_layouts();
 
         let f = match (dealloc, realloc, writes) {
             (true, true, true) => { help_test_alloc_dealloc_realloc_with_writes }
@@ -1507,10 +1636,10 @@ pub mod tests {
             (false, _, _) => panic!()
         };
 
-        help_test_multithreaded_with_allocator(f, threads, iters, al, &ls);
+        help_test_multithreaded_with_allocator(f, threads, iters, al);
     }
 
-    fn help_slotsize(sc: u8) -> usize {
+    pub fn help_slotsize(sc: u8) -> usize {
         help_pow2_usize(sc + NUM_SMALLEST_SLOT_SIZE_BITS)
     }
 
