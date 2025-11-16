@@ -3,8 +3,8 @@ use tango_bench::{benchmark_fn, tango_benchmarks, tango_main, IntoBenchmarks};
 
 use smalloc::benchmarks::TestState;
 
-// use smalloc::{help_test_multithreaded_with_allocator, help_test_alloc_dealloc_realloc_with_writes, gen_layouts};
-use smalloc::{help_test_alloc_dealloc_realloc_with_writes, help_test_alloc_dealloc_realloc, help_test_alloc_dealloc_with_writes, help_test_alloc_dealloc, help_test_alloc_with_writes, help_test_alloc};
+// use smalloc::{help_test_multithreaded_with_allocator, adrww, gen_layouts};
+use smalloc::{adrww, adr, adww, ad, aww, a};
 
 use tango_bench::{Bencher, ErasedSampler};
 
@@ -48,44 +48,44 @@ where
 
 fn smallocb_benchmarks() -> impl IntoBenchmarks {
     [
-        benchmark_fn("help_test_alloc_dealloc_realloc_with_writes",
-                     gen_st_bencher(help_test_alloc_dealloc_realloc_with_writes)
+        benchmark_fn("adrww",
+                     gen_st_bencher(adrww)
         ),
 
-        benchmark_fn("help_test_alloc_dealloc_realloc",
-                     gen_st_bencher(help_test_alloc_dealloc_realloc)
+        benchmark_fn("adr",
+                     gen_st_bencher(adr)
         ),
 
-        benchmark_fn("help_test_alloc_dealloc_with_writes",
-                     gen_st_bencher(help_test_alloc_dealloc_with_writes)
+        benchmark_fn("adww",
+                     gen_st_bencher(adww)
         ),
 
-        benchmark_fn("help_test_alloc_dealloc",
-                     gen_st_bencher(help_test_alloc_dealloc)
+        benchmark_fn("ad",
+                     gen_st_bencher(ad)
         ),
 
-        benchmark_fn("help_test_alloc_with_writes",
-                     gen_st_bencher(help_test_alloc_with_writes)
+        benchmark_fn("aww",
+                     gen_st_bencher(aww)
         ),
 
-        benchmark_fn("help_test_alloc",
-                     gen_st_bencher(help_test_alloc)
+        benchmark_fn("a",
+                     gen_st_bencher(a)
         ),
 
         // benchmark_fn("alloc-free-re-and-write-32-threads-10K-iters",
-        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 32, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        //              gen_mt_bencher(adrww, 32, 10_000, Arc::clone(&ls), Arc::clone(&al))
         // ),
 
         // benchmark_fn("alloc-free-re-and-write-512-threads-10K-iters",
-        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        //              gen_mt_bencher(adrww, 512, 10_000, Arc::clone(&ls), Arc::clone(&al))
         // ),
 
         // benchmark_fn("alloc-free-re-and-write-512-threads-100K-iters",
-        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 512, 100_000, Arc::clone(&ls), Arc::clone(&al))
+        //              gen_mt_bencher(adrww, 512, 100_000, Arc::clone(&ls), Arc::clone(&al))
         // ),
 
         // benchmark_fn("alloc-free-re-and-write-8192-threads-10K-iters",
-        //              gen_mt_bencher(help_test_alloc_dealloc_realloc_with_writes, 8192, 10_000, Arc::clone(&ls), Arc::clone(&al))
+        //              gen_mt_bencher(adrww, 8192, 10_000, Arc::clone(&ls), Arc::clone(&al))
         // ),
     ]
 }
