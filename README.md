@@ -1,11 +1,11 @@
 # smalloc -- a simple memory allocator
 
-`smalloc` is a memory allocator, suitable (I hope) as a drop-in replacement for the Rust default
-global allocator, and (hopefully) other general-purpose allocators like `jemalloc`, `mimalloc`,
-`snmalloc`, etc.
+`smalloc` is a memory allocator, suitable (I hope) as a drop-in replacement for `ptmalloc` (the
+glibc memory allocator), `libmalloc` (the Macos userspace memory allocator), `jemalloc`, `mimalloc`,
+`snmalloc`, `rpmalloc`, etc.
 
-`smalloc` offers performance competitive with the other memory managers, while being much
-simpler. The current implementation is only 379 lines of Rust code (excluding docs, comments, tests,
+`smalloc` offers performance properties comparable to the other memory managers, while being
+simpler. The current implementation is only 455 lines of Rust code (excluding comments, tests,
 benchmarks, etc).
 
 # Caveats
@@ -14,15 +14,6 @@ No warranty! Not supported. Never been security audited. First time Rust project
 told me, laughing, that a low-level memory manager was "worst choice ever for a first-time Rust
 project"). There is no security contact information nor anyone you can contact for help using this
 code. Use at your own risk!
-
-In fact, I just found a sporadic bug that occurs only in a specific case and only very rarely at
-that (and maybe only on ARM?), and I left it in as an "Easter Egg" for any enterprising bug-hunters
-out there. I'll try to remember to go back and fix it before I remove this warning not to rely on
-`smalloc`.
-
-I will give a bounty of 10 Zcash (ZEC) to the first person who submits a pull request on github
-that fixes this Easter Egg bug, if they do so before I get around to committing the fix myself. :-)
-
 
 # Usage
 
@@ -40,52 +31,30 @@ See `./src/bin/hellosmalloc.rs` for a test program that demonstrates how to do t
 That's it! There are no other features you could consider using, no other changes you need to make,
 no configuration options, no tuning options, no nothing.
 
+# Tests and Benchmarks
 
-# Tests
+Tests and benchmarks are run using the `nextest` runner.
 
-Tests are run using the `nextest` runner.
+To install `nextest`:
+
+```text
+cargo install cargo-nextest
+```
 
 To run the tests:
 
 ```text
-cargo --frozen nextest run tests::
+cargo --frozen nextest run
 ```
 
-And look at stdout to see the test results.
-
-# Benchmarks
-
-To run the benchmarks, run `./runbench.sh` and read the stdout.
-
-Here are the results of running it on my Apple M4 Max CPU. This took 4 minutes:
+To run the benchmarks:
 
 ```text
-madrww1                                            [   6.1 ms ...   3.6 ms ]     -40.43%*
-madrww32                                           [  21.8 ms ...  13.3 ms ]     -39.09%*
-madrww2048                                         [    1.5 s ...    1.1 s ]     -27.81%*
-
-Look in "./benchresults" for results.
+cargo --frozen build --release --package simplebench
+./target/release/simplebench
 ```
 
-The benchmarks compare `smalloc` with the default Rust global allocator. This output is saying that
-with one thread, `smalloc` was took 40% less time (i.e. it was 170% as fast), with 32 threads, it
-took 39% less time (i.e. it was 164% as fast), and with 2048 threads, it took 28% less time (i.e. it
-was 136% as fast).
-
-The benchmarks use the excellent ["Tango" benchmarking tool](https://github.com/bazhenov/tango) to
-do pairwise testing, which statistically "subtracts out" most of the noise inherent in your system
-(such as other processes running, the CPU throttling itself to reduce heat, etc). So the reported
-relative performance of `smalloc` and the default allocator are probably valid even if other things
-were going on when you ran the benchmarks.
-
-The benchmarking script also generates plots. Look in the `./benchresults` directory for the svg
-files containing them. To interpret the plots, see [this
-documentation](https://github.com/zooko/tango/blob/zooko1/README.md#plots).
-
-Here are the plots from the "madrww1" benchmark whose stdout is shown above:
-
-[Plot](savedbenchresults/madrww1.svg)
-
+XXX EVERYTHING BELOW THIS LINE IS PROBABLY OUT OF DATE SORRY BRB
 
 # How it works
 
@@ -1022,22 +991,19 @@ goals, written here in roughly descending order of importance:
    That narrowing of pointers into indexes is `assert()`'ed in `dealloc()` and `realloc()` before
    using the resulting indexes.
    
-   (To inform this decision, I read a couple of slide decks by offensive security researchers about
-   heap exploitation: ([1](https://blackwinghq.com/blog/posts/playing-with-libmalloc/),
-   [2](https://www.synacktiv.com/ressources/Sthack_2018_Heapple_Pie.pdf).)
+   (To inform this decision, I read
+   [1](https://security.apple.com/blog/towards-the-next-generation-of-xnu-memory-safety/),
+   [2](https://googleprojectzero.blogspot.com/2025/03/blasting-past-webp.html), and a couple of
+   slide decks by offensive security researchers about heap exploitation:
+   [3](https://blackwinghq.com/blog/posts/playing-with-libmalloc/),
+   [4](https://www.synacktiv.com/ressources/Sthack_2018_Heapple_Pie.pdf).)
 
 
 # Open Issues / Future Work
 
-* SIMPLIFYING SMALLOC (SMALLOC v4)
-  * CHECK step 1: replace overflowers algorithm with simple recurse to double-size request
-  * step 2: remove `eac` and replace with zero-initialized free list :-) :-)
-  * step 3: change layout so that optimized bittwiddling works for decoding addresses to slots :-)
-  * step 4: let's have 8 Mi slots of 8 MiB each instead of 1 Mi slots of 64 MiB each
+* add benchmarks of 1000-threads-colliding tests e.g. `threads_1000_large_alloc_dealloc_x()`
 
 * experiment with std::intrinsics::likely/unlikely
-
-* fix that one bug that I'm offering a bounty for
 
 * Port to Cheri, add capability-safety
 
@@ -1090,7 +1056,21 @@ goals, written here in roughly descending order of importance:
 
 * CI for benchmarks? 🤔
 
-* According to Dino Dai Zovi's 2009 presentation on Macos heap exploitation, `libmalloc`'s size classes at that time were: tiny: <= 496 bytes, 16-byte quantum, small: <= 15,360 bytes, 512-byte quantum, large: <= 16,773,120 bytes, 4 KiB pages, huge: > 16,773,120, 4 KiB pages; consider renaming `smalloc`'s small/large/huge to tiny/small/large!? (and "huge" for smalloc means fall back to system). According tyo Eloi Benoist-Vanderbeken's 2018 presentation it has been updated to: tiny: <= 1008 bytes/16 B quantums, small: if machine has < 1 GiB RAM then <= 15 KiB else <= 127 KiB; 512 B quantums, else large; There is another allocator, the undocumented "nano allocator". According to Josh Pitts's post "Playing with libmalloc in 2024", the nano allocator is for <= 255 bytes/16 B quantums, small is for [1009 B - 32 KiB]; 512 B quantums, Medium is (32 KiB - 8192 KiB]; 32 KiB quantums, large is for > 8192 KiB; According to wangshuo's article on "Glibc Malloc Principle" on OpenEuler from 2021, glibc fast-bin's manage chunks <= 160 B. glibc-`M_MMAP_THRESHOLD` is default 128 KiB but can dynamically grow when larger allocations are requested. But according to sploitfun's post "Understanding glibc malloc" from 2015, fast bins actually hold {16-64}. It says large is >?= 512 B, within large there are 512, 4096, 32768, and 262144 byte distinctions
+* According to Dino Dai Zovi's 2009 presentation on Macos heap exploitation, `libmalloc`'s size
+  classes at that time were: tiny: <= 496 bytes, 16-byte quantum, small: <= 15,360 bytes, 512-byte
+  quantum, large: <= 16,773,120 bytes, 4 KiB pages, huge: > 16,773,120, 4 KiB pages; consider
+  renaming `smalloc`'s small/large/huge to tiny/small/large!? (and "huge" for smalloc means fall
+  back to system). According tyo Eloi Benoist-Vanderbeken's 2018 presentation it has been updated
+  to: tiny: <= 1008 bytes/16 B quantums, small: if machine has < 1 GiB RAM then <= 15 KiB else <=
+  127 KiB; 512 B quantums, else large; There is another allocator, the undocumented "nano
+  allocator". According to Josh Pitts's post "Playing with libmalloc in 2024", the nano allocator is
+  for <= 255 bytes/16 B quantums, small is for [1009 B - 32 KiB]; 512 B quantums, Medium is (32
+  KiB - 8192 KiB]; 32 KiB quantums, large is for > 8192 KiB; According to wangshuo's article on
+  "Glibc Malloc Principle" on OpenEuler from 2021, glibc fast-bin's manage chunks <= 160
+  B. glibc-`M_MMAP_THRESHOLD` is default 128 KiB but can dynamically grow when larger allocations
+  are requested. But according to sploitfun's post "Understanding glibc malloc" from 2015, fast bins
+  actually hold {16-64}. It says large is >?= 512 B, within large there are 512, 4096, 32768, and
+  262144 byte distinctions
 
 * document why note try falling back to system `malloc()` instead of system `mach_vm_alloc()`/`mmap()`
 
@@ -1201,8 +1181,11 @@ Smalloc v5 has the following lines counts:
 * tests loc: 949
 * benches loc: 84 -- benchmarks are still mostly broken 😭
 
-Smalloc v6 has the following lines counts:
-* docs and comments: 2162
-* implementaton loc: 380 (excluding debug_asserts)
-* tests loc: 615
-* benches loc: 286
+Smalloc v6.0.4 has the following lines counts:
+* docs and comments: 1198
+* implementaton loc: 455 (excluding debug_asserts)
+* tests loc: 618
+* benches loc: 328
+
+(I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
+each of them.)

@@ -235,7 +235,7 @@ fn help_test_multithreaded(threads: u32, iters: u64, dealloc: bool, realloc: boo
     //xxx4 could consider cleaning up here -- dealloc'ing all the allocations...
 }
 
-e/ One sentinel test (not ignored) - prints error if run under cargo test
+// One sentinel test (not ignored) - prints error if run under cargo test
 #[test]
 fn aaa_require_nextest() {
     if std::env::var("NEXTEST").is_ok() {

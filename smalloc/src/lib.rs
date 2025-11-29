@@ -148,7 +148,6 @@ impl Default for Smalloc {
 
 impl Drop for Smalloc {
     fn drop(&mut self) {
-        dbg!("drop");
         sys_dealloc(self.sys_baseptr.load(Acquire) as *mut u8, TOTAL_VIRTUAL_MEMORY);//xxx can we use weaker ordering constraints?
     }
 }
@@ -209,14 +208,12 @@ impl Smalloc {
 
         //eprintln!("TOTAL_VIRTUAL_MEMORY: {TOTAL_VIRTUAL_MEMORY}");
 
-        dbg!("init 2");
         // acquire spin lock
         loop {
             if self.initlock.compare_exchange(false, true, AcqRel, Acquire).is_ok() {
                 break;
             }
         }
-        dbg!("init 3");
 
         p = self.sm_baseptr.load(Acquire);
         if p != 0 {
@@ -225,10 +222,8 @@ impl Smalloc {
 
             Ok(self.sm_baseptr.load(Relaxed))
         } else {
-            dbg!("init 4");
             let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY)?;
             assert!(!sysbp.is_null());
-            dbg!("init 5");
             self.sys_baseptr.store(sysbp.addr(), Release);//xxx can we use weaker ordering constraints?
             let smbp = sysbp.addr().next_multiple_of(BASEPTR_ALIGN);
             debug_assert!(smbp + SIZE_OF_SLABS_AND_FLHS <= sysbp.addr() + TOTAL_VIRTUAL_MEMORY, "sysbp: {sysbp:?}, smbp: {smbp:?}, slot: {HIGHEST_SMALLOC_SLOT_ADDR:?}, sosaf: {SIZE_OF_SLABS_AND_FLHS:?}, smbp+S: {:?}, size: {:?}, BASEPTR_ALIGN: {BASEPTR_ALIGN:?}", smbp + SIZE_OF_SLABS_AND_FLHS, TOTAL_VIRTUAL_MEMORY);

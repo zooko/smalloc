@@ -10,7 +10,7 @@ checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
 
 [[package]]
 name = "devutils"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "smalloc",
  "wyhash",
@@ -35,7 +35,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "find_max_vm_addresses_reservable"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "plat",
  "thousands",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "hellosmalloc"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "smalloc",
  "wyrand",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "plat"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "mach-sys",
  "rustix",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "simplebench"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "devutils",
  "libc",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "smalloc"
-version = "6.0.2"
+version = "6.0.4"
 dependencies = [
  "devutils",
  "plat",
