@@ -1,0 +1,13 @@
+[package]
+name = "simplebench"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+libc = "0.2.177"
+smalloc = { path = "../smalloc" }
+devutils = { path = "../devutils" }
+thousands = "0.2.0"
+
+[[bin]]
+name = "simplebench"

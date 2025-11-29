@@ -1,34 +1,17 @@
 cargo-features = ["profile-rustflags"]
 
-[package]
-name = "smalloc"
-version = "6.0.1"
+[workspace]
+members = ["smalloc", "hellosmalloc", "simplebench", "find_max_vm_addresses_reservable"]
+default-members = ["smalloc"]
+resolver = "3"
+
+[workspace.package]
+version = "6.0.3"
 edition = "2024"
-
-[dependencies]
-ahash = "0.8.11"
-libc = "0.2.177"
-rand = "0.9.0"
-thousands = "0.2.0"
-wyhash = "0.6.0"
-wyrand = "0.3.2"
-
-[dev-dependencies]
-cargo-nextest = "0.9.96"
-tango-bench = "0.6.0"
-# tango-bench = { version = "1.0.0", path="../tango/tango-bench" }
-
-[target.'cfg(target_vendor="apple")'.dependencies]
-mach-sys = "0.5"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.0.7", features = ["mm"] }
-
-[lib]
-name = "smalloc"
 
 [profile.release]
 opt-level = 3
+panic = "abort"
 debug = false
 codegen-units = 1
 lto = "fat"
@@ -36,11 +19,7 @@ debug-assertions = false
 overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
 
-[[bench]]
-name = "smallocb"
-harness = false
-
 [profile.profiling]
 inherits = "release"
 debug = true           # Enable debug symbols for profiling
-lto = false           # Disable LTO for faster builds and better symbol info
+# lto = false           # Disable LTO for faster builds and better symbol info

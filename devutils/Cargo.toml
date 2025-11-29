@@ -1,0 +1,9 @@
+[package]
+name = "devutils"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+smalloc = { path = "../smalloc" }
+wyhash = "0.6.0"
+wyrand = "0.3.2"

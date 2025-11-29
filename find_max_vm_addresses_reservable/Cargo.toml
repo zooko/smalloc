@@ -1,0 +1,11 @@
+[package]
+name = "find_max_vm_addresses_reservable"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+plat = { path = "../plat" }
+thousands = "0.2.0"
+
+[[bin]]
+name = "find_max_vm_addresses_reservable"

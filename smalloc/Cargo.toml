@@ -1,0 +1,10 @@
+[package]
+name = "smalloc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+plat = { path = "../plat" }
+
+[dev-dependencies]
+devutils = { path = "../devutils" }

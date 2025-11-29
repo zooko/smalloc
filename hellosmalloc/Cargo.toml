@@ -1,0 +1,11 @@
+[package]
+name = "hellosmalloc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+smalloc = { path = "../smalloc" }
+wyrand = "0.3.2"
+
+[[bin]]
+name = "hellosmalloc"

@@ -1,7 +1,5 @@
 // Abstract over system virtual memory functions
 
-use std::alloc::Layout;
-
 #[derive(Debug)]
 pub struct AllocFailed;
 
@@ -14,52 +12,14 @@ impl fmt::Display for AllocFailed {
     }
 }
 
-pub fn sys_alloc(layout: Layout) -> Result<*mut u8, AllocFailed> {
-    let size = layout.size();
-    debug_assert!(size > 0);
-    let alignment = layout.align();
-    debug_assert!(alignment > 0);
-    debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
-
-    let ptr = vendor::sys_alloc(size)?;
-    debug_assert!(ptr.is_aligned_to(alignment));
-
-    Ok(ptr)
-}
-
-pub fn sys_dealloc(ptr: *mut u8, layout: Layout) {
-    let size = layout.size();
-    debug_assert!(size > 0);
-    let alignment = layout.align();
-    debug_assert!(alignment > 0);
-    debug_assert!((alignment & (alignment - 1)) == 0); // alignment must be a power of two
-
-    vendor::sys_dealloc(ptr, size);
-}
-
 #[cfg(any(target_os = "linux", doc))]
-pub mod vendor {
-    // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
-    // are probably only wrong by being smaller than they should be (never larger), and being
-    // smaller than they should be is probably just a very small loss of performance. The other
-    // thing these constants are used for is to run the biggest benchmarks we can without incurring
-    // the wrath of the linux OOM-killer, so again it's not a huge problem if the constants are too
-    // small for your actual machine.
-
-    // These constants are set for my Linux Intel(R) Xeon(R) CPU E5-2698 v4. They're not *really*
-    // true of all linux products. 😂 But the default page size on all linux's that I know of is
-    // 4096. The most common exceptions are huge pages (which constitute a design issue for the
-    // entire design of `smalloc`, really.)
-    pub const PAGE_SIZE: usize = 4096;
-
+pub mod plat {
     use crate::platformalloc::AllocFailed;
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
     use std::ffi::c_void;
     use std::ptr;
 
-    pub type ClockType = i32;
-
-// inline
+// inline xxx?
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         match unsafe {
             mmap_anonymous(
@@ -74,7 +34,7 @@ pub mod vendor {
         }
     }
 
-// inline
+// inline xxx?
     pub fn sys_dealloc(p: *mut u8, size: usize) {
         unsafe {
             munmap(p as *mut c_void, size).ok();
@@ -83,18 +43,8 @@ pub mod vendor {
 }
 
 #[cfg(any(target_vendor = "apple", doc))]
-pub mod vendor {
-    // Okay these constants are sometimes incorrect or at least an "over-simplification", but they
-    // are probably only wrong by being smaller than they should be (never larger), and being
-    // smaller than they should be is probably just a very small loss of performance. The other
-    // thing these constants are used for is to run the biggest benchmarks we can without incurring
-    // the wrath of the linux OOM-killer, so again it's not a huge problem if the constants are too
-    // small for your actual machine.
-
-    // These consts are set for my Apple M4 Max -- they're not *really* true of all Apple products.
-    pub const PAGE_SIZE: usize = 16384;
-
-    use crate::platformalloc::AllocFailed;
+pub mod plat {
+    use super::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
     use mach_sys::traps::mach_task_self;
@@ -103,9 +53,7 @@ pub mod vendor {
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use std::mem::size_of;
 
-    pub type ClockType = u32;
-
-// inline
+// inline xxx?
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
         let task: mach_port_t = unsafe { mach_task_self() };
         let mut address: mach_vm_address_t = 0;
@@ -122,7 +70,7 @@ pub mod vendor {
         }
     }
 
-// inline
+// inline xxx?
     pub fn sys_dealloc(p: *mut u8, size: usize) {
         debug_assert!(size_of::<usize>() == size_of::<u64>());
         debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
@@ -131,6 +79,52 @@ pub mod vendor {
             let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
             debug_assert!(retval == KERN_SUCCESS);
         }
+    }
+}
+
+#[inline(always)] // xxx experiment with removing
+pub fn _prefetch_read<T>(ptr: *const T) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T2};
+	unsafe {
+            _mm_prefetch::<_MM_HINT_T2>(ptr as *const i8);
+        }
+    }
+
+    // #[cfg(target_arch = "aarch64")]
+    // {
+    //     use core::arch::aarch64::_prefetch;
+    //     _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8);
+    // }
+
+    // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        // No-op on other architectures
+        let _ = ptr;
+    }
+}
+
+#[inline(always)] // xxx experiment with removing
+pub fn _prefetch_write<T>(ptr: *const T) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T2};
+	unsafe {
+	    _mm_prefetch::<_MM_HINT_T2>(ptr as *const i8);
+        }
+    }
+
+    // #[cfg(target_arch = "aarch64")]
+    // {
+    //     use core::arch::aarch64::_prefetch;
+    //     _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8);
+    // }
+
+    // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        // No-op on other architectures
+        let _ = ptr;
     }
 }
 
