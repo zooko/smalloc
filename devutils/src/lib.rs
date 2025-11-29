@@ -58,12 +58,12 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         // Read from this location before dealloc'ing it.
         unsafe {
-            let data = std::slice::from_raw_parts(p as *const u8, min(8, lt.size()));
+            let ln = min(BYTES1.len(), lt.size());
+            let data = std::slice::from_raw_parts(p as *const u8, ln);
             // Useful assertion for looking for bugs when testing, plus when this is used for
             // benchmarking, this prevents the compiler from optimizing away the read.
 
-            // xxx this probably fails if lto.size() < 4
-	    assert!(data == BYTES1 || data == BYTES2 || data == BYTES3 || data == BYTES4 || data == BYTES5);
+            assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}, BYTES4: {BYTES4:?}, BYTES5: {BYTES5:?}");
         }
         unsafe { al.dealloc(p as *mut u8, lt) };
     } else {
@@ -79,16 +79,16 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         // Read from this location before realloc'ing it.
         unsafe {
-            let data = std::slice::from_raw_parts(p as *const u8, min(8, lt.size()));
+            let ln = min(BYTES1.len(), lt.size());
+            let data = std::slice::from_raw_parts(p as *const u8, ln);
             // Useful assertion for looking for bugs when testing, plus when this is used for
             // benchmarking, this prevents the compiler from optimizing away the read.
 
-            // xxx this probably fails if lto.size() < 4
-	    assert!(data == BYTES1 || data == BYTES2 || data == BYTES3 || data == BYTES4 || data == BYTES5);
+	    assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln]);
         }
         let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
         // Write to the (possibly new) location after realloc'ing it.
-        unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), newp, min(BYTES4.len(), lt.size())) };
+        unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), newp, min(BYTES4.len(), newlt.size())) };
 
         debug_assert!(!s.m.contains(&(newp as usize, newlt)), "{:?} {}-{}", newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
         #[cfg(debug_assertions)] { s.m.insert((newp as usize, newlt)); }
@@ -205,12 +205,12 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         // Read from this location before dealloc'ing it.
         unsafe {
-            let data = std::slice::from_raw_parts(p as *const u8, min(8, lt.size()));
+            let ln = min(BYTES1.len(), lt.size());
+            let data = std::slice::from_raw_parts(p as *const u8, ln);
             // Useful assertion for looking for bugs when testing, plus when this is used for
             // benchmarking, this prevents the compiler from optimizing away the read.
 
-            // xxx this probably fails if lto.size() < 4
-	    assert!(data == BYTES1 || data == BYTES2 || data == BYTES3);
+	    assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}");
         }
         unsafe { al.dealloc(p as *mut u8, lt) };
 
@@ -316,18 +316,19 @@ where
     });
 }
 
+use std::cmp::max;
 fn gen_layouts() -> [Layout; 24] {
     let mut ls = Vec::new();
-    for _i in 0..24 {
-        ls.push(Layout::from_size_align(4096, 1).unwrap());
-    }
-    // for siz in [4, 35, 64, 128, 2000, 8_000] {
-    //     ls.push(Layout::from_size_align(siz, 1).unwrap());
-
-    //     ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
-    //     ls.push(Layout::from_size_align(max(siz, 11) - 10, 1).unwrap());
-    //     ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
+    // for _i in 0..24 {
+    //     ls.push(Layout::from_size_align(4096, 1).unwrap());
     // }
+    for siz in [4, 35, 64, 128, 2000, 8_000] {
+        ls.push(Layout::from_size_align(siz, 1).unwrap());
+
+        ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
+        ls.push(Layout::from_size_align(max(siz, 11) - 10, 1).unwrap());
+        ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
+    }
 
     ls.try_into().unwrap()
 }
