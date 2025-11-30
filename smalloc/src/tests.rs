@@ -6,7 +6,7 @@ use std::alloc::GlobalAlloc;
 /// from a different slab of the same sizeclass. This test doesn't work for the largest
 /// sizeclass simply because the test assumes you can allocate 2 slots...
 fn help_test_overflow_to_other_slab(sc: u8) {
-    debug_assert!(sc < NUM_SCS);
+    debug_assert!(sc <= (NUM_SCS - 2)); // This test code needs at least 3 slots.
 
     let sm = Smalloc::new();
     sm.idempotent_init().unwrap();
@@ -17,12 +17,14 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
     let slabnum = get_slab_num();
 
-    let numslots = help_pow2_u32(NUM_MOST_SLOTS_BITS - sc);
+    let numslots = help_pow2_usize(NUM_SCS - sc);
+    debug_assert!(numslots >= 3);
 
     // Step 0: reach into the slab's `flh` and set it to almost the max slot number.
     let first_i = numslots - 3;
+    debug_assert!(first_i <= u32::MAX as usize);
     let mut i = first_i;
-    help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, i, slabnum);
+    help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, i as u32, slabnum);
 
     // Step 1: allocate a slot and store it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -31,7 +33,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let (sc1, slabnum1, slotnum1) = help_ptr_to_loc(&sm, p1, l);
     assert_eq!(sc1 + 2, alignedsizebits);
     assert_eq!(sc1, sc);
-    assert_eq!(slotnum1, i);
+    assert_eq!(slotnum1 as usize, i);
 
     i += 1;
     
@@ -43,9 +45,9 @@ fn help_test_overflow_to_other_slab(sc: u8) {
         let (scn, _slabnumn, slotnumn) = help_ptr_to_loc(&sm, pt, l);
         assert_eq!(scn + 2, alignedsizebits);
         assert_eq!(scn, sc);
-        assert_eq!(slotnumn, i);
+        assert_eq!(slotnumn as usize, i);
 
-        i += 1
+        i += 1;
     }
 
     // Step 3: allocate the last slot in this slab and store it in local variables:
@@ -57,7 +59,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert_eq!(sc2, sc, "numslots: {numslots}, i: {i}");
     assert_eq!(sc2 + 2, alignedsizebits);
     assert_eq!(slabnum1, slabnum2);
-    assert_eq!(slotnum2, numslots - 2);
+    assert_eq!(slotnum2 as usize, numslots - 2);
 
     // Step 4: allocate another slot and store it in local variables:
     let p3 = unsafe { sm.alloc(l) };
@@ -84,15 +86,16 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 }
 
 /// If we've allocated all of the slots from a slab, then the next allocation comes from the
-/// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 30).
+/// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 31).
 fn help_test_overflow_to_other_sizeclass(sc: u8) {
+    debug_assert!(sc < NUM_SCS - 1);
     let sm = Smalloc::new();
     sm.idempotent_init().unwrap();
 
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let alignedsizebits = req_to_slotsizebits(siz, 1);
-    let numslots = help_pow2_u32(NUM_MOST_SLOTS_BITS - sc);
+    let numslots = help_pow2_usize(NUM_SCS - sc);
     let slabnum = get_slab_num();
 
     // Step 0: allocate a slot and store information about it in local variables:
@@ -108,7 +111,7 @@ fn help_test_overflow_to_other_sizeclass(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, numslots - 1, slabnum);
+        help_set_flh_singlethreaded(sm.get_flhs_baseptr(), sc, (numslots - 1) as u32, slabnum);
     }
 
     // Step 3: Allocate another slot and store it in local variables:
@@ -352,10 +355,6 @@ const fn help_pow2_usize(bits: u8) -> usize {
 
 fn alignedsize_or(size: usize, align: usize) -> usize {
     ((size - 1) | (align - 1)) + 1
-}
-
-const fn help_pow2_u32(bits: u8) -> u32 {
-    2u32.pow(bits as u32)
 }
 
 /// Generate a number of requests (size+alignment) that fit into the given slab and for each

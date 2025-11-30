@@ -31,8 +31,7 @@ const NUM_SCS: u8 = 31; // This is also NUM_MOST_SLOTS_BITS.
 // See the ASCII-art map in `README.md` for where these bit masks fit in.
 const NUM_SLABS: u8 = 2u8.pow(NUM_SLABS_BITS as u32);
 const NUM_FLHS: u16 = NUM_SLABS as u16 * NUM_SCS as u16; // 992
-const NUM_MOST_SLOTS_BITS: u8 = NUM_SCS;
-const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_MOST_SLOTS_BITS + NUM_SMALLEST_SLOT_SIZE_BITS; // 33
+const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_SCS + NUM_SMALLEST_SLOT_SIZE_BITS; // 33
 const NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS + NUM_SLABS_BITS; // 38
 const SLABNUM_ALONE_MASK: u8 = const_gen_mask_u8(NUM_SLABS_BITS); // 0b11111
 const SLABNUM_ADDR_MASK: usize = const_shl_u8_usize(SLABNUM_ALONE_MASK, NUM_SLOTNUM_AND_DATA_BITS); // 0b11111000000000000000000000000000000000
@@ -489,7 +488,7 @@ unsafe impl GlobalAlloc for Smalloc {
         let slotsizebits = sc + NUM_SMALLEST_SLOT_SIZE_BITS;
         let slotnum = const_shr_usize_u32(p_addr & SLOTNUM_AND_DATA_MASK, slotsizebits);
         let slabnum = const_shr_usize_u8(p_addr & SLABNUM_ADDR_MASK, NUM_SLOTNUM_AND_DATA_BITS);
-        let highestslotnum = const_gen_mask_u32(NUM_MOST_SLOTS_BITS - sc);
+        let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
 
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
         let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
