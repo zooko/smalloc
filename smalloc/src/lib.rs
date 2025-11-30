@@ -163,6 +163,10 @@ impl Smalloc {
         }
     }
 
+    pub fn get_total_virtual_memory(&self) -> usize {
+        TOTAL_VIRTUAL_MEMORY
+    }
+
     fn dump_map_of_slabs(&self) {
         // Dump a map of the slabs
         let mut fullslots = 0;

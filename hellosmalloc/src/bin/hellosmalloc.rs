@@ -8,6 +8,10 @@ use wyrand::WyRand;
 pub fn main() {
     println!("Hello, world! I'm smalloc. :-)");
 
+    let tvm = SMALLOC.get_total_virtual_memory();
+
+    println!("Allocated total virtual memory: {tvm}");
+
     let mut r = WyRand::new(0);
 
     let num_args = r.rand() % 2u64.pow(20);
