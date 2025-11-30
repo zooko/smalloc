@@ -415,6 +415,8 @@ unsafe impl GlobalAlloc for Smalloc {
                     return null_mut();
                 };
 
+                let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
+
                 // If the slab is full, we'll switch to another slab in this same sizeclass.
                 let orig_slabnum = get_slab_num();
                 let mut slabnum = orig_slabnum;
@@ -431,8 +433,6 @@ unsafe impl GlobalAlloc for Smalloc {
                     let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
                     let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
                     let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-
-                    let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
 
                     let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
 
