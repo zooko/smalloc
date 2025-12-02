@@ -120,6 +120,24 @@ where
 }
 
 #[macro_export]
+    macro_rules! st_bench {
+    ($func:path, $iters:expr, $seed:expr) => {{
+        let func_name = stringify!($func);
+
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
+
+        // Create a closure that specifies the type
+        let f = |al: &Smalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+        let sm_name = format!("sm {func_name}");
+        $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
+
+    }}
+}
+
+#[macro_export]
     macro_rules! compare_st_bench {
     ($func:path, $iters:expr, $seed:expr) => {{
         let func_name = stringify!($func);
@@ -133,21 +151,21 @@ where
 
         std::thread::scope(|scope| {
             scope.spawn(|| { 
-                 // Create a closure that specifies the type
-                 let f = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
-                     $func(al, s)
-                 };
-                 let bi_name = format!("bi {func_name}");
-                 baseline_ns = $crate::singlethread_bench(f, $iters, &bi_name, &bi, $seed); 
-             });
+                // Create a closure that specifies the type
+                let f = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let bi_name = format!("bi {func_name}");
+                baseline_ns = $crate::singlethread_bench(f, $iters, &bi_name, &bi, $seed); 
+            });
             scope.spawn(|| { 
-                 // Create a closure that specifies the type
-                 let f = |al: &Smalloc, s: &mut TestState| {
-                     $func(al, s)
-                 };
-                 let sm_name = format!("sm {func_name}");
-                 candidat_ns = $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
-             });
+                // Create a closure that specifies the type
+                let f = |al: &Smalloc, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let sm_name = format!("sm {func_name}");
+                candidat_ns = $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
+            });
         });
 
 	//sm.dump_map_of_slabs();
@@ -155,6 +173,26 @@ where
         let diffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("diff: {diffperc:.0}%");
         println!("");
+    }}
+}
+
+#[macro_export]
+    macro_rules! mt_bench {
+    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {{
+        let func_name = stringify!($func);
+
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
+
+        // Create a closure that specifies the type
+        let fsm = |al: &Smalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+
+        let sm_name = format!("sm {} {func_name}", $threads);
+        $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
+
+        // sm.dump_map_of_slabs();
     }}
 }
 
@@ -176,7 +214,7 @@ where
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
-        // Create a closure that specifies the type
+        // create a closure that specifies the type
         let fsm = |al: &Smalloc, s: &mut TestState| {
             $func(al, s)
         };
@@ -184,7 +222,7 @@ where
         let sm_name = format!("sm {} {func_name}", $threads);
         let candidat_ns = $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
-        //	 sm.dump_map_of_slabs();
+        //sm.dump_map_of_slabs();
 
         let diffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("diff: {diffperc:.0}%");
