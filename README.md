@@ -1105,11 +1105,13 @@ goals, written here in roughly descending order of importance:
 
 * investigate using the #[noalias] annotation
 
-* Try "tarpaulin" HT Sean Bowe
+* Try "tarpaulin" again HT Sean Bowe
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
 
-* Put back the fallback to mmap for requests that overflow.
+* Put back the fallback to mmap for requests that overflow.??? Or document why not.
+
+* try again to get the debug/test/benchmark stuff out of the end of $WORKSPACE/smalloc/src/lib.rs
 
 # Acknowledgments
 

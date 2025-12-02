@@ -265,7 +265,7 @@ impl Smalloc {
             let newflhdword = ((counter as u64 + 1) << 32) | newslotnum as u64;
 
             // Compare and exchange
-            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() {
+            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
 	        // prefetch the next link so we can quickly write to it next time
 		//xxx14prefetch_write(Self::linkptr(slabbp, newslotnum, slotsizebits));
                 break;

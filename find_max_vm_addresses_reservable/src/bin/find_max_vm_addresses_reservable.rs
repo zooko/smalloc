@@ -1,9 +1,7 @@
 // I read in the "The Linux Programming Interface" book that glibc's malloc's default size to fall back to system allocation (mmap) -- MMAP_THRESHOLD -- is 128 KiB. But according to https://sourceware.org/glibc/wiki/MallocInternals the threshold is dynamic unless overridden.
 
-// The following are tools I used during development of smalloc, which should probably be rm'ed once
-// smalloc is finished. :-)
-
 // On MacOS on Apple M4, I could allocate more than 105 trillion bytes (105,072,079,929,344).
+// 2025-11-29: On MacOS on Apple M4: 140,256,418,463,744 bytes.
 //
 // On a linux machine (AMD EPYC 3151) with 32,711,276 bytes RAM, with overcommit=1, the amount I was able to mmap() varied. :-( One time I could mmap() only 95,175,252,639,744 bytes.
 // On a linux machine (Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20GHz) with 4,608,000,000 bytes RAM with overcommit = 0, the amount I was able to mmap() varied. :-( One time I could mmap() only 93,971,598,389,248 Bytes.
