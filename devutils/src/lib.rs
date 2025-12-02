@@ -16,6 +16,29 @@ use std::hint::unlikely;
 use std::thread;
 use std::alloc::Layout;
 
+// For testing and benchmarking only.
+pub mod dev_instance {
+    use std::sync::OnceLock;
+    use smalloc::*;
+    pub static mut SMAL: Smalloc = Smalloc::new();
+    static INIT: OnceLock<()> = OnceLock::new();
+
+    pub fn setup() {
+        INIT.get_or_init(|| {
+            unsafe {
+                (*std::ptr::addr_of_mut!(SMAL)).init();
+            }
+        });
+    }
+
+    #[macro_export]
+    macro_rules! get_devsmalloc {
+        () => {
+            unsafe { &*std::ptr::addr_of!($crate::dev_instance::SMAL) }
+        };
+    }
+}
+
 pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 3;
@@ -473,7 +496,7 @@ impl<T> ShuffleSlice for [T] {
 }
 
 #[macro_export]
-macro_rules! nextest_tests {
+macro_rules! nextest_integration_tests {
     (
         $(
             $(#[$attr:meta])*
@@ -484,11 +507,13 @@ macro_rules! nextest_tests {
             #[test]
             $(#[$attr])*
             fn $name() {
-                if std::env::var("NEXTEST").is_ok() {
-                    $body
-                } else {
+                if std::env::var("NEXTEST").is_err() {
                     panic!("This project requires cargo-nextest to run tests.");
                 }
+                    
+                dev_instance::setup();
+
+                $body
             }
         )*
     };

@@ -7,5 +7,11 @@ edition.workspace = true
 plat = { path = "../plat" }
 thousands = "0.2.0"
 
+[target.'cfg(target_vendor="apple")'.dependencies]
+mach-sys = "0.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.0.7", features = ["mm"] }
+
 [[bin]]
 name = "find_max_vm_addresses_reservable"

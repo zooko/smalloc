@@ -1,7 +1,8 @@
 #![doc = include_str!("../../README.md")]
-#![feature(likely_unlikely)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::assertions_on_constants)]
+#![feature(stmt_expr_attributes)]
+#![feature(likely_unlikely)]
 #![feature(pointer_is_aligned_to)]
 #![feature(unchecked_shifts)]
 #![feature(test)]
@@ -132,12 +133,19 @@ fn set_slab_num(slabnum: u8) {
     SLAB_NUM.set(Some(slabnum));
 }
 
+use std::cell::UnsafeCell;
+
 pub struct Smalloc {
-    initlock: AtomicBool,
-    sys_baseptr: AtomicUsize,
-    sm_baseptr: AtomicUsize,
-    flhs_baseptr: AtomicUsize,
+    inner: UnsafeCell<SmallocInner>,
 }
+
+struct SmallocInner {
+    sysbp: usize,
+    smbp: usize,
+    flhsbp: usize,
+}
+
+unsafe impl Sync for Smalloc {}
 
 impl Default for Smalloc {
     fn default() -> Self {
@@ -145,32 +153,39 @@ impl Default for Smalloc {
     }
 }
 
-impl Drop for Smalloc {
-    fn drop(&mut self) {
-        sys_dealloc(self.sys_baseptr.load(Acquire) as *mut u8, TOTAL_VIRTUAL_MEMORY);//xxx can we use weaker ordering constraints?
-    }
-}
-
 //xxx17use crate::platformalloc::{prefetch_read,prefetch_write};
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
-            initlock: AtomicBool::new(false),
-            sys_baseptr: AtomicUsize::new(0),
-            sm_baseptr: AtomicUsize::new(0),
-            flhs_baseptr: AtomicUsize::new(0),
+            inner: UnsafeCell::new(SmallocInner {
+                sysbp: 0,
+                smbp: 0,
+                flhsbp: 0,
+            }),
         }
     }
 
+    fn inner(&self) -> &SmallocInner {
+        unsafe { &*self.inner.get() }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn inner_mut(&self) -> &mut SmallocInner {
+        unsafe { &mut *self.inner.get() }
+    }
+
+    /// For testing only. Do not use in production code.
     pub fn get_total_virtual_memory(&self) -> usize {
         TOTAL_VIRTUAL_MEMORY
     }
 
+    /// For testing only. Do not use in production code.
     fn dump_map_of_slabs(&self) {
+        let inner = self.inner();
+
         // Dump a map of the slabs
         let mut fullslots = 0;
         let mut fulltotsize = 0;
-        let flhbp = self.get_flhs_baseptr();
         for sc in 0..NUM_SCS {
             let mut scfullslots = 0;
             let mut scfulltotsize = 0;
@@ -184,7 +199,7 @@ impl Smalloc {
             for slabnum in 0..NUM_SLABS {
 //                print!(" {slabnum}");
                 
-                let headelement = help_get_flh(flhbp, sc, slabnum);
+                let headelement = help_get_flh(inner.flhsbp, sc, slabnum);
                 if headelement == highestslotnum {
                     // full
                     print!("X");
@@ -201,54 +216,21 @@ impl Smalloc {
         println!(" totslots: {fullslots}, totsize: {fulltotsize}");
     }
 
-    pub fn idempotent_init(&self) -> Result<usize, AllocFailed> {
-        let mut p: usize;
-
-        p = self.sm_baseptr.load(Acquire);
-        if p != 0 {
-            return Ok(p);
-        }
-
-        //eprintln!("TOTAL_VIRTUAL_MEMORY: {TOTAL_VIRTUAL_MEMORY}");
-
-        // acquire spin lock
-        loop {
-            if self.initlock.compare_exchange(false, true, AcqRel, Acquire).is_ok() {
-                break;
-            }
-        }
-
-        p = self.sm_baseptr.load(Acquire);
-        if p != 0 {
-            // Release the spin lock
-            self.initlock.store(false, Release);
-
-            Ok(self.sm_baseptr.load(Relaxed))
-        } else {
-            let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY)?;
-            assert!(!sysbp.is_null());
-            self.sys_baseptr.store(sysbp.addr(), Release);//xxx can we use weaker ordering constraints?
-            let smbp = sysbp.addr().next_multiple_of(BASEPTR_ALIGN);
-            debug_assert!(smbp + SIZE_OF_SLABS_AND_FLHS <= sysbp.addr() + TOTAL_VIRTUAL_MEMORY, "sysbp: {sysbp:?}, smbp: {smbp:?}, slot: {HIGHEST_SMALLOC_SLOT_ADDR:?}, sosaf: {SIZE_OF_SLABS_AND_FLHS:?}, smbp+S: {:?}, size: {:?}, BASEPTR_ALIGN: {BASEPTR_ALIGN:?}", smbp + SIZE_OF_SLABS_AND_FLHS, TOTAL_VIRTUAL_MEMORY);
-            self.sm_baseptr.store(smbp, Release); //xxx can we use weaker ordering constraints?
-            self.flhs_baseptr.store(smbp + FLHS_BASE, Release); //xxx weaker ordering constraints pls
-
-            // Release the spin lock
-            self.initlock.store(false, Release);
-
-            Ok(smbp)
-        }
-    }
-
-    fn get_sm_baseptr(&self) -> usize {
-        let p = self.sm_baseptr.load(Acquire);
-        debug_assert!(p != 0);
-
-        p
-    }
-
-    fn get_flhs_baseptr(&self) -> usize {
-        self.flhs_baseptr.load(Acquire)
+    /// Initializes the allocator.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure:
+    /// - This method is called exactly once
+    /// - This is called before any dynamic allocation occurs
+    /// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
+    pub unsafe fn init(&self) {
+        let inner = self.inner_mut();
+        assert!(inner.sysbp == 0);
+        inner.sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+        assert!(inner.sysbp != 0);
+        inner.smbp = inner.sysbp.next_multiple_of(BASEPTR_ALIGN);
+        inner.flhsbp = inner.smbp + FLHS_BASE;
     }
 
     /// `highestslotnum` is for using `& highestslotnum` instead of `% numslots` to compute a number
@@ -332,7 +314,7 @@ impl Smalloc {
     /// it is used in `debug_asserts`.
     fn pop_slot_from_freelist(&self, slabbp: usize, flh: &AtomicU64, highestslotnum: u32, slotsizebits: u8) -> usize {
         debug_assert!(slabbp != 0);
-        debug_assert!((slabbp >= self.get_sm_baseptr()) && (slabbp <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
+        debug_assert!((slabbp >= self.inner().smbp) && (slabbp <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", self.inner().smbp, self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR);
         debug_assert!(help_trailing_zeros_usize(slabbp) >= NUM_SLOTNUM_AND_DATA_BITS);
 
         loop {
@@ -364,12 +346,12 @@ impl Smalloc {
             let newflhdword = ((counter as u64 + 1) << 32) | newfirstentryslotnum as u64;
 
             // Compare and exchange
-            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() {
+            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
 	        // prefetch the next link (which is now the first link) in the free list
 		//xxx14prefetch_read(Self::linkptr(slabbp, newfirstentryslotnum, slotsizebits));
 	        //xxx6 maybe compute this from curfirstentrylink_p?
 	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, slotsizebits) as usize;
-                debug_assert!((curfirstentry_p >= self.get_sm_baseptr()) && (curfirstentry_p <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "curfirstentry_p: {curfirstentry_p:x}, smbp: {:x}, slabbp: {slabbp:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
+                debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "curfirstentry_p: {curfirstentry_p:x}, smbp: {:x}, slabbp: {slabbp:x}, highest_addr: {:x}", self.inner().smbp, self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR);
 
                 break curfirstentry_p;
             }
@@ -390,80 +372,74 @@ fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
 
 unsafe impl GlobalAlloc for Smalloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match self.idempotent_init() {
-            Err(error) => {
-                eprintln!("Failed to alloc; underlying error: {error}"); // xxx can't print out error contents without heap allocation
-                null_mut()
-            }
-            Ok(smbp) => {
-                debug_assert!(smbp == self.get_sm_baseptr(), "{smbp:x}, {:x}", self.get_sm_baseptr());
-                let reqsiz = layout.size();
-                let reqalign = layout.align();
-                debug_assert!(reqsiz > 0);
-                debug_assert!(reqalign > 0);
-                debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
+        let inner = self.inner();
 
-                let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
-                let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
-                if sc >= NUM_SCS {
-                    eprintln!("smalloc exhausted");
+        debug_assert!(inner.smbp != 0);
+        let reqsiz = layout.size();
+        let reqalign = layout.align();
+        debug_assert!(reqsiz > 0);
+        debug_assert!(reqalign > 0);
+        debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
 
-                    self.dump_map_of_slabs();
+        let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
+        let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
+        if sc >= NUM_SCS {
+            eprintln!("smalloc exhausted");
+
+            self.dump_map_of_slabs();
                     
-                    // This request exceeds our largest slot size, so we return null ptr.
-                    return null_mut();
-                };
+            // This request exceeds our largest slot size, so we return null ptr.
+            return null_mut();
+        };
 
-                let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
+        let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
 
-                // If the slab is full, we'll switch to another slab in this same sizeclass.
-                let orig_slabnum = get_slab_num();
-                let mut slabnum = orig_slabnum;
+        // If the slab is full, we'll switch to another slab in this same sizeclass.
+        let orig_slabnum = get_slab_num();
+        let mut slabnum = orig_slabnum;
                 
-                loop {
-                    // The slabbp is the smbp with the size class bits and the slabnum bits set.
-		    // xxx benchmark and examine asm diff
-                    let slabbp = smbp | SCBITS_LUT[sc as usize] | SLABNUMBITS_LUT[slabnum as usize];
-                    //let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
+        loop {
+            // The slabbp is the smbp with the size class bits and the slabnum bits set.
+	    // xxx benchmark and examine asm diff
+            let slabbp = inner.smbp | SCBITS_LUT[sc as usize] | SLABNUMBITS_LUT[slabnum as usize];
+            //let slabbp = inner.smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);//xxx benchmark and asm-compare
 
-                    debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {smbp:x}, highest_addr: {:x}", smbp + HIGHEST_SMALLOC_SLOT_ADDR);
-                    debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
+            debug_assert!((slabbp >= inner.smbp) && (slabbp <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+            debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
 
-                    let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-                    let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
-                    let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+            let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
+            let flhptr = inner.flhsbp | const_shl_u16_usize(flhi, 3);
+            let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
-                    let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
+            let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
 
-                    debug_assert!((p_addr == 0) || (p_addr >= self.get_sm_baseptr()) && (p_addr <= (self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", self.get_sm_baseptr(), self.get_sm_baseptr() + HIGHEST_SMALLOC_SLOT_ADDR);
+            debug_assert!((p_addr == 0) || (p_addr >= inner.smbp) && (p_addr <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
 
-                    if p_addr != 0 {
-                        // Remember the new slab num for next time.
-                        set_slab_num(slabnum);
+            if p_addr != 0 {
+                // Remember the new slab num for next time.
+                set_slab_num(slabnum);
 
-                        return p_addr as *mut u8;
-                    }
+                return p_addr as *mut u8;
+            }
 
-                    // This slab was full.  Overflow to a different slab in the same size
-                    // class. Which slabnumber? 1. It should be relatively prime to NUM_SLABS so
-                    // that we will try all slabs before returning to the original one. 2. It should
-                    // be larger than 1 or 2 because the next couple threads got those slabs (the
-                    // first time they allocated). 3. It should use the information from the thread
-                    // number, not just the (strictly lesser) information from the original slab
-                    // number. So:
-                    const STEPS: [u8; 10] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31];
-                    let ix = (get_thread_num() as usize / NUM_SLABS as usize) % STEPS.len();
-                    slabnum = (slabnum + STEPS[ix]) % NUM_SLABS;
+            // This slab was full.  Overflow to a different slab in the same size
+            // class. Which slabnumber? 1. It should be relatively prime to NUM_SLABS so
+            // that we will try all slabs before returning to the original one. 2. It should
+            // be larger than 1 or 2 because the next couple threads got those slabs (the
+            // first time they allocated). 3. It should use the information from the thread
+            // number, not just the (strictly lesser) information from the original slab
+            // number. So:
+            const STEPS: [u8; 10] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31];
+            let ix = (get_thread_num() as usize / NUM_SLABS as usize) % STEPS.len();
+            slabnum = (slabnum + STEPS[ix]) % NUM_SLABS;
 
-                    if slabnum == orig_slabnum {
-                        // All slabs in this sizeclass were full. Overflow to a slab with larger
-                        // slots, by recursively calling `.alloc()` with a doubled requested
-                        // size. (Doubling the requested size guarantees that the new recursive
-                        // request will use the next larger sc.)
-                        let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version and use a shl
-                        return unsafe { self.alloc(doublesize_layout) }
-                    }
-                }
+            if slabnum == orig_slabnum {
+                // All slabs in this sizeclass were full. Overflow to a slab with larger
+                // slots, by recursively calling `.alloc()` with a doubled requested
+                // size. (Doubling the requested size guarantees that the new recursive
+                // request will use the next larger sc.)
+                let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version and use a shl
+                return unsafe { self.alloc(doublesize_layout) }
             }
         }
     }
@@ -473,13 +449,14 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(layout.align().is_power_of_two()); // alignment must be a power of two
 
         let p_addr = ptr.addr();
-        let smbp = self.get_sm_baseptr();
+
+        let inner = self.inner();
 
         // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
         // less than or equal to the highest slot pointer.
-        let highest_addr = smbp + HIGHEST_SMALLOC_SLOT_ADDR;
+        let highest_addr = inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR;
 
-        assert!((p_addr >= smbp) && (p_addr <= highest_addr), "p_addr: {p_addr}, smbp: {smbp}, highest_addr: {highest_addr}");
+        assert!((p_addr >= inner.smbp) && (p_addr <= highest_addr), "p_addr: {p_addr}, smbp: {}, highest_addr: {highest_addr}", inner.smbp);
 
         // Okay now we know that it is a pointer into smalloc's region.
 
@@ -491,7 +468,7 @@ unsafe impl GlobalAlloc for Smalloc {
         let highestslotnum = const_gen_mask_u32(NUM_SCS - sc);
 
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = self.get_flhs_baseptr() | const_shl_u16_usize(flhi, 3);
+        let flhptr = inner.flhsbp | const_shl_u16_usize(flhi, 3);
         let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         debug_assert!(p_addr.trailing_zeros() >= slotsizebits as u32);
@@ -538,12 +515,10 @@ unsafe impl GlobalAlloc for Smalloc {
 
 use std::cmp::min;
 use core::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
-use plat::plat::{sys_alloc, sys_dealloc};
+use std::sync::atomic::Ordering::{AcqRel, Acquire};
+use plat::plat::sys_alloc;
 use std::ptr::{copy_nonoverlapping, null_mut};
 //xxx16use thousands::Separable;
-use plat::AllocFailed;
 
 // xxx look at asm and benchmark these vs the builtin alternatives
 
@@ -662,6 +637,62 @@ const fn help_leading_zeros_usize(x: usize) -> u8 {
 const fn help_trailing_zeros_usize(x: usize) -> u8 {
     x.trailing_zeros() as u8
 }
+
+pub use smalloc_macros::smalloc_main;
+
+// For testing and benchmarking only.
+#[cfg(test)]
+mod unit_test_instance {
+    use super::Smalloc;
+    use std::sync::OnceLock;
+
+    pub static mut SMAL: Smalloc = Smalloc::new();
+    static INIT: OnceLock<()> = OnceLock::new();
+
+    pub fn setup() {
+        INIT.get_or_init(|| {
+            unsafe {
+                (*std::ptr::addr_of_mut!(SMAL)).init();
+            }
+        });
+    }
+
+    #[macro_export]
+    #[cfg(debug_assertions)]
+    macro_rules! get_testsmalloc {
+        () => {
+            #[allow(unused_unsafe)]
+            unsafe { &*std::ptr::addr_of!($crate::unit_test_instance::SMAL) }
+        };
+    }
+}
+
+#[cfg(debug_assertions)]
+#[macro_export]
+macro_rules! nextest_unit_tests {
+    (
+        $(
+            $(#[$attr:meta])*
+            fn $name:ident() $body:block
+        )*
+    ) => {
+        $(
+            #[test]
+            $(#[$attr])*
+            fn $name() {
+                if std::env::var("NEXTEST").is_err() {
+                    panic!("This project requires cargo-nextest to run tests.");
+                }
+                    
+                unit_test_instance::setup();
+
+                $body
+            }
+        )*
+    };
+}
+
+
 
 #[cfg(test)]
 mod tests;

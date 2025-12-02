@@ -127,8 +127,8 @@ where
         let mut baseline_ns = 42;
         let mut candidat_ns = 42;
 
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
         let bi = GlobalAllocWrap;
 
         std::thread::scope(|scope| {
@@ -173,8 +173,8 @@ where
         let bi_name = format!("bi {} {func_name}", $threads);
         let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
 
-        let sm = Smalloc::new();
-        sm.idempotent_init().unwrap();
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
 
         // Create a closure that specifies the type
         let fsm = |al: &Smalloc, s: &mut TestState| {

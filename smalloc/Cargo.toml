@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 plat = { path = "../plat" }
+smalloc-macros = { path = "../smalloc-macros" }
 
 [dev-dependencies]
 devutils = { path = "../devutils" }

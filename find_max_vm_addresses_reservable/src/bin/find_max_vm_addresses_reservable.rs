@@ -11,13 +11,40 @@
 // On a Windows 11 machine in Ubuntu in Windows Subsystem for Linux 2, the amount I was able to mmap() varied. One time I could mmap() only 93,979,814,301,696
 // According to https://learn.microsoft.com/en-us/windows/win32/memory/memory-limits-for-windows-releases a 64-bit process can access 128 TiB.
 //
-// When using the Tango benchmarking harness, which loads and executes functions from two executables at once, I can only allocate 35,183,801,663,488 virtual memory. I have no idea why that is. :-(
-//
 // The current settings of smalloc (v4.0.0) require 59,785,944,760,326 bytes of virtual address space.
 //
 // Now working on smalloc v5.0.0 which requires only 29,824,252,903,423 bytes of virtual address space.
+//
+// 2025-11-29: The current smalloc (v6.0.4) requires 17,313,013,178,111 bytes.
+//
+// 2025-11-29: The current smalloc (v6.0.5) requires 35,175,782,162,431 bytes.
+//
+// 2025-11-30: The current smalloc (v6.1.0) requires 70,360,154,259,455 bytes.
 
-use plat::plat::{sys_alloc, sys_dealloc};
+
+#[cfg(any(target_os = "linux", doc))]
+pub fn sys_dealloc(p: *mut u8, size: usize) {
+    unsafe {
+        munmap(p as *mut c_void, size).ok();
+    }
+}
+
+#[cfg(any(target_vendor = "apple", doc))]
+pub fn sys_dealloc(p: *mut u8, size: usize) {
+    use mach_sys::kern_return::KERN_SUCCESS;
+    use mach_sys::vm::mach_vm_deallocate;
+    use mach_sys::traps::mach_task_self;
+
+    debug_assert!(size_of::<usize>() == size_of::<u64>());
+    debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
+
+    unsafe {
+        let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
+        debug_assert!(retval == KERN_SUCCESS);
+    }
+}
+
+use plat::plat::sys_alloc;
 use thousands::Separable;
 fn dev_find_max_vm_space_allocatable() {
     let mut trysize: usize = 2usize.pow(62);

@@ -33,13 +33,6 @@ pub mod plat {
             Err(_) => Err(AllocFailed),
         }
     }
-
-// inline xxx?
-    pub fn sys_dealloc(p: *mut u8, size: usize) {
-        unsafe {
-            munmap(p as *mut c_void, size).ok();
-        }
-    }
 }
 
 #[cfg(any(target_vendor = "apple", doc))]
@@ -48,10 +41,9 @@ pub mod plat {
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
     use mach_sys::traps::mach_task_self;
-    use mach_sys::vm::{mach_vm_allocate, mach_vm_deallocate};
+    use mach_sys::vm::mach_vm_allocate;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
-    use std::mem::size_of;
 
 // inline xxx?
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
@@ -67,17 +59,6 @@ pub mod plat {
             Ok(address as *mut u8)
         } else {
             Err(AllocFailed)
-        }
-    }
-
-// inline xxx?
-    pub fn sys_dealloc(p: *mut u8, size: usize) {
-        debug_assert!(size_of::<usize>() == size_of::<u64>());
-        debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
-
-        unsafe {
-            let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
-            debug_assert!(retval == KERN_SUCCESS);
         }
     }
 }

@@ -1,10 +1,10 @@
-use smalloc::Smalloc;
+#![no_main]
 
-#[global_allocator]
-static SMALLOC: Smalloc = Smalloc::new();
+use smalloc::smalloc_main;
 
 use wyrand::WyRand;
 
+#[smalloc_main]
 pub fn main() {
     println!("Hello, world! I'm smalloc. :-)");
 
