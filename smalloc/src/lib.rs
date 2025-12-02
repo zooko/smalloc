@@ -23,8 +23,8 @@
 // --- Fixed constants chosen for the design ---
 
 const NUM_SMALLEST_SLOT_SIZE_BITS: u8 = 2;
-const NUM_SLABS_BITS: u8 = 5;
-const NUM_SCS: u8 = 31; // This is also NUM_MOST_SLOTS_BITS.
+const NUM_SLABS_BITS: u8 = 6;
+const NUM_SCS: u8 = 32;
 
 
 // --- Constant values determined by the constants above ---
@@ -64,6 +64,7 @@ const TOTAL_VIRTUAL_MEMORY: usize = SIZE_OF_SLABS_AND_FLHS + SMALLOC_ADDRESS_BIT
 
 // --- Lookup tables of constant values determined by the constants above ---
 
+//xxx asm-inspect and bench vs const_shl_u8_usize (again)?
 const fn gen_lut_scbits() -> [usize; NUM_SCS as usize] {
     let mut result = [0; NUM_SCS as usize];
     let mut i: usize = 0;
@@ -76,6 +77,7 @@ const fn gen_lut_scbits() -> [usize; NUM_SCS as usize] {
 
 const SCBITS_LUT: [usize; NUM_SCS as usize] = gen_lut_scbits();
 
+//xxx asm-inspect and bench vs const_shl_u8_usize (again)?
 const fn gen_lut_slabnumbits() -> [usize; NUM_SLABS as usize] {
     let mut result = [0; NUM_SLABS as usize];
     let mut i: usize = 0;
@@ -287,7 +289,7 @@ impl Smalloc {
         // The baseslotnum cannot be the sentinel slot num.
         debug_assert!(baseslotnum < highestslotnum);
 
-        (baseslotnum + codeword + 1) & highestslotnum
+        baseslotnum.wrapping_add(codeword).wrapping_add(1) & highestslotnum
     }
         
     fn linkptr(slabbp: usize, slotnum: u32, slotsizebits: u8) -> *mut u32 {
@@ -598,9 +600,9 @@ const fn const_gen_mask_usize(numbits: u8) -> usize {
 // xxx revisit (once again) replacing this with some variant of `<<`
 #[inline(always)]
 const fn const_gen_mask_u32(numbits: u8) -> u32 {
-    debug_assert!((numbits as u32) < u32::BITS);
+    debug_assert!((numbits as u64) <= u32::BITS as u64);
 
-    unsafe { 1u32.unchecked_shl(numbits as u32) - 1 }
+    unsafe { (1u64.unchecked_shl(numbits as u32) - 1) as u32 }
 }
 
 #[inline(always)]
