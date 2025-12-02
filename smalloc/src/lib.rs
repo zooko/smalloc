@@ -62,34 +62,6 @@ const BASEPTR_ALIGN: usize = SIZE_OF_SLABS_AND_FLHS.next_power_of_two(); // 0b10
 const SMALLOC_ADDRESS_BITS_MASK: usize = BASEPTR_ALIGN - 1; // 0b1111111111111111111111111111111111111111111 
 const TOTAL_VIRTUAL_MEMORY: usize = SIZE_OF_SLABS_AND_FLHS + SMALLOC_ADDRESS_BITS_MASK; // 0b11111011111100000000000000000001111011111111 == 17_313_013_178_111
 
-// --- Lookup tables of constant values determined by the constants above ---
-
-//xxx asm-inspect and bench vs const_shl_u8_usize (again)?
-const fn gen_lut_scbits() -> [usize; NUM_SCS as usize] {
-    let mut result = [0; NUM_SCS as usize];
-    let mut i: usize = 0;
-    while i < NUM_SCS as usize {
-        result[i] = const_shl_u8_usize(i as u8, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS);
-        i += 1;
-    }
-    result
-}
-
-const SCBITS_LUT: [usize; NUM_SCS as usize] = gen_lut_scbits();
-
-//xxx asm-inspect and bench vs const_shl_u8_usize (again)?
-const fn gen_lut_slabnumbits() -> [usize; NUM_SLABS as usize] {
-    let mut result = [0; NUM_SLABS as usize];
-    let mut i: usize = 0;
-    while i < NUM_SLABS as usize {
-        result[i] = const_shl_u8_usize(i as u8, NUM_SLOTNUM_AND_DATA_BITS);
-        i += 1;
-    }
-    result
-}
-
-const SLABNUMBITS_LUT: [usize; NUM_SLABS as usize] = gen_lut_slabnumbits();
-
 // --- Implementation ---
 
 use std::sync::atomic::{AtomicU32, AtomicU64};
@@ -402,9 +374,7 @@ unsafe impl GlobalAlloc for Smalloc {
                 
         loop {
             // The slabbp is the smbp with the size class bits and the slabnum bits set.
-	    // xxx benchmark and examine asm diff
-            let slabbp = inner.smbp | SCBITS_LUT[sc as usize] | SLABNUMBITS_LUT[slabnum as usize];
-            //let slabbp = inner.smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);//xxx benchmark and asm-compare
+            let slabbp = inner.smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
 
             debug_assert!((slabbp >= inner.smbp) && (slabbp <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
             debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
