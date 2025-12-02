@@ -15,8 +15,7 @@ impl fmt::Display for AllocFailed {
 #[cfg(any(target_os = "linux", doc))]
 pub mod plat {
     use super::AllocFailed;
-    use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
-    use std::ffi::c_void;
+    use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
     use std::ptr;
 
 // inline xxx?
