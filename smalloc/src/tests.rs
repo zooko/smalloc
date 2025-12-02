@@ -193,8 +193,6 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
     unsafe { sm.dealloc(p4, l); }
 }
 
-use crate::nextest_unit_tests;
-
 nextest_unit_tests! {
     fn a_few_allocs_and_a_dealloc_for_the_largest_slab() {
         let sm = get_testsmalloc!();
