@@ -67,7 +67,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         debug_assert!(!s.ps.is_empty());
 
         let (p, lt) = s.remove_next_p();
-	
+
         #[cfg(debug_assertions)] {
             // Write to a random (other) allocation...
             if !s.ps.is_empty() {
@@ -76,8 +76,8 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
             }
 
             debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-	    s.m.remove(&(p, lt));
-	}
+            s.m.remove(&(p, lt));
+        }
 
         // Read from this location before dealloc'ing it.
         unsafe {
@@ -94,7 +94,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         debug_assert!(!s.ps.is_empty());
 
         let (p, lt) = s.remove_next_p();
-	
+
         debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align());
         #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
 
@@ -188,7 +188,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         #[cfg(debug_assertions)] {
             debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-	    s.m.insert((p as usize, lt));
+            s.m.insert((p as usize, lt));
 
             // Write to a random (other) allocation...
             if !s.ps.is_empty() {
@@ -199,16 +199,16 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         s.ps.push((p as usize, lt));
 
-	if s.cached_8 > 0 {
+        if s.cached_8 > 0 {
             s.cached_8 -= 1;
-	} else {
+        } else {
             s.num_popped_out_of_8_cache += 1;
-	}
-	if s.cached_512 > 0 {
+        }
+        if s.cached_512 > 0 {
             s.cached_512 -= 1;
-	} else {
+        } else {
             s.num_popped_out_of_512_cache += 1;
-	}
+        }
     } else {
         // Free
         debug_assert!(!s.ps.is_empty());
@@ -224,7 +224,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
             debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
             s.m.remove(&(p, lt));
-	}
+        }
 
         // Read from this location before dealloc'ing it.
         unsafe {
@@ -233,7 +233,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
             // Useful assertion for looking for bugs when testing, plus when this is used for
             // benchmarking, this prevents the compiler from optimizing away the read.
 
-	    assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}");
+            assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}");
         }
         unsafe { al.dealloc(p as *mut u8, lt) };
 
@@ -253,21 +253,21 @@ pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 
         #[cfg(debug_assertions)] {
             debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-	    s.m.insert((p as usize, lt));
+            s.m.insert((p as usize, lt));
         }
 
         s.ps.push((p as usize, lt));
 
-	if s.cached_8 > 0 {
+        if s.cached_8 > 0 {
             s.cached_8 -= 1;
-	} else {
+        } else {
             s.num_popped_out_of_8_cache += 1;
-	}
-	if s.cached_512 > 0 {
+        }
+        if s.cached_512 > 0 {
             s.cached_512 -= 1;
-	} else {
+        } else {
             s.num_popped_out_of_512_cache += 1;
-	}
+        }
     } else {
         // Free
         debug_assert!(!s.ps.is_empty());
@@ -277,7 +277,7 @@ pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         #[cfg(debug_assertions)] {
             debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
             s.m.remove(&(p, lt));
-	}
+        }
 
         unsafe { al.dealloc(p as *mut u8, lt) };
 
@@ -413,13 +413,14 @@ impl std::hash::BuildHasher for WyHashBuilder {
     }
 }
 
+use std::hint::likely;
 use wyrand::WyRand;
 impl TestState {
     pub fn new(iters: u64, seed: u64) -> Self {
-	// const SEED: u64 = 5; // on linux, 15 ns/i
-	// const SEED: u64 = 10; // 15 ns/i
-	// const SEED: u64 = 21; // 414 ns/i
-	// const SEED: u64 = 22; // 15 ns/i
+        // const SEED: u64 = 5; // on linux, 15 ns/i
+        // const SEED: u64 = 10; // 15 ns/i
+        // const SEED: u64 = 21; // 414 ns/i
+        // const SEED: u64 = 22; // 15 ns/i
         let mut r = WyRand::new(seed);
         let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(r.rand()));
         let coins: [u32; NUMCOINS] = std::array::from_fn(|_| r.rand() as u32);
@@ -450,7 +451,7 @@ impl TestState {
     }
     
     fn next_layout(&mut self) -> Layout {
-	let layout = self.layouts[self.nextlayout]; self.nextlayout = (self.nextlayout + 1) % NUMLAYOUTS;
+        let layout = self.layouts[self.nextlayout]; self.nextlayout = (self.nextlayout + 1) % NUMLAYOUTS;
         layout
     }
 
@@ -530,7 +531,7 @@ macro_rules! nextest_integration_tests {
                 if std::env::var("NEXTEST").is_err() {
                     panic!("This project requires cargo-nextest to run tests.");
                 }
-                    
+                
                 dev_instance::setup();
 
                 $body
