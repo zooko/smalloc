@@ -66,7 +66,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Free
         debug_assert!(!s.ps.is_empty());
 
-        let (p, lt) = s.remove_p_biased();
+        let (p, lt) = s.remove_next_p();
 	
         #[cfg(debug_assertions)] {
             // Write to a random (other) allocation...
@@ -93,7 +93,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Realloc
         debug_assert!(!s.ps.is_empty());
 
-	let (p, lt) = s.remove_p_biased();
+        let (p, lt) = s.remove_next_p();
 	
         debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align());
         #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
@@ -147,7 +147,7 @@ pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Free
         debug_assert!(!s.ps.is_empty());
 
-        let (p, lt) = s.remove_p_biased();
+        let (p, lt) = s.remove_next_p();
 	
         #[cfg(debug_assertions)] {
             debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
@@ -159,8 +159,8 @@ pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Realloc
         debug_assert!(!s.ps.is_empty());
 
-	let (p, lt) = s.remove_p_biased();
-	
+	let (p, lt) = s.remove_next_p();
+
         debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}, m.len(): {}", p, lt.size(), lt.align(), s.m.len());
         #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
 
@@ -213,7 +213,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Free
         debug_assert!(!s.ps.is_empty());
 
-	let (p, lt) = s.remove_p_biased();
+        let (p, lt) = s.remove_next_p();
 
         #[cfg(debug_assertions)] {
             // Write to a random (other) allocation...
@@ -272,7 +272,7 @@ pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         // Free
         debug_assert!(!s.ps.is_empty());
 
-	let (p, lt) = s.remove_p_biased();
+        let (p, lt) = s.remove_next_p();
 
         #[cfg(debug_assertions)] {
             debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
@@ -392,6 +392,7 @@ pub struct TestState {
     layouts: [Layout; NUMLAYOUTS],
     nextlayout: usize,
     ps: Vec<(usize, Layout)>,
+    nextp: usize,
     m: HashSet<(usize, Layout), WyHashBuilder>,
     cached_8: u64,
     cached_512: u64,
@@ -434,10 +435,11 @@ impl TestState {
             nextlayout,
             m,
             ps: Vec::with_capacity(iters as usize),
-	    cached_8: 0,
-	    cached_512: 0,
-	    num_popped_out_of_8_cache: 0,
-	    num_popped_out_of_512_cache: 0,
+            nextp: 0,
+            cached_8: 0,
+            cached_512: 0,
+            num_popped_out_of_8_cache: 0,
+            num_popped_out_of_512_cache: 0,
         }
     }
 
@@ -457,6 +459,24 @@ impl TestState {
         coin
     }
 
+    fn remove_next_p(&mut self) -> (usize, Layout) {
+        debug_assert!(self.nextp < self.ps.len());
+        debug_assert!(!self.ps.is_empty());
+        let (u, l) = unsafe { self.ps.swap_remove_unchecked(self.nextp) };
+        // xxx prefetch
+        if likely(!self.ps.is_empty()) {
+            if self.nextp == 0 || self.next_coin() < u32::MAX / 1000 {
+                self.nextp = self.next_coin() as usize % self.ps.len();
+            } else {
+                self.nextp -= 1;
+            }
+        } else {
+            debug_assert_eq!(self.nextp, 0);
+        }
+
+        (u, l)
+    }
+
     fn _remove_p_even_distribution(&mut self) -> (usize, Layout) {
         let i = self.next_coin() as usize % self.ps.len();
         unsafe { self.ps.swap_remove_unchecked(i) }
@@ -467,7 +487,7 @@ impl TestState {
         unsafe { self.ps.swap_remove_unchecked(i) }
     }
 
-    fn remove_p_biased(&mut self) -> (usize, Layout) {
+    fn _remove_p_biased(&mut self) -> (usize, Layout) {
         let i1 = self.next_coin() as usize % self.ps.len();
         let i2 = self.next_coin() as usize % self.ps.len();
         unsafe { self.ps.swap_remove_unchecked(min(i1, i2)) }
