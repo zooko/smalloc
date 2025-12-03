@@ -109,9 +109,7 @@ where
     let ns_per_iter = elap_ns / iters;
     println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>11}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
 
-    // Dealloc all allocations so that we don't run out of space in the builtin
-    // GlobalAlloc. Might as well clean up Smalloc too, just in case ? (The smalloc instance
-    // already gets cleaned up by getting dropped, but whatever.)
+    // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
         ts.clean_up(al);
     }
