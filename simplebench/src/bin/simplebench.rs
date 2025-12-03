@@ -31,7 +31,6 @@ pub fn main() {
     println!("Using seed: {}", seed);
     
     if compare {
-        compare_mt_bench!(aww, 1024, 10_000, seed);
         compare_mt_bench!(a, 1024, 10_000, seed);
         compare_mt_bench!(adww, 1024, 10_000, seed);
         compare_mt_bench!(ad, 1024, 10_000, seed);
@@ -45,8 +44,8 @@ pub fn main() {
         compare_st_bench!(ad, 1_000_000, seed);
         compare_st_bench!(adrww, 1_000_000, seed);
         compare_st_bench!(adr, 1_000_000, seed);
+        compare_mt_bench!(aww, 512, 10_000, seed);
     } else {
-        mt_bench!(aww, 1024, 10_000, seed);
         mt_bench!(a, 1024, 10_000, seed);
         mt_bench!(adww, 1024, 10_000, seed);
         mt_bench!(ad, 1024, 10_000, seed);
@@ -60,5 +59,6 @@ pub fn main() {
         st_bench!(ad, 1_000_000, seed);
         st_bench!(adrww, 1_000_000, seed);
         st_bench!(adr, 1_000_000, seed);
+        mt_bench!(aww, 512, 10_000, seed);
     }
 }
