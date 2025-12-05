@@ -31,34 +31,34 @@ pub fn main() {
     println!("Using seed: {}", seed);
     
     if compare {
-        compare_mt_bench!(a, 1024, 10_000, seed);
-        compare_mt_bench!(adww, 1024, 10_000, seed);
-        compare_mt_bench!(ad, 1024, 10_000, seed);
+       compare_mt_bench!(adww, 1024, 10_000, seed);
+       compare_mt_bench!(ad, 1024, 10_000, seed);
         compare_mt_bench!(adrww, 1024, 10_000, seed);
-        compare_mt_bench!(adrww, 32, 300_000, seed);
-        compare_mt_bench!(adrww, 4, 600_000, seed);
-        compare_mt_bench!(adr, 1024, 10_000, seed);
-        compare_st_bench!(aww, 1_000_000, seed);
-        compare_st_bench!(a, 1_000_000, seed);
-        compare_st_bench!(adww, 1_000_000, seed);
-        compare_st_bench!(ad, 1_000_000, seed);
-        compare_st_bench!(adrww, 1_000_000, seed);
-        compare_st_bench!(adr, 1_000_000, seed);
-        compare_mt_bench!(aww, 512, 10_000, seed);
+       compare_mt_bench!(adrww, 32, 300_000, seed);
+       compare_mt_bench!(adrww, 4, 600_000, seed);
+       compare_mt_bench!(adr, 1024, 10_000, seed);
+       compare_st_bench!(aww, 1_000_000, seed);
+       compare_st_bench!(a, 1_000_000, seed);
+       compare_st_bench!(adww, 1_000_000, seed);
+       compare_st_bench!(ad, 1_000_000, seed);
+       compare_st_bench!(adrww, 1_000_000, seed);
+       compare_st_bench!(adr, 1_000_000, seed);
+       compare_mt_bench!(aww, 512, 10_000, seed);
+       compare_mt_bench!(a, 1024, 10_000, seed);
     } else {
-        mt_bench!(a, 1024, 10_000, seed);
-        mt_bench!(adww, 1024, 10_000, seed);
-        mt_bench!(ad, 1024, 10_000, seed);
+       mt_bench!(adww, 1024, 10_000, seed);
+       mt_bench!(ad, 1024, 10_000, seed);
         mt_bench!(adrww, 1024, 10_000, seed);
-        mt_bench!(adrww, 32, 300_000, seed);
-        mt_bench!(adrww, 4, 600_000, seed);
-        mt_bench!(adr, 1024, 10_000, seed);
-        st_bench!(aww, 1_000_000, seed);
-        st_bench!(a, 1_000_000, seed);
-        st_bench!(adww, 1_000_000, seed);
-        st_bench!(ad, 1_000_000, seed);
-        st_bench!(adrww, 1_000_000, seed);
-        st_bench!(adr, 1_000_000, seed);
-        mt_bench!(aww, 512, 10_000, seed);
+       mt_bench!(adrww, 32, 300_000, seed);
+       mt_bench!(adrww, 4, 600_000, seed);
+       mt_bench!(adr, 1024, 10_000, seed);
+       st_bench!(aww, 1_000_000, seed);
+       st_bench!(a, 1_000_000, seed);
+       st_bench!(adww, 1_000_000, seed);
+       st_bench!(ad, 1_000_000, seed);
+       st_bench!(adrww, 1_000_000, seed);
+       st_bench!(adr, 1_000_000, seed);
+       mt_bench!(aww, 512, 10_000, seed);
+       mt_bench!(a, 1024, 10_000, seed);
     }
 }

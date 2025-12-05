@@ -39,6 +39,7 @@ pub mod dev_instance {
     }
 }
 
+#[inline(always)]
 pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 3;
@@ -128,6 +129,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     }
 }
 
+#[inline(always)]
 pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 3;
@@ -175,6 +177,7 @@ pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     }
 }
 
+#[inline(always)]
 pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 2;
@@ -242,6 +245,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     }
 }
 
+#[inline(always)]
 pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 2;
@@ -286,6 +290,7 @@ pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     }
 }
 
+#[inline(always)]
 pub fn aww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // Malloc
     let lt = s.next_layout();
@@ -307,6 +312,7 @@ pub fn aww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     s.ps.push((p as usize, lt));
 }
 
+#[inline(always)]
 pub fn a<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // Malloc
     let lt = s.next_layout();
@@ -342,13 +348,15 @@ where
 use std::cmp::max;
 fn gen_layouts() -> [Layout; NUMLAYOUTS] {
     let mut ls = Vec::new();
-    for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000, 1_000_000] {
+    for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000] {
         ls.push(Layout::from_size_align(siz, 1).unwrap());
 
         ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
         ls.push(Layout::from_size_align(max(siz, 11) - 10, 1).unwrap());
         ls.push(Layout::from_size_align(siz * 2, 1).unwrap());
     }
+
+    ls.push(Layout::from_size_align(1_000_000, 1).unwrap());
 
     ls.try_into().unwrap()
 }
@@ -384,7 +392,7 @@ impl<T> VecUncheckedExt<T> for Vec<T> {
 
 
 const NUMCOINS: usize = 1024;
-const NUMLAYOUTS: usize = 60;
+const NUMLAYOUTS: usize = 57;
 use std::collections::HashSet;
 pub struct TestState {
     coins: [u32; NUMCOINS],
@@ -466,7 +474,7 @@ impl TestState {
         let (u, l) = unsafe { self.ps.swap_remove_unchecked(self.nextp) };
         // xxx prefetch
         if likely(!self.ps.is_empty()) {
-            if self.nextp == 0 || self.next_coin() < u32::MAX / 1000 {
+            if self.nextp.is_multiple_of(1000) {
                 self.nextp = self.next_coin() as usize % self.ps.len();
             } else {
                 self.nextp -= 1;
