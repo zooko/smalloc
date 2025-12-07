@@ -62,7 +62,6 @@ pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
 
 use devutils::*;
 
-use std::time::Instant;
 pub fn singlethread_bench<T, F>(bf: F, iters: u64, name: &str, al: &T, seed: u64) -> u64
 where
     T: GlobalAlloc,
@@ -70,15 +69,15 @@ where
 {
     let mut s = TestState::new(iters, seed);
 
-    let start = Instant::now();
+    let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
 
     for _i in 0..iters {
         bf(al, &mut s);
     }
 
-    let end = Instant::now();
+    let end = clock(libc::CLOCK_THREAD_CPUTIME_ID);
     assert!(end > start);
-    let elap_ns = (end - start).as_nanos() as u64;
+    let elap_ns = end - start;
     let nspi = elap_ns / iters;
     let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
     let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
@@ -101,13 +100,13 @@ where
         tses.push(TestState::new(iters, seed));
     }
 
-    let start = Instant::now();
+    let start = clock(libc::CLOCK_MONOTONIC_RAW);
 
     help_test_multithreaded_with_allocator(bf, threads, iters, al, &mut tses);
     
-    let end = Instant::now();
+    let end = clock(libc::CLOCK_MONOTONIC_RAW);
     assert!(end > start);
-    let elap_ns = (end - start).as_nanos() as u64;
+    let elap_ns = end - start;
     let nspi = elap_ns / iters;
     let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
     let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
