@@ -1191,3 +1191,14 @@ Smalloc v6.0.4 has the following lines counts:
 
 (I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
 each of them.)
+
+## License
+
+Licensed under any of:
+
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+* Transitive Grace Period Public License 1.0 ([LICENSE-TGPPL](LICENSE-TGPPL) or https://spdx.org/licenses/TGPPL-1.0.html)
+* Bootstrap Open Source License v1.0 ([LICENSE-BOSL.txt](LICENSE-BOSL.txt))
+
+at your option.
