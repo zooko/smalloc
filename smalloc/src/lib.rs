@@ -86,6 +86,7 @@ thread_local! {
 // It is okay if more than 4 billion threads are spawned and this wraps, since the only thing we
 // currently use it for is to & it with SLABNUM_ALONE_MASK anyway.
 // xxx oops would that trigger a Rust overflow panic instead of wrapping? Check that...
+#[inline(always)]
 fn get_thread_num() -> u32 {
     THREAD_NUM.with(|cell| {
         cell.get().map_or_else(
@@ -101,6 +102,7 @@ fn get_thread_num() -> u32 {
 
 /// Get the slab that this thread allocates from. If uninitialized, this is initialized to
 /// `get_thread_num() % 32`.
+#[inline(always)]
 fn get_slab_num() -> u8 {
     SLAB_NUM.with(|cell| {
         cell.get().map_or_else(
@@ -110,6 +112,7 @@ fn get_slab_num() -> u8 {
     })
 }
 
+#[inline(always)]
 fn set_slab_num(slabnum: u8) {
     SLAB_NUM.set(Some(slabnum));
 }
@@ -146,11 +149,13 @@ impl Smalloc {
         }
     }
 
+    #[inline(always)]
     fn inner(&self) -> &SmallocInner {
         unsafe { &*self.inner.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
+    #[inline(always)]
     fn inner_mut(&self) -> &mut SmallocInner {
         unsafe { &mut *self.inner.get() }
     }
@@ -218,6 +223,7 @@ impl Smalloc {
     /// modulo numslots (where `numslots` here counts the sentinel slot). So `highestslotnum` is
     /// equal to `numslots - 1`, which is also the slotnum of the sentinel slot. (It is also used in
     /// `debug_asserts`.) `newslotnum` cannot be the sentinel slotnum.
+    #[inline(always)]
     fn push_slot_onto_freelist(&self, slabbp: usize, flh: &AtomicU64, newslotnum: u32, highestslotnum: u32, slotsizebits: u8) {
         debug_assert!(slabbp != 0);
         debug_assert!(help_trailing_zeros_usize(slabbp) >= NUM_SLOTNUM_AND_DATA_BITS);
@@ -264,7 +270,7 @@ impl Smalloc {
         targslotnum.wrapping_sub(baseslotnum).wrapping_sub(1) & highestslotnum
     }
 
-    #[inline(always)]//xxx try removing inline-always
+    #[inline(always)]
     fn decode_next_entry_link(baseslotnum: u32, codeword: u32, highestslotnum: u32) -> u32 {
         // The baseslotnum cannot be the sentinel slot num.
         debug_assert!(baseslotnum < highestslotnum);
@@ -272,6 +278,7 @@ impl Smalloc {
         baseslotnum.wrapping_add(codeword).wrapping_add(1) & highestslotnum
     }
         
+    #[inline(always)]
     fn linkptr(slabbp: usize, slotnum: u32, slotsizebits: u8) -> *mut u32 {
 //xxx10        // This thing about or'ing in a few bits from the least significant bits of the slotnum is to utilize more of the sets from the associative cache in the L1...
 //xxx10
@@ -283,6 +290,8 @@ impl Smalloc {
         Self::slotptr(slabbp, slotnum, slotsizebits) as *mut u32
     }
 
+    // xxx check in-line-always
+    #[inline(always)]
     fn slotptr(slabbp: usize, slotnum: u32, slotsizebits: u8) -> *mut u8 {
         (slabbp | const_shl_u32_usize(slotnum, slotsizebits)) as *mut u8
     }
@@ -294,6 +303,7 @@ impl Smalloc {
     /// `highestslotnum` is the slotnum of the sentinel slot (`numslots - 1`). It is also used to
     /// compute numbers modulo `numslots` with `& highestslotnum` instead of with `% numslots`, and
     /// it is used in `debug_asserts`.
+    #[inline(always)]
     fn pop_slot_from_freelist(&self, slabbp: usize, flh: &AtomicU64, highestslotnum: u32, slotsizebits: u8) -> usize {
         debug_assert!(slabbp != 0);
         debug_assert!((slabbp >= self.inner().smbp) && (slabbp <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", self.inner().smbp, self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR);
@@ -351,6 +361,7 @@ fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
 }
 
 unsafe impl GlobalAlloc for Smalloc {
+    #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let inner = self.inner();
 
@@ -422,6 +433,7 @@ unsafe impl GlobalAlloc for Smalloc {
         }
     }
 
+    #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         debug_assert!(!ptr.is_null());
         debug_assert!(layout.align().is_power_of_two()); // alignment must be a power of two
@@ -454,6 +466,7 @@ unsafe impl GlobalAlloc for Smalloc {
         self.push_slot_onto_freelist(slabbp, flh, slotnum, highestslotnum, slotsizebits);
     }
 
+    #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, reqsize: usize) -> *mut u8 {
         debug_assert!(!ptr.is_null());
         let oldsize = layout.size();
@@ -501,6 +514,7 @@ use std::ptr::{copy_nonoverlapping, null_mut};
 // xxx look at asm and benchmark these vs the builtin alternatives
 
 // xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
 const fn const_shl_u32_usize(value: u32, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
     debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
@@ -515,6 +529,7 @@ const fn const_shl_u32_u64(value: u32, shift: u8) -> u64 {
 }
 
 // xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
 const fn const_shl_u16_usize(value: u16, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
     debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
@@ -522,6 +537,7 @@ const fn const_shl_u16_usize(value: u16, shift: u8) -> usize {
 }
 
 // xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
 const fn const_shl_u8_usize(value: u8, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
     debug_assert!(help_leading_zeros_usize(value as usize) >= shift); // we never shift off 1 bits currently
@@ -529,6 +545,7 @@ const fn const_shl_u8_usize(value: u8, shift: u8) -> usize {
 }
 
 // xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
 const fn _const_shl_usize_usize(value: usize, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
     debug_assert!(help_leading_zeros_usize(value) >= shift); // we never shift off 1 bits currently
@@ -598,6 +615,7 @@ const fn const_gen_mask_u8(numbits: u8) -> u8 {
 /// Return the number of significant bits in the aligned size. This is the log base 2 of the size of
 /// slot required to hold requests of this size and alignment, but a minimum of 2 since that is log
 /// base 2 of the slots of our smallest sizeclass.
+#[inline(always)]
 fn req_to_slotsizebits(size: usize, align: usize) -> u8 {
     debug_assert!(size > 0);
     debug_assert!(align > 0);
