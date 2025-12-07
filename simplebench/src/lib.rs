@@ -79,8 +79,10 @@ where
     let end = Instant::now();
     assert!(end > start);
     let elap_ns = (end - start).as_nanos() as u64;
-    let ns_per_iter = elap_ns / iters;
-    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>11}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
+    let nspi = elap_ns / iters;
+    let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
+    let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
+    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
 
     // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
 
@@ -106,8 +108,10 @@ where
     let end = Instant::now();
     assert!(end > start);
     let elap_ns = (end - start).as_nanos() as u64;
-    let ns_per_iter = elap_ns / iters;
-    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>11}", iters.separate_with_commas(), elap_ns.separate_with_commas(), ns_per_iter.separate_with_commas());
+    let nspi = elap_ns / iters;
+    let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
+    let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
+    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {

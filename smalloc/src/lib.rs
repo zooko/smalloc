@@ -316,7 +316,7 @@ impl Smalloc {
 
             // curfirstentryslotnum can be the sentinel value.
             debug_assert!(curfirstentryslotnum <= highestslotnum);
-            if curfirstentryslotnum == highestslotnum {
+            if unlikely(curfirstentryslotnum == highestslotnum) {
                 // meaning no next entry, meaning the free list is empty
                 break 0
             }
@@ -328,7 +328,6 @@ impl Smalloc {
             // below with information derived from these bits will fail.
             let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, slotsizebits);
             let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
-
             let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
 
             // Write the new first entry slot num in place of the old in our local (in a register)
@@ -360,6 +359,7 @@ fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
     (flhdword & u32::MAX as u64) as u32
 }
 
+use std::hint::{likely, unlikely};
 unsafe impl GlobalAlloc for Smalloc {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -374,7 +374,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
         let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
-        if sc >= NUM_SCS {
+        if unlikely(sc >= NUM_SCS) {
             eprintln!("smalloc exhausted");
 
             self.dump_map_of_slabs();
@@ -404,9 +404,11 @@ unsafe impl GlobalAlloc for Smalloc {
 
             debug_assert!((p_addr == 0) || (p_addr >= inner.smbp) && (p_addr <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
 
-            if p_addr != 0 {
-                // Remember the new slab num for next time.
-                set_slab_num(slabnum);
+            if likely(p_addr != 0) {
+                if unlikely(slabnum != orig_slabnum) {
+                    // Remember the new slab num for next time.
+                    set_slab_num(slabnum);
+                }
 
                 return p_addr as *mut u8;
             }
@@ -481,7 +483,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
         // If the requested new size (rounded up to a slot) is <= the original size (rounded up to a
         // slot), just return the pointer and we're done.
-        if reqsizbits <= oldsizbits {
+        if unlikely(reqsizbits <= oldsizbits) {
             return ptr;
         }
 
