@@ -62,6 +62,13 @@ const BASEPTR_ALIGN: usize = SIZE_OF_SLABS_AND_FLHS.next_power_of_two(); // 0b10
 const SMALLOC_ADDRESS_BITS_MASK: usize = BASEPTR_ALIGN - 1; // 0b1111111111111111111111111111111111111111111 
 const TOTAL_VIRTUAL_MEMORY: usize = SIZE_OF_SLABS_AND_FLHS + SMALLOC_ADDRESS_BITS_MASK; // 0b11111011111100000000000000000001111011111111 == 17_313_013_178_111
 
+// -- Constant values determined by the sizes of u32 and u64 --
+
+const FLHDWORD_SLOTNUM_MASK: u64 = u32::MAX as u64;
+const FLHDWORD_PUSH_COUNTER_MASK: u64 = const_shl_u32_u64(u32::MAX, 32);
+const FLHDWORD_PUSH_COUNTER_INCR: u64 = 1u64 << 32;
+
+
 // --- Implementation ---
 
 use std::sync::atomic::{AtomicU32, AtomicU64};
@@ -218,14 +225,13 @@ impl Smalloc {
 
         loop {
             // Load the value (current first entry slot num) from the flh
-            let flhdword: u64 = flh.load(Acquire);
-            let curfirstentryslotnum: u32 = (flhdword & u32::MAX as u64) as u32;
+            let flhdword = flh.load(Acquire); // xxx weaker ordering constraints ok?
+            let curfirstentryslotnum = (flhdword & FLHDWORD_SLOTNUM_MASK) as u32;
+
             // The curfirstentryslotnum can be the sentinel slotnum.
             debug_assert!(curfirstentryslotnum <= highestslotnum);
 
-            let counter: u32 = (flhdword >> 32) as u32;
-
-            // Encode it as the next-entry link for the new entry
+            // Encode the curfirstentryslotnum as the next-entry link for the new entry
             let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, highestslotnum);
             debug_assert_eq!(curfirstentryslotnum, Self::decode_next_entry_link(newslotnum, next_entry_link, highestslotnum), "newslotnum: {newslotnum}, next_entry_link: {next_entry_link}, curfirstentryslotnum: {curfirstentryslotnum}, highestslotnum: {highestslotnum}");
 
@@ -233,8 +239,10 @@ impl Smalloc {
             let new_slot_p = Self::linkptr(slabbp, newslotnum, slotsizebits);
             unsafe { *new_slot_p = next_entry_link };
 
-            // Create a new flh word, pointing to the new entry
-            let newflhdword = ((counter as u64 + 1) << 32) | newslotnum as u64;
+            // Increment the push counter
+            // xxx compare asm of this vs shr, incr, shl
+            let counter = (flhdword & FLHDWORD_PUSH_COUNTER_MASK).wrapping_add(FLHDWORD_PUSH_COUNTER_INCR);
+            let newflhdword = counter | newslotnum as u64;
 
             // Compare and exchange
             if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
@@ -293,8 +301,8 @@ impl Smalloc {
 
         loop {
             // Load the value from the flh
-            let flhdword = flh.load(Acquire);
-            let curfirstentryslotnum = (flhdword & (u32::MAX as u64)) as u32;
+            let flhdword = flh.load(Acquire); // xxx weaker ordering constraints ok?
+            let curfirstentryslotnum = (flhdword & FLHDWORD_SLOTNUM_MASK) as u32;
 
             // curfirstentryslotnum can be the sentinel value.
             debug_assert!(curfirstentryslotnum <= highestslotnum);
@@ -303,22 +311,20 @@ impl Smalloc {
                 break 0
             }
 
-            let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, slotsizebits);
-
             // Read the bits from the first entry's link and decode them into a slot number. These
-            // bits might be "invalid" in the sense of not encoding a slot number, if the flh has
-            // changed since we read it above and another thread has started using these bits for
-            // something else (e.g. user data or another linked list update). That's okay because in
-            // that case our attempt to update the flh below with information derived from these
-            // bits will fail.
+            // bits might be invalid, if the flh has changed since we read it above and another
+            // thread has started using these bits for something else (e.g. user data or another
+            // linked list update). That's okay because in that case our attempt to update the flh
+            // below with information derived from these bits will fail.
+            let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, slotsizebits);
             let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
 
             let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
 
-            // Create a new flh word, with the new slotnum, pointing to the new first slot
-            let counter: u32 = (flhdword >> 32) as u32;
-            let newflhdword = ((counter as u64 + 1) << 32) | newfirstentryslotnum as u64;
-
+            // Write the new first entry slot num in place of the old in our local (in a register)
+            // copy of flhdword, leaving the push-counter bits unchanged.
+            let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
+            
             // Compare and exchange
             if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
 	        // prefetch the next link (which is now the first link) in the free list
@@ -501,6 +507,13 @@ const fn const_shl_u32_usize(value: u32, shift: u8) -> usize {
     unsafe { (value as usize).unchecked_shl(shift as u32) }
 }
 
+#[inline(always)]
+const fn const_shl_u32_u64(value: u32, shift: u8) -> u64 {
+    debug_assert!((shift as u32) < u64::BITS);
+    debug_assert!(help_leading_zeros_u64(value as u64) >= shift); // we never shift off 1 bits currently
+    unsafe { (value as u64).unchecked_shl(shift as u32) }
+}
+
 // xxx benchmark and inspect asm for this vs <<
 const fn const_shl_u16_usize(value: u16, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
@@ -600,6 +613,13 @@ const fn _help_leading_zeros_u32(x: u32) -> u8 {
     
 #[inline(always)]
 const fn help_leading_zeros_usize(x: usize) -> u8 {
+    let res = x.leading_zeros();
+    debug_assert!(res <= u8::MAX as u32);
+    res as u8
+}
+    
+#[inline(always)]
+const fn help_leading_zeros_u64(x: u64) -> u8 {
     let res = x.leading_zeros();
     debug_assert!(res <= u8::MAX as u32);
     res as u8
