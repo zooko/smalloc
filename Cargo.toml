@@ -9,7 +9,7 @@ resolver = "3"
 version = "7.0.1"
 edition = "2024"
 authors = ["Zooko <noemail@thanks.com>"]
-license = "MIT" # OR Apache 2.0 OR Transitive Grace Period Public Licence OR Bootstrap Open Source Licence
+license = "MIT OR Apache-2.0 OR TGPPL-1.0 OR BOSL-1.0"
 description = "smalloc is a very simple but performant allocator"
 repository = "https://github.com/zooko/smalloc"
 
