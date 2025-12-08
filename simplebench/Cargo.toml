@@ -8,6 +8,7 @@ libc = "0.2.177"
 smalloc = { path = "../smalloc" }
 devutils = { path = "../devutils" }
 thousands = "0.2.0"
+mimalloc = { version = "*", features = ["v3"] }
 
 [[bin]]
 name = "simplebench"

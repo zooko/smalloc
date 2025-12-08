@@ -1,8 +1,11 @@
-use std::alloc::GlobalAlloc;
-
 mod platform;
 use platform::ClockType;
 use std::mem::MaybeUninit;
+
+pub use mimalloc::MiMalloc;
+use std::alloc::GlobalAlloc;
+pub use smalloc::Smalloc;
+pub struct GlobalAllocWrap;
 
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
@@ -16,8 +19,6 @@ pub fn clock(clocktype: ClockType) -> u64 {
 }
 
 use std::alloc::{System, Layout};
-
-pub struct GlobalAllocWrap;
 
 unsafe impl GlobalAlloc for GlobalAllocWrap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -129,7 +130,7 @@ where
         devutils::dev_instance::setup();
 
         // Create a closure that specifies the type
-        let f = |al: &Smalloc, s: &mut TestState| {
+        let f = |al: &$crate::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
         let sm_name = format!("sm {func_name}");
@@ -145,10 +146,14 @@ where
 
         let mut baseline_ns = 42;
         let mut candidat_ns = 42;
+        let mut mm_ns = 42;
+
+        let bi = $crate::GlobalAllocWrap;
+
+        let mm = $crate::MiMalloc;
 
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
-        let bi = GlobalAllocWrap;
 
         std::thread::scope(|scope| {
             scope.spawn(|| { 
@@ -161,7 +166,15 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
-                let f = |al: &Smalloc, s: &mut TestState| {
+                let f = |al: &$crate::MiMalloc, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let mm_name = format!("mm {func_name}");
+                mm_ns = $crate::singlethread_bench(f, $iters, &mm_name, &mm, $seed); 
+            });
+            scope.spawn(|| { 
+                // Create a closure that specifies the type
+                let f = |al: &$crate::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
                 let sm_name = format!("sm {func_name}");
@@ -171,8 +184,12 @@ where
 
 	//sm.dump_map_of_slabs();
 
-        let diffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("diff: {diffperc:.0}%");
+        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        println!("mimalloc diff from builtin: {mmbidiffperc:.0}%");
+        let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        println!("smalloc diff from builtin: {smbidiffperc:.0}%");
+        let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
+        println!("smalloc diff from mimalloc: {smmmdiffperc:.0}%");
         println!("");
     }}
 }
@@ -186,7 +203,7 @@ where
         devutils::dev_instance::setup();
 
         // Create a closure that specifies the type
-        let fsm = |al: &Smalloc, s: &mut TestState| {
+        let fsm = |al: &$crate::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
 
@@ -212,21 +229,38 @@ where
         let bi_name = format!("bi {} {func_name}", $threads);
         let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
 
+
+        let mm = $crate::MiMalloc;
+
+        // create a closure that specifies the type
+        let fmm = |al: &$crate::MiMalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+
+        let mm_name = format!("mm {} {func_name}", $threads);
+        let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
+
+        
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
         // create a closure that specifies the type
-        let fsm = |al: &Smalloc, s: &mut TestState| {
+        let fsm = |al: &$crate::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
 
         let sm_name = format!("sm {} {func_name}", $threads);
         let candidat_ns = $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
-        //sm.dump_map_of_slabs();
 
-        let diffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("diff: {diffperc:.0}%");
+
+        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        println!("mimalloc diff from builtin: {mmbidiffperc:.0}%");
+        let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        println!("smalloc diff from builtin: {smbidiffperc:.0}%");
+        let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
+        println!("smalloc diff from mimalloc: {smmmdiffperc:.0}%");
         println!("");
+        //sm.dump_map_of_slabs();
     }}
 }
