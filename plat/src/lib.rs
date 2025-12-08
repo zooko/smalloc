@@ -18,7 +18,6 @@ pub mod plat {
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
     use std::ptr;
 
-// inline xxx?
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         match unsafe {
             mmap_anonymous(
@@ -44,7 +43,6 @@ pub mod plat {
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
 
-// inline xxx?
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {
         let task: mach_port_t = unsafe { mach_task_self() };
         let mut address: mach_vm_address_t = 0;

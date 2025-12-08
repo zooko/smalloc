@@ -85,7 +85,6 @@ thread_local! {
 /// Get this thread's unique, incrementing number.
 // It is okay if more than 4 billion threads are spawned and this wraps, since the only thing we
 // currently use it for is to & it with SLABNUM_ALONE_MASK anyway.
-// xxx oops would that trigger a Rust overflow panic instead of wrapping? Check that...
 #[inline(always)]
 fn get_thread_num() -> u32 {
     THREAD_NUM.with(|cell| {
@@ -101,7 +100,7 @@ fn get_thread_num() -> u32 {
 }
 
 /// Get the slab that this thread allocates from. If uninitialized, this is initialized to
-/// `get_thread_num() % 32`.
+/// `get_thread_num() % 64`.
 #[inline(always)]
 fn get_slab_num() -> u8 {
     SLAB_NUM.with(|cell| {
@@ -422,12 +421,12 @@ unsafe impl GlobalAlloc for Smalloc {
             let ix = (get_thread_num() as usize / NUM_SLABS as usize) % STEPS.len();
             slabnum = (slabnum + STEPS[ix]) % NUM_SLABS;
 
-            if slabnum == orig_slabnum {
+            if unlikely(slabnum == orig_slabnum) {
                 // All slabs in this sizeclass were full. Overflow to a slab with larger
                 // slots, by recursively calling `.alloc()` with a doubled requested
                 // size. (Doubling the requested size guarantees that the new recursive
                 // request will use the next larger sc.)
-                let doublesize_layout = Layout::from_size_align(reqsiz * 2, reqalign).unwrap();//xxx use the unsafe version and use a shl
+                let doublesize_layout  = unsafe { Layout::from_size_align_unchecked(const_shl_usize_usize(reqsiz, 1), reqalign) };
                 return unsafe { self.alloc(doublesize_layout) }
             }
         }
@@ -546,7 +545,7 @@ const fn const_shl_u8_usize(value: u8, shift: u8) -> usize {
 
 // xxx benchmark and inspect asm for this vs <<
 #[inline(always)]
-const fn _const_shl_usize_usize(value: usize, shift: u8) -> usize {
+const fn const_shl_usize_usize(value: usize, shift: u8) -> usize {
     debug_assert!((shift as u32) < usize::BITS);
     debug_assert!(help_leading_zeros_usize(value) >= shift); // we never shift off 1 bits currently
     unsafe { value.unchecked_shl(shift as u32) }

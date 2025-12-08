@@ -430,7 +430,7 @@ impl TestState {
         // const SEED: u64 = 21; // 414 ns/i
         // const SEED: u64 = 22; // 15 ns/i
         let mut r = WyRand::new(seed);
-        let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(r.rand()));
+        let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(seed));
         let coins: [u32; NUMCOINS] = std::array::from_fn(|_| r.rand() as u32);
         let nextcoin = 0;
         let mut layouts = gen_layouts();
