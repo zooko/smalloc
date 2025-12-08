@@ -239,7 +239,7 @@ impl Smalloc {
 
             // Encode the curfirstentryslotnum as the next-entry link for the new entry
             let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, highestslotnum);
-            debug_assert_eq!(curfirstentryslotnum, Self::decode_next_entry_link(newslotnum, next_entry_link, highestslotnum), "newslotnum: {newslotnum}, next_entry_link: {next_entry_link}, curfirstentryslotnum: {curfirstentryslotnum}, highestslotnum: {highestslotnum}");
+            debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, highestslotnum));
 
             // Write it into the new slot's link
             let new_slot_p = Self::linkptr(slabbp, newslotnum, slotsizebits);
@@ -261,11 +261,11 @@ impl Smalloc {
 
     #[inline(always)]
     fn encode_next_entry_link(baseslotnum: u32, targslotnum: u32, highestslotnum: u32) -> u32 {
-        debug_assert_ne!(baseslotnum, targslotnum);
+        debug_assert!(baseslotnum != targslotnum);
         // The baseslotnum cannot be the sentinel slotnum.
         debug_assert!(baseslotnum < highestslotnum);
         // The targslotnum can be the sentinel slotnum.
-        debug_assert!(targslotnum <= highestslotnum, "targslotnum: {targslotnum}, highestslotnum: {highestslotnum}");
+        debug_assert!(targslotnum <= highestslotnum);
 
         targslotnum.wrapping_sub(baseslotnum).wrapping_sub(1) & highestslotnum
     }
@@ -306,7 +306,7 @@ impl Smalloc {
     #[inline(always)]
     fn pop_slot_from_freelist(&self, slabbp: usize, flh: &AtomicU64, highestslotnum: u32, slotsizebits: u8) -> usize {
         debug_assert!(slabbp != 0);
-        debug_assert!((slabbp >= self.inner().smbp) && (slabbp <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", self.inner().smbp, self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+        debug_assert!((slabbp >= self.inner().smbp) && (slabbp <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
         debug_assert!(help_trailing_zeros_usize(slabbp) >= NUM_SLOTNUM_AND_DATA_BITS);
 
         loop {
@@ -340,7 +340,7 @@ impl Smalloc {
 		//xxx14prefetch_read(Self::linkptr(slabbp, newfirstentryslotnum, slotsizebits));
 	        //xxx6 maybe compute this from curfirstentrylink_p?
 	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, slotsizebits) as usize;
-                debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "curfirstentry_p: {curfirstentry_p:x}, smbp: {:x}, slabbp: {slabbp:x}, highest_addr: {:x}", self.inner().smbp, self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+                debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
 
                 break curfirstentry_p;
             }
@@ -375,11 +375,9 @@ unsafe impl GlobalAlloc for Smalloc {
         let slotsizebits = req_to_slotsizebits(reqsiz, reqalign);
         let sc = slotsizebits - NUM_SMALLEST_SLOT_SIZE_BITS;
         if unlikely(sc >= NUM_SCS) {
-            eprintln!("smalloc exhausted");
-
-            self.dump_map_of_slabs();
-                    
             // This request exceeds our largest slot size, so we return null ptr.
+            eprintln!("smalloc exhausted");
+            self.dump_map_of_slabs(); // for debugging only -- should probably be removed
             return null_mut();
         };
 
@@ -393,7 +391,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // The slabbp is the smbp with the size class bits and the slabnum bits set.
             let slabbp = inner.smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
 
-            debug_assert!((slabbp >= inner.smbp) && (slabbp <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "slabbp: {slabbp:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+            debug_assert!((slabbp >= inner.smbp) && (slabbp <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
             debug_assert!(help_trailing_zeros_usize(slabbp) >= slotsizebits);
 
             let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
@@ -402,7 +400,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
             let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, slotsizebits);
 
-            debug_assert!((p_addr == 0) || (p_addr >= inner.smbp) && (p_addr <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)), "p_addr: {p_addr:x}, smbp: {:x}, highest_addr: {:x}", inner.smbp, inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR);
+            debug_assert!((p_addr == 0) || (p_addr >= inner.smbp) && (p_addr <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
 
             if likely(p_addr != 0) {
                 if unlikely(slabnum != orig_slabnum) {
@@ -448,7 +446,7 @@ unsafe impl GlobalAlloc for Smalloc {
         // less than or equal to the highest slot pointer.
         let highest_addr = inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR;
 
-        assert!((p_addr >= inner.smbp) && (p_addr <= highest_addr), "p_addr: {p_addr}, smbp: {}, highest_addr: {highest_addr}", inner.smbp);
+        assert!((p_addr >= inner.smbp) && (p_addr <= highest_addr));
 
         // Okay now we know that it is a pointer into smalloc's region.
 
@@ -491,7 +489,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let l = unsafe { Layout::from_size_align_unchecked(const_one_shl_usize(newsc + NUM_SMALLEST_SLOT_SIZE_BITS), oldalignment) };
         let newp = unsafe { self.alloc(l) };
-        debug_assert!(!newp.is_null(), "{l:?}");
+        debug_assert!(!newp.is_null());
         debug_assert!(newp.is_aligned_to(oldalignment));
 
         // Copy the contents from the old location.
