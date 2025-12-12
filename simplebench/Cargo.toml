@@ -9,6 +9,7 @@ smalloc = { path = "../smalloc" }
 devutils = { path = "../devutils" }
 thousands = "0.2.0"
 mimalloc = { version = "*", features = ["v3"] }
+tikv-jemallocator = "0.6.1"
 
 [[bin]]
 name = "simplebench"

@@ -5,6 +5,7 @@ use std::mem::MaybeUninit;
 pub use mimalloc::MiMalloc;
 use std::alloc::GlobalAlloc;
 pub use smalloc::Smalloc;
+pub use tikv_jemallocator::Jemalloc;
 pub struct GlobalAllocWrap;
 
 pub fn clock(clocktype: ClockType) -> u64 {
@@ -252,10 +253,13 @@ where
         let mut baseline_ns = 42;
         let mut candidat_ns = 42;
         let mut mm_ns = 42;
+        let mut jm_ns = 42;
 
         let bi = $crate::GlobalAllocWrap;
 
         let mm = $crate::MiMalloc;
+
+        let jm = $crate::Jemalloc;
 
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
@@ -279,6 +283,14 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
+                let f = |al: &$crate::Jemalloc, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let jm_name = format!("jm {func_name}");
+                jm_ns = $crate::singlethread_bench(f, $iters, &jm_name, &jm, $seed); 
+            });
+            scope.spawn(|| { 
+                // Create a closure that specifies the type
                 let f = |al: &$crate::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
@@ -289,12 +301,14 @@ where
 
 	//sm.dump_map_of_slabs();
 
-        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
+//        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+//        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
         println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
+        let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
+        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
         println!("");
     }}
 }
@@ -345,6 +359,17 @@ where
         let mm_name = format!("mm {} {func_name}", $threads);
         let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
 
+
+        let jm = $crate::Jemalloc;
+
+        // create a closure that specifies the type
+        let fjm = |al: &$crate::Jemalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+
+        let jm_name = format!("jm {} {func_name}", $threads);
+        let jm_ns = $crate::multithread_bench(fjm, $threads, $iters, jm_name.as_str(), &jm, $seed);
+
         
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
@@ -359,12 +384,14 @@ where
 
 
 
-        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
+//        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+//        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
         println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
+        let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
+        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
         println!("");
         //sm.dump_map_of_slabs();
     }}
