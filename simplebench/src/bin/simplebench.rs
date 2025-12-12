@@ -9,7 +9,15 @@ pub fn main() {
     let seed: u64 = std::env::args()
         .find_map(|arg| arg.strip_prefix("--seed=").map(|s| s.to_string()))
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            // No --seed= found; check for erroneous "--seed VALUE" usage
+            let args: Vec<String> = std::env::args().collect();
+            if let Some(w) = args.windows(2).find(|w| w[0] == "--seed" && w[1].parse::<u64>().is_ok()) {
+                eprintln!("Error: use --seed={} instead of --seed {}", w[1], w[1]);
+                std::process::exit(1);
+            }
+            0
+        });
 
     let compare = std::env::args().any(|arg| arg == "--compare");
 
