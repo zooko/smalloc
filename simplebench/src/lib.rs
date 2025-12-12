@@ -81,9 +81,8 @@ where
     assert!(end > start);
     let elap_ns = end - start;
     let nspi = elap_ns / iters;
-    let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
-    let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
-    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
+    let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
+    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
 
@@ -186,11 +185,11 @@ where
 	//sm.dump_map_of_slabs();
 
         let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("mimalloc diff from builtin: {mmbidiffperc:.0}%");
+        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("smalloc diff from builtin: {smbidiffperc:.0}%");
+        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
-        println!("smalloc diff from mimalloc: {smmmdiffperc:.0}%");
+        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
         println!("");
     }}
 }
@@ -256,11 +255,11 @@ where
 
 
         let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("mimalloc diff from builtin: {mmbidiffperc:.0}%");
+        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("smalloc diff from builtin: {smbidiffperc:.0}%");
+        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
-        println!("smalloc diff from mimalloc: {smmmdiffperc:.0}%");
+        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
         println!("");
         //sm.dump_map_of_slabs();
     }}
