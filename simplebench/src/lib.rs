@@ -35,11 +35,11 @@ unsafe impl GlobalAlloc for GlobalAllocWrap {
 }
 
 use std::sync::Arc;
-pub fn alloc_and_free(allocator: &Arc<impl GlobalAlloc>) {
+pub fn alloc_and_free(al: &Arc<impl GlobalAlloc>) {
     let l = unsafe { Layout::from_size_align_unchecked(32, 1) };
-    let p = unsafe { allocator.alloc(l) };
+    let p = unsafe { al.alloc(l) };
     unsafe { *p = 0 };
-    unsafe { allocator.dealloc(p, l) };
+    unsafe { al.dealloc(p, l) };
 }
 
 #[inline(never)]
@@ -63,6 +63,7 @@ pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
 
 use devutils::*;
 
+/// Returns elapsed nanoseconds
 pub fn singlethread_bench<T, F>(bf: F, iters: u64, name: &str, al: &T, seed: u64) -> u64
 where
     T: GlobalAlloc,

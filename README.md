@@ -54,6 +54,72 @@ cargo --frozen build --release --package simplebench
 ./target/release/simplebench
 ```
 
+```
+              [unused                                    ]
+pad         0 00000000000000000000000000000000000000000000                           ~2^45
+
+slabs
+   0   used for flhs
+
+   1   unused
+   
+        sc   slab slotnum                   data
+       [   ][   ][                        ][     ]
+  sc                                 ... in binary slotsize slots slabs
+  --                                 ------------- -------- ----- -----
+       [sc ][slab][slotnum 0                     ][]
+   2   000100000000000000000000000000000000000000000   2^ 2  2^32   2^6
+
+       [sc ][slab][slotnum                      ][d]
+   3   000110000000000000000000000000000000000000000   2^ 3  2^31   2^6
+
+       [sc ][slab][slotnum                     ][ra]
+   4   001000000000000000000000000000000000000000000   2^ 4  2^30   2^6
+
+       [sc ][slab][slotnum                    ][dat]
+   5   001010000000000000000000000000000000000000000   2^ 5  2^29   2^6
+
+       [sc ][slab][slotnum                   ][data]
+   6   001100000000000000000000000000000000000000000   2^ 6  2^28   2^6
+
+       [sc ][slab][slotnum                  ][data ]
+   7   001110000000000000000000000000000000000000000   2^ 7  2^27   2^6
+
+       [sc ][slab][slotnum                 ][data  ]
+   8   010000000000000000000000000000000000000000000   2^ 8  2^26   2^6
+
+   9                                                   2^ 9  2^25   2^6
+  10                                                   2^10  2^24   2^6
+  11                                                   2^11  2^23   2^6
+  12                                                   2^12  2^22   2^6
+  13                                                   2^13  2^21   2^6
+  14                                                   2^14  2^20   2^6
+  15                                                   2^15  2^19   2^6
+  16                                                   2^16  2^18   2^6
+  17                                                   2^17  2^17   2^6
+  18                                                   2^18  2^16   2^6
+  19                                                   2^19  2^15   2^6
+  20                                                   2^20  2^14   2^6
+  21                                                   2^21  2^13   2^6
+  22                                                   2^22  2^12   2^6
+  23                                                   2^23  2^11   2^6
+  24                                                   2^24  2^10   2^6
+  25                                                   2^25  2^ 9   2^6
+  26                                                   2^26  2^ 8   2^6
+  27                                                   2^27  2^ 7   2^6
+  28                                                   2^28  2^ 6   2^6
+
+       [sc ][slab][slo][data                       ]
+  29   111010000000000000000000000000000000000000000   2^29  2^ 5   2^6
+
+       [sc ][slab][sl][data                        ]
+  30   111100000000000000000000000000000000000000000   2^30  2^ 4   2^6
+
+       [sc ][slab][s][data                         ]
+  31   111110000000000000000000000000000000000000000   2^31  2^ 3   2^6
+```
+
+
 XXX EVERYTHING BELOW THIS LINE IS PROBABLY OUT OF DATE SORRY BRB
 
 # How it works
@@ -272,14 +338,14 @@ Now you know the entire data model and all of the algorithms for `smalloc`!
 
 Except for a few more details about the algorithms:
 
-### Separate Threads Use Separate Small Slabs
+### Separate Threads Use Separate Slabs
 
 This is not necessary for correctness -- it is just a performance optimization.
 
 There is a global static variable named `GLOBAL_THREAD_NUM`, initialized to `0`.
 
-Each thread has a thread-local variable named `THREAD_NUM` which determines which small-slots slab
-this thread uses for each size class.
+Each thread has a thread-local variable named `THREAD_NUM` which determines which slab this thread
+uses for each size class.
 
 Whenever you choose a slab for `malloc()` or `realloc()`, if it is going to use small slot, then use
 this thread's `THREAD_NUM` to determine which slab to use. If this thread's `THREAD_NUM` isn't
@@ -522,71 +588,6 @@ X      <- smalloc base pointer (first 8 MiB boundary)
 | '--------------------------' |
 '------------------------------'
 ```
-
-```
-              [unused                                    ]
-pad         0 00000000000000000000000000000000000000000000                           ~2^45
-
-slabs
-        sc   slab slotnum                   slot
-       [   ][   ][                        ][     ]
-  sc                                 ... in binary slotsize slots slabs
-  --                                 ------------- -------- ----- -----
-       [sc ][sla][slotnum                      ][]
-   0   0000000000000000000000000000000000000000000     2^ 2  2^31   2^5
-
-       [sc ][sla][slotnum                     ][s]
-   1   0000100000000000000000000000000000000000000     2^ 3  2^30   2^5
-
-       [sc ][sla][slotnum                    ][sl]
-   2   0001000000000000000000000000000000000000000     2^ 4  2^29   2^5
-
-       [sc ][sla][slotnum                   ][slo]
-   3   0001100000000000000000000000000000000000000     2^ 5  2^28   2^5
-
-       [sc ][sla][slotnum                  ][slot]
-   4   0010000000000000000000000000000000000000000     2^ 6  2^27   2^5
-
-       [sc ][sla][slotnum                 ][slot ]
-   5   0010100000000000000000000000000000000000000     2^ 7  2^26   2^5
-
-       [sc ][sla][slotnum                ][slot  ]
-   6   0011000000000000000000000000000000000000000     2^ 8  2^25   2^5
-
-   7                                                   2^ 9  2^24   2^5
-   8                                                   2^10  2^23   2^5
-   9                                                   2^11  2^22   2^5
-  10                                                   2^12  2^21   2^5
-  11                                                   2^13  2^20   2^5
-  12                                                   2^14  2^19   2^5
-  13                                                   2^15  2^18   2^5
-  14                                                   2^16  2^17   2^5
-  15                                                   2^17  2^16   2^5
-  16                                                   2^18  2^15   2^5
-  17                                                   2^19  2^14   2^5
-  18                                                   2^20  2^13   2^5
-  19                                                   2^21  2^12   2^5
-  20                                                   2^22  2^11   2^5
-  21                                                   2^23  2^10   2^5
-  22                                                   2^24  2^ 9   2^5
-  23                                                   2^25  2^ 8   2^5
-  24                                                   2^26  2^ 7   2^5
-  25                                                   2^27  2^ 6   2^5
-  26                                                   2^28  2^ 5   2^5
-
-       [sc ][sla][sl][slot                       ]
-  27   1101100000000000000000000000000000000000000     2^29  2^ 4   2^5
-
-       [sc ][sla][s][slot                        ]
-  28   1110000000000000000000000000000000000000000     2^30  2^ 3   2^5
-
-       [sc ][sla][][slot                         ]
-  29   1110100000000000000000000000000000000000000     2^31  2^ 2   2^5
-
-       [sc ][sla]][slot                          ]
-  30   1111000000000000000000000000000000000000000     2^32  2^ 1   2^5
-```
-
 
 Okay, now you know everything there is to know about `smalloc`'s data model and memory layout. Given
 his information, you can calculate the exact location of every data element in `smalloc`! (Counting
@@ -1112,6 +1113,12 @@ goals, written here in roughly descending order of importance:
 * Put back the fallback to mmap for requests that overflow.??? Or document why not.
 
 * try again to get the debug/test/benchmark stuff out of the end of $WORKSPACE/smalloc/src/lib.rs
+
+* automatically detect and use 5lpt?
+
+* make it run benchmarks when you do `cargo run -p bench`, like iroh quinn does?
+
+* recreate the "inner_alloc" function which takes a sizeclass instead of a Layout, and let realloc and the overflow behavior of alloc use inner_alloc instead of alloc. (And benchmark it of course.)
 
 # Acknowledgments
 

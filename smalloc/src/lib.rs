@@ -649,6 +649,7 @@ const fn help_trailing_zeros_usize(x: usize) -> u8 {
 
 pub use smalloc_macros::smalloc_main;
 
+// xxx could we move this out to src/tests.rs using the ctor hack ? 
 // For testing and benchmarking only.
 #[cfg(test)]
 mod unit_test_instance {
@@ -676,6 +677,7 @@ mod unit_test_instance {
     }
 }
 
+// xxx could we move this out to src/tests.rs and just have less clear output if the user runs `cargo test`?
 #[cfg(debug_assertions)]
 #[macro_export]
 macro_rules! nextest_unit_tests {
