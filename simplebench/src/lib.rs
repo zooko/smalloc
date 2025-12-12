@@ -121,6 +121,111 @@ where
     elap_ns
 }
 
+// use std::alloc::{GlobalAlloc, Layout};
+// use std::sync::Barrier;
+// use std::thread;
+// use std::time::Instant;
+
+// /// This is to stress test the case that one slab's flh is under heavy multi-threading contention
+// /// but the other slabs's flh's are not.
+// ///
+// /// Spawn 64 * `hotspot_threads` threads, each of which allocates one slot then blocks. All of the
+// /// ones that are the %64'th to first-allocate then get unblocked, and proceed to deallocate,
+// /// allocate, deallocate, allocate etc. `iters` times.
+// ///
+// /// Returns picoseconds per iter (not picoseconds per (iter * hotspot_threads), nor yet picoseconds
+// /// per (iter * total_threads)). picoseconds per iter
+// ///
+// /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
+// pub fn multithread_hotspot<T>(hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
+// where
+//     T: GlobalAlloc + Send + Sync,
+// {
+//     // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
+//     const NUM_SLABS: usize = 64;
+
+//     let hotspot_threads = hotspot_threads as usize;
+//     let iters = iters as usize;
+//     let cool_threads_per_round: usize = NUM_SLABS - 1;
+
+//     // One hot thread per 63 cool threads
+//     let total_threads: usize = hotspot_threads * (1 + cool_threads_per_round);
+
+//     let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads)
+//         .map(|_| Barrier::new(2))
+//         .collect();
+
+//     let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads)
+//         .map(|_| Barrier::new(cool_threads_per_round + 1))
+//         .collect();
+
+//     let setup_complete_barrier = Barrier::new(total_threads + 1);
+//     let hot_start_barrier = Barrier::new(hotspot_threads + 1);
+//     let hot_finish_barrier = Barrier::new(hotspot_threads + 1);
+//     let final_barrier = Barrier::new(total_threads + 1);
+
+//     let elap_ns = thread::scope(|s| {
+//         for round in 0..hotspot_threads {
+//             // Spawn hot thread
+//             s.spawn(|| {
+//                 // Setup phase: initial allocation
+//                 let _ptr = unsafe { al.alloc(l) };
+//                 hot_done_barriers[round].wait();
+
+//                 setup_complete_barrier.wait();
+//                 hot_start_barrier.wait();
+
+//                 // === Benchmarked operation ===
+//                 for _ in 0..iters {
+//                     let ptr = unsafe { al.alloc(l) };
+//                     unsafe { al.dealloc(ptr, l) };
+//                 }
+//                 // =============================
+
+//                 hot_finish_barrier.wait();
+//                 final_barrier.wait();
+//             });
+
+//             // Wait for hot thread's setup alloc
+//             hot_done_barriers[round].wait();
+
+//             // Spawn cool threads
+//             for _ in 0..cool_threads_per_round {
+//                 s.spawn(|| {
+//                     // Setup phase: initial allocation
+//                     let _ptr = unsafe { al.alloc(l) };
+//                     cool_done_barriers[round].wait();
+//                     setup_complete_barrier.wait();
+//                     final_barrier.wait();
+//                 });
+//             }
+
+//             // Wait for all cool threads' setup allocs
+//             cool_done_barriers[round].wait();
+//         }
+
+//         setup_complete_barrier.wait();
+
+//         // Start timing right before releasing hot threads
+//         let start = clock(libc::CLOCK_MONOTONIC_RAW);
+//         hot_start_barrier.wait();
+//         // Wait for all hot threads to finish
+//         hot_finish_barrier.wait();
+//         let end = clock(libc::CLOCK_MONOTONIC_RAW);
+//         assert!(end > start);
+
+//         end - start
+//     });
+
+//     let elap_ps = elap_ns * 1000;
+//     let pspi = elap_ps / iters;
+//     let hundredpses = (pspi / 100) % 10;
+//     let nspi = pspi / 1000;
+//     println!("name: {name:>13}, hot threads: {:>5,} iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+
+//     pspi
+// }
+    
 #[macro_export]
     macro_rules! st_bench {
     ($func:path, $iters:expr, $seed:expr) => {{
