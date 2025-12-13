@@ -1,3 +1,4 @@
+#![feature(stdarch_aarch64_prefetch)]
 // Abstract over system virtual memory functions
 
 #[derive(Debug)]
@@ -13,7 +14,7 @@ impl fmt::Display for AllocFailed {
 }
 
 #[cfg(any(target_os = "linux", doc))]
-pub mod plat {
+pub mod p {
     use super::AllocFailed;
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
     use std::ptr;
@@ -34,7 +35,7 @@ pub mod plat {
 }
 
 #[cfg(any(target_vendor = "apple", doc))]
-pub mod plat {
+pub mod p {
     use super::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;
     use mach_sys::port::mach_port_t;
@@ -61,7 +62,7 @@ pub mod plat {
 }
 
 #[inline(always)] // xxx experiment with removing
-pub fn _prefetch_read<T>(ptr: *const T) {
+pub fn prefetch_read<T>(ptr: *const T) {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T2};
@@ -70,11 +71,11 @@ pub fn _prefetch_read<T>(ptr: *const T) {
         }
     }
 
-    // #[cfg(target_arch = "aarch64")]
-    // {
-    //     use core::arch::aarch64::_prefetch;
-    //     _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8);
-    // }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use core::arch::aarch64::{_prefetch, _PREFETCH_READ, _PREFETCH_LOCALITY3};
+        unsafe { _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8) };
+    }
 
     // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {

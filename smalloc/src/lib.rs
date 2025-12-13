@@ -144,7 +144,7 @@ impl Default for Smalloc {
     }
 }
 
-//xxx17use crate::platformalloc::{prefetch_read,prefetch_write};
+use plat::prefetch_read;
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
@@ -315,14 +315,11 @@ impl Smalloc {
             unsafe { *new_slot_p = next_entry_link };
 
             // Increment the push counter
-            // xxx compare asm of this vs shr, incr, shl
             let counter = (flhdword & FLHDWORD_PUSH_COUNTER_MASK).wrapping_add(FLHDWORD_PUSH_COUNTER_INCR);
             let newflhdword = counter | newslotnum as u64;
 
             // Compare and exchange
             if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
-	        // prefetch the next link so we can quickly write to it next time
-		//xxx14prefetch_write(Self::linkptr(slabbp, newslotnum, sc));
                 break;
             }
         }
@@ -412,7 +409,7 @@ impl Smalloc {
             // Compare and exchange
             if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
 	        // prefetch the next link (which is now the first link) in the free list
-		//xxx14prefetch_read(Self::linkptr(slabbp, newfirstentryslotnum, sc));
+		prefetch_read(Self::linkptr(slabbp, newfirstentryslotnum, sc));
 	        //xxx6 maybe compute this from curfirstentrylink_p?
 	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
                 debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
@@ -528,7 +525,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
 use core::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::Ordering::{AcqRel, Acquire};
-use plat::plat::sys_alloc;
+use plat::p::sys_alloc;
 use std::ptr::{copy_nonoverlapping, null_mut};
 //xxx16use thousands::Separable;
 

@@ -44,7 +44,7 @@ pub fn sys_dealloc(p: *mut u8, size: usize) {
     }
 }
 
-use plat::plat::sys_alloc;
+use plat::p::sys_alloc;
 use thousands::Separable;
 fn dev_find_max_vm_space_allocatable() {
     let mut trysize: usize = 2usize.pow(62);
