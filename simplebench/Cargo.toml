@@ -4,12 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-libc = "0.2.177"
+libc = "0.2"
 smalloc = { path = "../smalloc" }
 devutils = { path = "../devutils" }
-thousands = "0.2.0"
+thousands = "0.2"
 mimalloc = { version = "*", features = ["v3"] }
-tikv-jemallocator = "0.6.1"
+tikv-jemallocator = "0.6"
+snmalloc-rs = "0.3"
 
 [[bin]]
 name = "simplebench"

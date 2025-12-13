@@ -2,11 +2,12 @@ mod platform;
 use platform::ClockType;
 use std::mem::MaybeUninit;
 
-pub use mimalloc::MiMalloc;
 use std::alloc::GlobalAlloc;
-pub use smalloc::Smalloc;
-pub use tikv_jemallocator::Jemalloc;
 pub struct GlobalAllocWrap;
+//use mimalloc::MiMalloc;
+//use smalloc::Smalloc;
+//use tikv_jemallocator::Jemalloc;
+//use snmalloc_rs::SnMalloc;
 
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
@@ -236,7 +237,7 @@ where
         devutils::dev_instance::setup();
 
         // Create a closure that specifies the type
-        let f = |al: &$crate::Smalloc, s: &mut TestState| {
+        let f = |al: &smalloc::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
         let sm_name = format!("sm {func_name}");
@@ -254,12 +255,15 @@ where
         let mut candidat_ns = 42;
         let mut mm_ns = 42;
         let mut jm_ns = 42;
+        let mut nm_ns = 42;
 
         let bi = $crate::GlobalAllocWrap;
 
-        let mm = $crate::MiMalloc;
+        let mm = mimalloc::MiMalloc;
 
-        let jm = $crate::Jemalloc;
+        let jm = tikv_jemallocator::Jemalloc;
+
+        let nm = snmalloc_rs::SnMalloc;
 
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
@@ -275,7 +279,7 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
-                let f = |al: &$crate::MiMalloc, s: &mut TestState| {
+                let f = |al: &mimalloc::MiMalloc, s: &mut TestState| {
                     $func(al, s)
                 };
                 let mm_name = format!("mm {func_name}");
@@ -283,7 +287,7 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
-                let f = |al: &$crate::Jemalloc, s: &mut TestState| {
+                let f = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
                     $func(al, s)
                 };
                 let jm_name = format!("jm {func_name}");
@@ -291,7 +295,15 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
-                let f = |al: &$crate::Smalloc, s: &mut TestState| {
+                let f = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let nm_name = format!("nm {func_name}");
+                nm_ns = $crate::singlethread_bench(f, $iters, &nm_name, &nm, $seed); 
+            });
+            scope.spawn(|| { 
+                // Create a closure that specifies the type
+                let f = |al: &smalloc::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
                 let sm_name = format!("sm {func_name}");
@@ -309,6 +321,8 @@ where
         println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
         let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
         println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
+        let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
+        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
         println!("");
     }}
 }
@@ -322,7 +336,7 @@ where
         devutils::dev_instance::setup();
 
         // Create a closure that specifies the type
-        let fsm = |al: &$crate::Smalloc, s: &mut TestState| {
+        let fsm = |al: &smalloc::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
 
@@ -349,10 +363,10 @@ where
         let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
 
 
-        let mm = $crate::MiMalloc;
+        let mm = mimalloc::MiMalloc;
 
         // create a closure that specifies the type
-        let fmm = |al: &$crate::MiMalloc, s: &mut TestState| {
+        let fmm = |al: &mimalloc::MiMalloc, s: &mut TestState| {
             $func(al, s)
         };
 
@@ -360,10 +374,10 @@ where
         let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
 
 
-        let jm = $crate::Jemalloc;
+        let jm = tikv_jemallocator::Jemalloc;
 
         // create a closure that specifies the type
-        let fjm = |al: &$crate::Jemalloc, s: &mut TestState| {
+        let fjm = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
             $func(al, s)
         };
 
@@ -371,11 +385,22 @@ where
         let jm_ns = $crate::multithread_bench(fjm, $threads, $iters, jm_name.as_str(), &jm, $seed);
 
         
+        let nm = snmalloc_rs::SnMalloc;
+
+        // create a closure that specifies the type
+        let fnm = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+
+        let nm_name = format!("nm {} {func_name}", $threads);
+        let nm_ns = $crate::multithread_bench(fnm, $threads, $iters, nm_name.as_str(), &nm, $seed);
+
+
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
         // create a closure that specifies the type
-        let fsm = |al: &$crate::Smalloc, s: &mut TestState| {
+        let fsm = |al: &smalloc::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
 
@@ -392,6 +417,8 @@ where
         println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
         let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
         println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
+        let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
+        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
         println!("");
         //sm.dump_map_of_slabs();
     }}
