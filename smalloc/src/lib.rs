@@ -22,13 +22,13 @@
 
 // --- Fixed constants chosen for the design ---
 
-// NUM_SCS is the main constant determining the rest of smalloc's layout. It is equal to 32 because
-// if we have a maximum of 32 size classes, this means we have a maximum of 2^32 slots per slab, and
-// then we can encode slot numbers into 32 bits, so we can store slot numbers in 4-byte slots, so we
-// can pack more 4-bytes slots into each cache line. NUM_SCS = 32 also results in a nice sparse
-// layout which is almost as large as the largest possible virtual memory allocation on our
-// supported platforms.
-const NUM_SCS: u8 = 32;
+
+// NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
+// because that means there are 32 size classes, and the first one (that is used -- see below) has
+// 2^32 slots. This is the largest number of slots that we can encode their slot numbers into a
+// 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more allocations
+// of 1, 2, 3, or 4 bytes into each cache line.
+const NUM_SC_BITS: u8 = 5;
 
 // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
 const NUM_SLABS_BITS: u8 = 6;
@@ -44,20 +44,20 @@ const UNUSED_SC_MASK: usize = const_one_shl_usize(NUM_UNUSED_SCS - 1);
 
 // See the ASCII-art map in `README.md` for where these bit masks fit in.
 const NUM_SLABS: u8 = 2u8.pow(NUM_SLABS_BITS as u32); // 64
+const NUM_SCS: u8 = const_one_shl_u8(NUM_SC_BITS); // 32
 const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_SCS + NUM_UNUSED_SCS; // 34
 const NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS + NUM_SLABS_BITS; // 40
 const SLABNUM_ALONE_MASK: u8 = const_gen_mask_u8(NUM_SLABS_BITS); // 0b111111
 const SLABNUM_ADDR_MASK: usize = const_shl_u8_usize(SLABNUM_ALONE_MASK, NUM_SLOTNUM_AND_DATA_BITS); // 0b1111110000000000000000000000000000000000
-const NUM_SC_BITS: u8 = NUM_SCS.next_power_of_two().trailing_zeros() as u8; // 5
 const SC_BITS_MASK: usize = const_shl_u8_usize(const_gen_mask_u8(NUM_SC_BITS), NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS); // 0b111110000000000000000000000000000000000000000
 const SLOTNUM_AND_DATA_MASK: usize = const_gen_mask_usize(NUM_SLOTNUM_AND_DATA_BITS); // 0b1111111111111111111111111111111111
 
 const NUM_SLOTS_IN_HIGHEST_SC: u64 = const_one_shl_u64(NUM_UNUSED_SCS + 1);
 const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 6; The -1 because the last slot isn't used since its slotnum is the sentinel slotnum.
-const DATA_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
+const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
 
 // The smalloc address of the slot with the highest address is:
-const HIGHEST_SMALLOC_SLOT_ADDR: usize = const_shl_u8_usize(NUM_SCS - 1, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | SLABNUM_ADDR_MASK | const_shl_u64_usize(HIGHEST_SLOTNUM_IN_HIGHEST_SC, DATA_BITS_IN_HIGHEST_SC); // 0b111111111111100000000000000000000000000000000
+const HIGHEST_SMALLOC_SLOT_ADDR: usize = const_shl_u8_usize(NUM_SCS - 1, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | SLABNUM_ADDR_MASK | const_shl_u64_usize(HIGHEST_SLOTNUM_IN_HIGHEST_SC, DATA_ADDR_BITS_IN_HIGHEST_SC); // 0b111111111111100000000000000000000000000000000
 
 // The smalloc address of the highest-addressed byte of a smalloc slot is:
 const HIGHEST_SMALLOC_SLOT_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | const_gen_mask_usize(NUM_SCS - 1); // 0b111111111111101111111111111111111111111111111
@@ -73,6 +73,7 @@ const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_ADDR + SMALLOC_ADDRESS_
 
 // -- Constant values determined by the sizes of u32 and u64 --
 
+const FLHDWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh dwords
 const FLHDWORD_SLOTNUM_MASK: u64 = u32::MAX as u64;
 const FLHDWORD_PUSH_COUNTER_MASK: u64 = const_shl_u32_u64(u32::MAX, 32);
 const FLHDWORD_PUSH_COUNTER_INCR: u64 = 1u64 << 32;
@@ -136,6 +137,33 @@ struct SmallocInner {
     smbp: usize,
 }
 
+/// Pick a new slab to fail over to. This is used in two cases: from `inner_alloc()` when a slab is
+/// full, and from `pop_slot_from_freelist()` when there is a multithreading collision on the flh.
+///
+/// Which new slabnumber shall we fail over to? A certain number, d, added to the current slab
+/// number, and d should have these properties:
+///
+/// 1. It should be relatively prime to NUM_SLABS so that we will try all slabs before returning to
+///    the original one.
+///
+/// 2. It should use the information from the thread number, not just the (strictly lesser)
+///    information from the original slab number.
+/// 
+/// 3. It should be larger than about 1/3 of 64 because the next few threads got subsequent slabs
+///    (the first time they allocated).
+///
+/// 4. It should be relatively prime to each other d used by other threads so that multiple threads
+///    stepping at once will minimally "step" on each other (e.g. if one thread increased its slab
+///    number by 3 and another by 6, then they'd be more likely to re-collide before trying all
+///    possible slab numbers, but if they're relatively prime to each other then they'll be
+///    minimally likely to recollide soon). This implies that d needs to be prime, which also
+///    satisfies requirement 1 above.
+fn failover_slabnum(slabnum: u8, threadnum: u32) -> u8 {
+    const STEPS: [u8; 10] = [23, 29, 31, 37, 41, 43, 47, 53, 59, 61];
+    let ix = (threadnum as usize / NUM_SLABS as usize) % STEPS.len();
+    (slabnum + STEPS[ix]) % NUM_SLABS
+}
+
 unsafe impl Sync for Smalloc {}
 
 impl Default for Smalloc {
@@ -155,63 +183,102 @@ impl Smalloc {
     }
 
     #[inline(always)]
-    fn inner_alloc(&self, sc: u8) -> *mut u8 {
-        debug_assert!(sc >= NUM_UNUSED_SCS, "{sc}");
-        debug_assert!(sc <= NUM_SCS);
-        if unlikely(sc == NUM_SCS) {
-            // This request exceeds our largest slot size, so we return null ptr.
-            eprintln!("smalloc exhausted");
-            self.dump_map_of_slabs(); // for debugging only -- should probably be removed
-            return null_mut();
-        };
+    fn inner_alloc(&self, orig_sc: u8) -> *mut u8 {
+        debug_assert!(orig_sc >= NUM_UNUSED_SCS, "{orig_sc}");
+        debug_assert!(orig_sc < NUM_SCS);
 
-        let inner = self.inner();
+        let smbp = self.inner().smbp;
 
-        let highestslotnum = highest_slotnum(sc);
-
-        // If the slab is full, we'll switch to another slab in this same sizeclass.
+        // If the slab is full, or if there is a collision when updating the flh, we'll switch to
+        // another slab in this same sizeclass.
         let orig_slabnum = get_slab_num();
         let mut slabnum = orig_slabnum;
 
-        loop {
-            // The slabbp is the smbp with the size class bits and the slabnum bits set.
-            let slabbp = inner.smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
+        // If all slabs in the sizeclass are full, we'll switch to the next sizeclass.
+        let mut sc = orig_sc;
 
-            debug_assert!((slabbp >= inner.smbp) && (slabbp <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
+        let mut threadnum: u32 = 42; // the 42 will never get used
+        let mut loaded_threadnum: bool = false;
+
+        loop {
+            // xxx could compute the slabbp and flh location with modular adds of the right sizes instead of const_shl'ing after modular adds of the sc and slabnum...
+
+            // The slabbp is the smbp with the size class bits and the slabnum bits set.
+            let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
+            debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
             debug_assert!(help_trailing_zeros_usize(slabbp) >= sc);
 
-            let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-            let flhptr = inner.smbp | const_shl_u16_usize(flhi, 3);
+            // The flh is at this location:
+            let flhptr = smbp | const_shl_u8_usize(slabnum, NUM_SC_BITS + FLHDWORD_SIZE_BITS) | const_shl_u8_usize(sc, FLHDWORD_SIZE_BITS);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
-            let p_addr = self.pop_slot_from_freelist(slabbp, flh, highestslotnum, sc);
+            // Load the value from the flh
+            let flhdword = flh.load(Acquire); // xxx weaker ordering constraints ok?
+            let curfirstentryslotnum = (flhdword & FLHDWORD_SLOTNUM_MASK) as u32;
 
-            debug_assert!((p_addr == 0) || (p_addr >= inner.smbp) && (p_addr <= (inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
+            // curfirstentryslotnum can be the sentinel value.
+            let highestslotnum = highest_slotnum(sc);
+            debug_assert!(curfirstentryslotnum <= highestslotnum);
+            if unlikely(curfirstentryslotnum == highestslotnum) {
+                // ... meaning no next entry, meaning the free list is empty, meaning this slab is
+                // full. Overflow to a different slab in the same size class.
+                if !loaded_threadnum {
+                    threadnum = get_thread_num();
+                    loaded_threadnum = true;
+                }
 
-            if likely(p_addr != 0) {
-                if unlikely(slabnum != orig_slabnum) {
-                    // Remember the new slab num for next time.
+                slabnum = failover_slabnum(slabnum, threadnum);
+
+                if unlikely(slabnum == orig_slabnum) {
+                    // ... meaning we've tried each slab in this size class and they were all either
+                    // full or encountered an flh update collision, so overflow to the next larger
+                    // size class.
+                    sc += 1;
+
+                    if unlikely(sc == NUM_SCS) {
+                        // This request exceeds our largest slot size, so we return null ptr.
+                        eprintln!("smalloc exhausted");
+                        self.dump_map_of_slabs(); // for debugging only -- should probably be removed
+                        break null_mut();
+                    };
+                }
+
+                continue;
+            }
+
+            // xxx could unpack the const shl from inside linkptr ??
+            // Read the bits from the first entry's link and decode them into a slot number. These
+            // bits might be invalid, if the flh has changed since we read it above and another
+            // thread has started using these bits for something else (e.g. user data or another
+            // linked list update). That's okay because in that case our attempt to update the flh
+            // below with information derived from these bits will fail.
+            let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, sc);
+            let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
+            let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
+
+            // Write the new first entry slot num in place of the old in our local (in a register)
+            // copy of flhdword, leaving the push-counter bits unchanged.
+            let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
+
+            // Compare and exchange
+            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
+	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
+                debug_assert!((curfirstentry_p >= smbp) && (curfirstentry_p <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
+                if orig_slabnum != slabnum {
+                    // Save the new slabnum for next time.
                     set_slab_num(slabnum);
                 }
 
-                return p_addr as *mut u8;
-            }
+                break curfirstentry_p as *mut u8;
+            } else {
+                // Update collision on the flh. Fail over to a different slab in the same size
+                // class.
+                if !loaded_threadnum {
+                    threadnum = get_thread_num();
+                    loaded_threadnum = true;
+                }
 
-            // This slab was full.  Overflow to a different slab in the same size
-            // class. Which slabnumber? 1. It should be relatively prime to NUM_SLABS so
-            // that we will try all slabs before returning to the original one. 2. It should
-            // be larger than 1 or 2 because the next couple threads got those slabs (the
-            // first time they allocated). 3. It should use the information from the thread
-            // number, not just the (strictly lesser) information from the original slab
-            // number. So:
-            const STEPS: [u8; 10] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31];
-            let ix = (get_thread_num() as usize / NUM_SLABS as usize) % STEPS.len();
-            slabnum = (slabnum + STEPS[ix]) % NUM_SLABS;
-
-            if unlikely(slabnum == orig_slabnum) {
-                // All slabs in this sizeclass were full. Overflow to a slab with larger
-                // slots.
-                return self.inner_alloc(sc + 1);
+                slabnum = failover_slabnum(slabnum, threadnum);
             }
         }
     }
@@ -364,59 +431,7 @@ impl Smalloc {
         debug_assert!(sc < NUM_SCS);
         (slabbp | const_shl_u32_usize(slotnum, sc)) as *mut u8
     }
-
- 
-    /// Allocate a slot from this slab by popping the free-list-head. Return the resulting pointer
-    /// as a usize, or null pointer (0) if this slab is full.
-    ///
-    /// `highestslotnum` is the slotnum of the sentinel slot (`numslots - 1`). It is also used to
-    /// compute numbers modulo `numslots` with `& highestslotnum` instead of with `% numslots`, and
-    /// it is used in `debug_asserts`.
-    #[inline(always)]
-    fn pop_slot_from_freelist(&self, slabbp: usize, flh: &AtomicU64, highestslotnum: u32, sc: u8) -> usize {
-        debug_assert!(sc >= NUM_UNUSED_SCS);
-        debug_assert!(sc < NUM_SCS);
-        debug_assert!(slabbp != 0);
-        debug_assert!((slabbp >= self.inner().smbp) && (slabbp <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
-        debug_assert!(help_trailing_zeros_usize(slabbp) >= NUM_SLOTNUM_AND_DATA_BITS);
-
-        loop {
-            // Load the value from the flh
-            let flhdword = flh.load(Acquire); // xxx weaker ordering constraints ok?
-            let curfirstentryslotnum = (flhdword & FLHDWORD_SLOTNUM_MASK) as u32;
-
-            // curfirstentryslotnum can be the sentinel value.
-            debug_assert!(curfirstentryslotnum <= highestslotnum);
-            if unlikely(curfirstentryslotnum == highestslotnum) {
-                // meaning no next entry, meaning the free list is empty
-                break 0
-            }
-
-            // Read the bits from the first entry's link and decode them into a slot number. These
-            // bits might be invalid, if the flh has changed since we read it above and another
-            // thread has started using these bits for something else (e.g. user data or another
-            // linked list update). That's okay because in that case our attempt to update the flh
-            // below with information derived from these bits will fail.
-            let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, sc);
-            let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
-            let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
-
-            // Write the new first entry slot num in place of the old in our local (in a register)
-            // copy of flhdword, leaving the push-counter bits unchanged.
-            let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
-            
-            // Compare and exchange
-            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
-	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
-                debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
-
-                break curfirstentry_p;
-            }
-        }
-    }
 }
-
-//xxx18use std::thread;
 
 #[inline(always)]
 fn highest_slotnum(sc: u8) -> u32 {
@@ -433,7 +448,7 @@ fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
     (flhdword & u32::MAX as u64) as u32
 }
 
-use std::hint::{likely, unlikely};
+use std::hint::unlikely;
 unsafe impl GlobalAlloc for Smalloc {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -593,6 +608,13 @@ const fn _const_one_shl_u32(shift: u8) -> u32 {
     debug_assert!((shift as u32) < u32::BITS);
 
     unsafe { 1u32.unchecked_shl(shift as u32) }
+}
+
+#[inline(always)]
+const fn const_one_shl_u8(shift: u8) -> u8 {
+    debug_assert!((shift as u32) < u8::BITS);
+
+    unsafe { 1u8.unchecked_shl(shift as u32) }
 }
 
 #[inline(always)]
