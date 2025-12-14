@@ -24,23 +24,6 @@ pub fn main() {
 
     println!("Using seed: {}", seed);
     
-    let l = Layout::from_size_align(32, 1).unwrap();
-    let sm = devutils::get_devsmalloc!();
-    devutils::dev_instance::setup();
-    multithread_hotspot(1, 100_000, "mthssm", sm, l);
-    multithread_hotspot(2, 100_000, "mthssm", sm, l);
-    multithread_hotspot(4, 100_000, "mthssm", sm, l);
-    multithread_hotspot(8, 100_000, "mthssm", sm, l);
-    multithread_hotspot(16, 100_000, "mthssm", sm, l);
-    multithread_hotspot(32, 100_000, "mthssm", sm, l);
-
-    println!();
-
-    //multithread_hotspot(200, 100_000, "mthssm", sm, l);
-    //multithread_hotspot(400, 100_000, "mthssm", sm, l);
-    //multithread_hotspot(800, 100_000, "mthssm", sm, l);
-
-
     if compare {
         compare_hs_bench!(1, 100_000);
         compare_hs_bench!(2, 100_000);
@@ -63,6 +46,18 @@ pub fn main() {
         compare_mt_bench!(aww, 512, 10_000, seed);
         compare_mt_bench!(a, 1024, 10_000, seed);
     } else {
+        let l = Layout::from_size_align(32, 1).unwrap();
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
+        multithread_hotspot(1, 100_000, "mthssm", sm, l);
+        multithread_hotspot(2, 100_000, "mthssm", sm, l);
+        multithread_hotspot(4, 100_000, "mthssm", sm, l);
+        multithread_hotspot(8, 100_000, "mthssm", sm, l);
+        multithread_hotspot(16, 100_000, "mthssm", sm, l);
+        multithread_hotspot(32, 100_000, "mthssm", sm, l);
+
+        println!();
+
         mt_bench!(adww, 1024, 10_000, seed);
         mt_bench!(ad, 1024, 10_000, seed);
         mt_bench!(adrww, 1024, 10_000, seed);
