@@ -51,7 +51,7 @@ pub fn bench_itered<F: FnMut()>(name: &str, iters: usize, mut f: F, clocktype: C
         f();
     }
     let elap = clock(clocktype) - start;
-    println!("name: {name}, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
+    println!("name: {name}, threads:        1, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
 }
 
 use thousands::Separable;
@@ -84,7 +84,7 @@ where
     let elap_ns = end - start;
     let nspi = elap_ns / iters;
     let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
-    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>13}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
 
@@ -113,7 +113,7 @@ where
     let nspi = elap_ns / iters;
     let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
     let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
-    println!("name: {name:>13}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
+    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
@@ -123,111 +123,109 @@ where
     elap_ns
 }
 
-// use std::alloc::{GlobalAlloc, Layout};
-// use std::sync::Barrier;
-// use std::thread;
-// use std::time::Instant;
+use std::sync::Barrier;
+use std::thread;
 
-// /// This is to stress test the case that one slab's flh is under heavy multi-threading contention
-// /// but the other slabs's flh's are not.
-// ///
-// /// Spawn 64 * `hotspot_threads` threads, each of which allocates one slot then blocks. All of the
-// /// ones that are the %64'th to first-allocate then get unblocked, and proceed to deallocate,
-// /// allocate, deallocate, allocate etc. `iters` times.
-// ///
-// /// Returns picoseconds per iter (not picoseconds per (iter * hotspot_threads), nor yet picoseconds
-// /// per (iter * total_threads)). picoseconds per iter
-// ///
-// /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-// pub fn multithread_hotspot<T>(hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
-// where
-//     T: GlobalAlloc + Send + Sync,
-// {
-//     // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
-//     const NUM_SLABS: usize = 64;
+/// This is to stress test the case that one slab's flh is under heavy multi-threading contention
+/// but the other slabs's flh's are not.
+///
+/// Spawn 64 * `hotspot_threads` threads, each of which allocates one slot then blocks. All of the
+/// ones that are the %64'th to first-allocate then get unblocked, and proceed to deallocate,
+/// allocate, deallocate, allocate etc. `iters` times.
+///
+/// Returns picoseconds per iter (not picoseconds per (iter * hotspot_threads), nor yet picoseconds
+/// per (iter * total_threads)). picoseconds per iter
+///
+/// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
+pub fn multithread_hotspot<T>(hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
+where
+    T: GlobalAlloc + Send + Sync,
+{
+    // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
+    const NUM_SLABS: usize = 64;
 
-//     let hotspot_threads = hotspot_threads as usize;
-//     let iters = iters as usize;
-//     let cool_threads_per_round: usize = NUM_SLABS - 1;
+    let hotspot_threads = hotspot_threads as usize;
+    let iters = iters as usize;
+    let cool_threads_per_round: usize = NUM_SLABS - 1;
 
-//     // One hot thread per 63 cool threads
-//     let total_threads: usize = hotspot_threads * (1 + cool_threads_per_round);
+    // One hot thread per 63 cool threads
+    let total_threads: usize = hotspot_threads * (1 + cool_threads_per_round);
 
-//     let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads)
-//         .map(|_| Barrier::new(2))
-//         .collect();
+    let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads)
+        .map(|_| Barrier::new(2))
+        .collect();
 
-//     let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads)
-//         .map(|_| Barrier::new(cool_threads_per_round + 1))
-//         .collect();
+    let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads)
+        .map(|_| Barrier::new(cool_threads_per_round + 1))
+        .collect();
 
-//     let setup_complete_barrier = Barrier::new(total_threads + 1);
-//     let hot_start_barrier = Barrier::new(hotspot_threads + 1);
-//     let hot_finish_barrier = Barrier::new(hotspot_threads + 1);
-//     let final_barrier = Barrier::new(total_threads + 1);
+    let setup_complete_barrier = Barrier::new(total_threads + 1);
+    let hot_start_barrier = Barrier::new(hotspot_threads + 1);
+    let hot_finish_barrier = Barrier::new(hotspot_threads + 1);
+    let final_barrier = Barrier::new(total_threads + 1);
 
-//     let elap_ns = thread::scope(|s| {
-//         for round in 0..hotspot_threads {
-//             // Spawn hot thread
-//             s.spawn(|| {
-//                 // Setup phase: initial allocation
-//                 let _ptr = unsafe { al.alloc(l) };
-//                 hot_done_barriers[round].wait();
+    let elap_ns = thread::scope(|s| {
+        for round in 0..hotspot_threads {
+            // Extract references before spawning
+            let hot_barrier = &hot_done_barriers[round];
+            let cool_barrier = &cool_done_barriers[round];
 
-//                 setup_complete_barrier.wait();
-//                 hot_start_barrier.wait();
+            // Spawn hot thread
+            s.spawn(|| {
+                let _ptr = unsafe { al.alloc(l) };
+                hot_barrier.wait();  // Use reference directly
 
-//                 // === Benchmarked operation ===
-//                 for _ in 0..iters {
-//                     let ptr = unsafe { al.alloc(l) };
-//                     unsafe { al.dealloc(ptr, l) };
-//                 }
-//                 // =============================
+                setup_complete_barrier.wait();
+                hot_start_barrier.wait();
 
-//                 hot_finish_barrier.wait();
-//                 final_barrier.wait();
-//             });
+                for _ in 0..iters {
+                    let ptr = unsafe { al.alloc(l) };
+                    unsafe { al.dealloc(ptr, l) };
+                }
 
-//             // Wait for hot thread's setup alloc
-//             hot_done_barriers[round].wait();
+                hot_finish_barrier.wait();
+                final_barrier.wait();
+            });
 
-//             // Spawn cool threads
-//             for _ in 0..cool_threads_per_round {
-//                 s.spawn(|| {
-//                     // Setup phase: initial allocation
-//                     let _ptr = unsafe { al.alloc(l) };
-//                     cool_done_barriers[round].wait();
-//                     setup_complete_barrier.wait();
-//                     final_barrier.wait();
-//                 });
-//             }
+            hot_barrier.wait();
 
-//             // Wait for all cool threads' setup allocs
-//             cool_done_barriers[round].wait();
-//         }
+            // Spawn cool threads
+            for _ in 0..cool_threads_per_round {
+                s.spawn(|| {
+                    let _ptr = unsafe { al.alloc(l) };
+                    cool_barrier.wait();  // Use reference directly
+                    setup_complete_barrier.wait();
+                    final_barrier.wait();
+                });
+            }
 
-//         setup_complete_barrier.wait();
+            cool_barrier.wait();
+        }
 
-//         // Start timing right before releasing hot threads
-//         let start = clock(libc::CLOCK_MONOTONIC_RAW);
-//         hot_start_barrier.wait();
-//         // Wait for all hot threads to finish
-//         hot_finish_barrier.wait();
-//         let end = clock(libc::CLOCK_MONOTONIC_RAW);
-//         assert!(end > start);
+        setup_complete_barrier.wait();
 
-//         end - start
-//     });
+        // Start timing right before releasing hot threads
+        let start = clock(libc::CLOCK_MONOTONIC_RAW);
+        hot_start_barrier.wait();
+        // Wait for all hot threads to finish
+        hot_finish_barrier.wait();
+        let end = clock(libc::CLOCK_MONOTONIC_RAW);
+        assert!(end > start);
 
-//     let elap_ps = elap_ns * 1000;
-//     let pspi = elap_ps / iters;
-//     let hundredpses = (pspi / 100) % 10;
-//     let nspi = pspi / 1000;
-//     println!("name: {name:>13}, hot threads: {:>5,} iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+        final_barrier.wait();
 
-//     pspi
-// }
-    
+        end - start
+    });
+
+    let elap_ps = elap_ns * 1000;
+    let pspi = elap_ps / iters as u64;
+    let hundredpses = (pspi / 100) % 10;
+    let nspi = pspi / 1000;
+    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+
+    pspi
+}
+
 #[macro_export]
     macro_rules! st_bench {
     ($func:path, $iters:expr, $seed:expr) => {{
@@ -240,9 +238,62 @@ where
         let f = |al: &smalloc::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
-        let sm_name = format!("sm {func_name}");
+        let sm_name = format!("sm st {func_name}");
         $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
 
+    }}
+}
+
+#[macro_export]
+    macro_rules! compare_hs_bench {
+    ($threads:expr, $iters:expr) => {{
+        let l = Layout::from_size_align(32, 1).unwrap();
+
+        let bi = $crate::GlobalAllocWrap;
+
+        let baseline_ns = (|al: &$crate::GlobalAllocWrap| {
+            $crate::multithread_hotspot($threads, $iters, "bi hs", al, l)
+        })(&bi);
+
+
+        let mm = mimalloc::MiMalloc;
+
+        let mm_ns = (|al: &mimalloc::MiMalloc| {
+            $crate::multithread_hotspot($threads, $iters, "mm hs", al, l)
+        })(&mm);
+
+
+        let jm = tikv_jemallocator::Jemalloc;
+
+        let jm_ns = (|al: &tikv_jemallocator::Jemalloc| {
+            $crate::multithread_hotspot($threads, $iters, "jm hs", al, l)
+        })(&jm);
+
+        
+        let nm = snmalloc_rs::SnMalloc;
+
+        let nm_ns = (|al: &snmalloc_rs::SnMalloc| {
+            $crate::multithread_hotspot($threads, $iters, "nm hs", al, l)
+        })(&nm);
+
+
+        let sm = devutils::get_devsmalloc!();
+        devutils::dev_instance::setup();
+
+        let sm_ns = (|al: &smalloc::Smalloc| {
+            $crate::multithread_hotspot($threads, $iters, "sm hs", al, l)
+        })(&sm);
+
+
+        let smbidiffperc = 100.0 * (sm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
+        let smmmdiffperc = 100.0 * (sm_ns as f64 - mm_ns as f64) / (mm_ns as f64);
+        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
+        let smjmdiffperc = 100.0 * (sm_ns as f64 - jm_ns as f64) / (jm_ns as f64);
+        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
+        let smnmdiffperc = 100.0 * (sm_ns as f64 - nm_ns as f64) / (nm_ns as f64);
+        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
+        println!("");
     }}
 }
 
@@ -274,7 +325,7 @@ where
                 let f = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
                     $func(al, s)
                 };
-                let bi_name = format!("bi {func_name}");
+                let bi_name = format!("bi st {func_name}");
                 baseline_ns = $crate::singlethread_bench(f, $iters, &bi_name, &bi, $seed); 
             });
             scope.spawn(|| { 
@@ -282,7 +333,7 @@ where
                 let f = |al: &mimalloc::MiMalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let mm_name = format!("mm {func_name}");
+                let mm_name = format!("mm st {func_name}");
                 mm_ns = $crate::singlethread_bench(f, $iters, &mm_name, &mm, $seed); 
             });
             scope.spawn(|| { 
@@ -290,7 +341,7 @@ where
                 let f = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let jm_name = format!("jm {func_name}");
+                let jm_name = format!("jm st {func_name}");
                 jm_ns = $crate::singlethread_bench(f, $iters, &jm_name, &jm, $seed); 
             });
             scope.spawn(|| { 
@@ -298,7 +349,7 @@ where
                 let f = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let nm_name = format!("nm {func_name}");
+                let nm_name = format!("nm st {func_name}");
                 nm_ns = $crate::singlethread_bench(f, $iters, &nm_name, &nm, $seed); 
             });
             scope.spawn(|| { 
@@ -306,15 +357,11 @@ where
                 let f = |al: &smalloc::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let sm_name = format!("sm {func_name}");
+                let sm_name = format!("sm st {func_name}");
                 candidat_ns = $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
             });
         });
 
-	//sm.dump_map_of_slabs();
-
-//        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-//        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
@@ -340,7 +387,7 @@ where
             $func(al, s)
         };
 
-        let sm_name = format!("sm {} {func_name}", $threads);
+        let sm_name = format!("sm mt {func_name}");
         $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
         // sm.dump_map_of_slabs();
@@ -359,7 +406,7 @@ where
             $func(al, s)
         };
 
-        let bi_name = format!("bi {} {func_name}", $threads);
+        let bi_name = format!("bi mt {func_name}");
         let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
 
 
@@ -370,7 +417,7 @@ where
             $func(al, s)
         };
 
-        let mm_name = format!("mm {} {func_name}", $threads);
+        let mm_name = format!("mm mt {func_name}");
         let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
 
 
@@ -381,7 +428,7 @@ where
             $func(al, s)
         };
 
-        let jm_name = format!("jm {} {func_name}", $threads);
+        let jm_name = format!("jm mt {func_name}");
         let jm_ns = $crate::multithread_bench(fjm, $threads, $iters, jm_name.as_str(), &jm, $seed);
 
         
@@ -392,7 +439,7 @@ where
             $func(al, s)
         };
 
-        let nm_name = format!("nm {} {func_name}", $threads);
+        let nm_name = format!("nm mt {func_name}");
         let nm_ns = $crate::multithread_bench(fnm, $threads, $iters, nm_name.as_str(), &nm, $seed);
 
 
@@ -404,13 +451,10 @@ where
             $func(al, s)
         };
 
-        let sm_name = format!("sm {} {func_name}", $threads);
+        let sm_name = format!("sm mt {func_name}");
         let candidat_ns = $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
 
-
-//        let mmbidiffperc = 100.0 * (mm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-//        println!("mimalloc diff from builtin: {mmbidiffperc:+4.0}%");
         let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
         println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
@@ -420,6 +464,5 @@ where
         let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
         println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
         println!("");
-        //sm.dump_map_of_slabs();
     }}
 }
