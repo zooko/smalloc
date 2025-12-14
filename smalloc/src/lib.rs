@@ -144,7 +144,6 @@ impl Default for Smalloc {
     }
 }
 
-use plat::prefetch_read;
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
@@ -408,9 +407,6 @@ impl Smalloc {
             
             // Compare and exchange
             if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
-	        // prefetch the next link (which is now the first link) in the free list
-		prefetch_read(Self::linkptr(slabbp, newfirstentryslotnum, sc));
-	        //xxx6 maybe compute this from curfirstentrylink_p?
 	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
                 debug_assert!((curfirstentry_p >= self.inner().smbp) && (curfirstentry_p <= (self.inner().smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
 

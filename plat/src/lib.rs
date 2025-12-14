@@ -62,29 +62,6 @@ pub mod p {
     }
 }
 
-#[inline(always)] // xxx experiment with removing
-pub fn prefetch_read<T>(ptr: *const T) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T0};
-        unsafe {
-            _mm_prefetch::<_MM_HINT_T0>(ptr as *const i8);
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use core::arch::aarch64::{_prefetch, _PREFETCH_READ, _PREFETCH_LOCALITY3};
-        unsafe { _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8) };
-    }
-
-    // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        // No-op on other architectures
-        let _ = ptr;
-    }
-}
-
 // for Windows, check out VirtualAllocEx with MEM_RESERVE flag: https://learn.microsoft.com/en-us/windows/win32/memory/page-state
 // https://stackoverflow.com/questions/15261527/how-can-i-reserve-virtual-memory-in-linux?rq=1
 //xxx look into VirtualAlloc on windows and the difference between "reserve" and "commit"...
