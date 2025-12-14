@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdarch_aarch64_prefetch))]
+
 // Abstract over system virtual memory functions
 
 #[derive(Debug)]
@@ -65,9 +66,9 @@ pub mod p {
 pub fn prefetch_read<T>(ptr: *const T) {
     #[cfg(target_arch = "x86_64")]
     {
-        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T2};
-	unsafe {
-            _mm_prefetch::<_MM_HINT_T2>(ptr as *const i8);
+        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T0};
+        unsafe {
+            _mm_prefetch::<_MM_HINT_T0>(ptr as *const i8);
         }
     }
 
@@ -76,29 +77,6 @@ pub fn prefetch_read<T>(ptr: *const T) {
         use core::arch::aarch64::{_prefetch, _PREFETCH_READ, _PREFETCH_LOCALITY3};
         unsafe { _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8) };
     }
-
-    // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        // No-op on other architectures
-        let _ = ptr;
-    }
-}
-
-#[inline(always)] // xxx experiment with removing
-pub fn _prefetch_write<T>(ptr: *const T) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use core::arch::x86_64::{_mm_prefetch,_MM_HINT_T2};
-	unsafe {
-	    _mm_prefetch::<_MM_HINT_T2>(ptr as *const i8);
-        }
-    }
-
-    // #[cfg(target_arch = "aarch64")]
-    // {
-    //     use core::arch::aarch64::_prefetch;
-    //     _prefetch::<_PREFETCH_READ, _PREFETCH_LOCALITY3>(ptr as *const i8);
-    // }
 
     // #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
