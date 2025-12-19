@@ -192,6 +192,7 @@ impl Default for Smalloc {
     }
 }
 
+use std::hint::likely;
 impl Smalloc {
     pub const fn new() -> Self {
         Self {
@@ -219,15 +220,9 @@ impl Smalloc {
 
         let mut threadnum: u32 = 42; // the 42 will never get used
         let mut loaded_threadnum: bool = false;
+        let mut a_slab_was_full = false;
 
         loop {
-            // xxx could compute the slabbp and flh location with modular adds of the right sizes instead of const_shl'ing after modular adds of the sc and slabnum...
-
-            // The slabbp is the smbp with the size class bits and the slabnum bits set.
-            let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
-            debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
-            debug_assert!(help_trailing_zeros_usize(slabbp) >= sc);
-
             // The flh is at this location:
             let flhptr = smbp | const_shl_u8_usize(slabnum, NUM_SC_BITS + FLHDWORD_SIZE_BITS) | const_shl_u8_usize(sc, FLHDWORD_SIZE_BITS);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
@@ -239,66 +234,75 @@ impl Smalloc {
             // curfirstentryslotnum can be the sentinel value.
             let highestslotnum = highest_slotnum(sc);
             debug_assert!(curfirstentryslotnum <= highestslotnum);
-            if unlikely(curfirstentryslotnum == highestslotnum) {
-                // ... meaning no next entry, meaning the free list is empty, meaning this slab is
-                // full. Overflow to a different slab in the same size class.
-                if !loaded_threadnum {
-                    threadnum = get_thread_num();
-                    loaded_threadnum = true;
+            if likely(curfirstentryslotnum < highestslotnum) {
+                // There is a slot available in the free list.
+                
+                // The slabbp is the smbp with the size class bits and the slabnum bits set.
+                let slabbp = smbp | const_shl_u8_usize(sc, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS) | const_shl_u8_usize(slabnum, NUM_SLOTNUM_AND_DATA_BITS);
+                debug_assert!((slabbp >= smbp) && (slabbp <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
+                debug_assert!(help_trailing_zeros_usize(slabbp) >= sc);
+
+                // Read the bits from the first entry's link and decode them into a slot number. These
+                // bits might be invalid, if the flh has changed since we read it above and another
+                // thread has started using these bits for something else (e.g. user data or another
+                // linked list update). That's okay because in that case our attempt to update the flh
+                // below with information derived from these bits will fail.
+                let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, sc);
+                let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
+                let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
+
+                // Write the new first entry slot num in place of the old in our local (in a register)
+                // copy of flhdword, leaving the push-counter bits unchanged.
+                let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
+
+                // Compare and exchange
+                if likely(flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok()) { // xxx weaker ordering constraints okay?
+	            let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
+                    debug_assert!((curfirstentry_p >= smbp) && (curfirstentry_p <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
+                    if unlikely(orig_slabnum != slabnum) {
+                        // Save the new slabnum for next time.
+                        set_slab_num(slabnum);
+                    }
+
+                    break curfirstentry_p as *mut u8;
+                } else {
+                    // Update collision on the flh. Fail over to a different slab in the same size
+                    // class.
+                    if likely(!loaded_threadnum) { threadnum = get_thread_num(); loaded_threadnum = true; }
+
+                    slabnum = failover_slabnum(slabnum, threadnum);
                 }
-
-                slabnum = failover_slabnum(slabnum, threadnum);
-
-                if unlikely(slabnum == orig_slabnum) {
-                    // ... meaning we've tried each slab in this size class and they were all either
-                    // full or encountered an flh update collision, so overflow to the next larger
-                    // size class.
-                    sc += 1;
-
-                    if unlikely(sc == NUM_SCS) {
-                        // This request exceeds our largest slot size, so we return null ptr.
-                        eprintln!("smalloc exhausted");
-                        self.dump_map_of_slabs(); // for debugging only -- should probably be removed
-                        break null_mut();
-                    };
-                }
-
-                continue;
-            }
-
-            // xxx could unpack the const shl from inside linkptr ??
-            // Read the bits from the first entry's link and decode them into a slot number. These
-            // bits might be invalid, if the flh has changed since we read it above and another
-            // thread has started using these bits for something else (e.g. user data or another
-            // linked list update). That's okay because in that case our attempt to update the flh
-            // below with information derived from these bits will fail.
-            let curfirstentrylink_p = Self::linkptr(slabbp, curfirstentryslotnum, sc);
-            let curfirstentrylink_v = unsafe { *curfirstentrylink_p };
-            let newfirstentryslotnum: u32 = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, highestslotnum);
-
-            // Write the new first entry slot num in place of the old in our local (in a register)
-            // copy of flhdword, leaving the push-counter bits unchanged.
-            let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
-
-            // Compare and exchange
-            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
-	        let curfirstentry_p = Self::slotptr(slabbp, curfirstentryslotnum, sc) as usize;
-                debug_assert!((curfirstentry_p >= smbp) && (curfirstentry_p <= (smbp + HIGHEST_SMALLOC_SLOT_ADDR)));
-                if orig_slabnum != slabnum {
-                    // Save the new slabnum for next time.
-                    set_slab_num(slabnum);
-                }
-
-                break curfirstentry_p as *mut u8;
             } else {
-                // Update collision on the flh. Fail over to a different slab in the same size
-                // class.
-                if !loaded_threadnum {
-                    threadnum = get_thread_num();
-                    loaded_threadnum = true;
-                }
+                // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
+                // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
+                // different slab in the same size class.œ
+                if likely(!loaded_threadnum) { threadnum = get_thread_num(); loaded_threadnum = true; }
 
                 slabnum = failover_slabnum(slabnum, threadnum);
+
+                if likely(slabnum != orig_slabnum) {
+                    // We have not necessarily cycled through all slabs in this sizeclass yet, so
+                    // keep trying, but make a note that at least one of the slabs in this sizeclass
+                    // was full.
+                    a_slab_was_full = true;
+                } else {
+                    // ... meaning we've tried each slab in this size class and each one was either
+                    // full or had an flh update collision. If at least one slab in this size class
+                    // was full, then overflow to the next larger size class. (Else, keep trying
+                    // different slabs in this size class.)
+                    if unlikely(a_slab_was_full) {
+                        if unlikely(sc == NUM_SCS - 1) {
+                            // This is the largest size class and we've exhausted at least one slab
+                            // in it.
+                            eprintln!("smalloc exhausted");
+                            //xxxself.dump_map_of_slabs(); // for debugging only -- should probably be removed
+                            break null_mut();
+                        };
+
+                        // Increment the sc
+                        sc += 1;
+                    }
+                }
             }
         }
     }
@@ -319,42 +323,42 @@ impl Smalloc {
         TOTAL_VIRTUAL_MEMORY
     }
 
-    /// For testing only. Do not use in production code.
-    fn dump_map_of_slabs(&self) {
-        let inner = self.inner();
+//    /// For testing only. Do not use in production code.
+//     fn dump_map_of_slabs(&self) {
+//         let inner = self.inner();
 
-        // Dump a map of the slabs
-        let mut fullslots = 0;
-        let mut fulltotsize = 0;
-        for sc in NUM_UNUSED_SCS..NUM_SCS {
-            let mut scfullslots = 0;
-            let mut scfulltotsize = 0;
+//         // Dump a map of the slabs
+//         let mut fullslots = 0;
+//         let mut fulltotsize = 0;
+//         for sc in NUM_UNUSED_SCS..NUM_SCS {
+//             let mut scfullslots = 0;
+//             let mut scfulltotsize = 0;
 
-            print!("{sc:2} ");
+//             print!("{sc:2} ");
 
-            let highestslotnum = highest_slotnum(sc);
-            let slotsize = 2u64.pow(sc as u32);
-            print!("slots: {}, slotsize: {}", highestslotnum, slotsize);
+//             let highestslotnum = highest_slotnum(sc);
+//             let slotsize = 2u64.pow(sc as u32);
+//             print!("slots: {}, slotsize: {}", highestslotnum, slotsize);
 
-            for slabnum in 0..NUM_SLABS {
-//                print!(" {slabnum}");
+//             for slabnum in 0..NUM_SLABS {
+// //                print!(" {slabnum}");
                 
-                let headelement = help_get_flh(inner.smbp, sc, slabnum);
-                if headelement == highestslotnum {
-                    // full
-                    print!("X");
-                    scfullslots += highestslotnum;
-                    scfulltotsize += (highestslotnum as u64) * slotsize;
-                } else {
-                    print!(".");
-                }
-            }
-            println!(" slots: {scfullslots} size: {scfulltotsize}");
-            fullslots += scfullslots;
-            fulltotsize += scfulltotsize;
-        }
-        println!(" totslots: {fullslots}, totsize: {fulltotsize}");
-    }
+//                 let headelement = help_get_flh(inner.smbp, sc, slabnum);
+//                 if headelement == highestslotnum {
+//                     // full
+//                     print!("X");
+//                     scfullslots += highestslotnum;
+//                     scfulltotsize += (highestslotnum as u64) * slotsize;
+//                 } else {
+//                     print!(".");
+//                 }
+//             }
+//             println!(" slots: {scfullslots} size: {scfulltotsize}");
+//             fullslots += scfullslots;
+//             fulltotsize += scfulltotsize;
+//         }
+//         println!(" totslots: {fullslots}, totsize: {fulltotsize}");
+//     }
 
     /// Initializes the allocator.
     ///
