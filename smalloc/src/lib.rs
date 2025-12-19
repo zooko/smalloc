@@ -158,10 +158,30 @@ struct SmallocInner {
 ///    possible slab numbers, but if they're relatively prime to each other then they'll be
 ///    minimally likely to recollide soon). This implies that d needs to be prime, which also
 ///    satisfies requirement 1 above.
+#[inline(always)]
 fn failover_slabnum(slabnum: u8, threadnum: u32) -> u8 {
-    const STEPS: [u8; 10] = [23, 29, 31, 37, 41, 43, 47, 53, 59, 61];
-    let ix = (threadnum as usize / NUM_SLABS as usize) % STEPS.len();
-    (slabnum + STEPS[ix]) % NUM_SLABS
+    const STEPS: [u8; 16] = [
+        61,
+        59,
+        53,
+        47,
+        43,
+        41,
+        37,
+        31,
+        29,
+        23,
+        19,
+        17,
+        13,
+        11,
+         7,
+         5,
+    ];
+
+    const STEPS_MASK: u8 = const_gen_mask_u8(4);
+    let ix: usize = (const_shr_u8_u8(threadnum as u8, 4) & STEPS_MASK) as usize;
+    (slabnum + STEPS[ix]) & SLABNUM_ALONE_MASK
 }
 
 unsafe impl Sync for Smalloc {}
@@ -639,6 +659,12 @@ const fn const_shr_usize_u8(value: usize, shift: u8) -> u8 {
     // No leaving 1 bits stranded up there
     debug_assert!(hlzu(res) as u32 >= usize::BITS - u8::BITS);
     res as u8
+}
+
+#[inline(always)]
+const fn const_shr_u8_u8(value: u8, shift: u8) -> u8 {
+    debug_assert!((shift as u32) < u8::BITS);
+    unsafe { value.unchecked_shr(shift as u32) }
 }
 
 #[inline(always)]
