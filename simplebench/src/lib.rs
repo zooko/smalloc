@@ -84,7 +84,7 @@ where
     let elap_ns = end - start;
     let nspi = elap_ns / iters;
     let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
-    println!("name: {name:>13}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>13}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
 
@@ -113,7 +113,7 @@ where
     let nspi = elap_ns / iters;
     let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
     let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
-    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
+    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
@@ -221,7 +221,7 @@ where
     let pspi = elap_ps / iters as u64;
     let hundredpses = (pspi / 100) % 10;
     let nspi = pspi / 1000;
-    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     pspi
 }

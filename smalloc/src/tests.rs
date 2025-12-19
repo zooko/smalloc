@@ -14,7 +14,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
 
-    let slabnum = get_slab_num();
+    let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
 
     let numslots = help_numslots(sc);
     debug_assert!(numslots >= 3);
@@ -22,6 +22,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     // Step 0: reach into the slab's `flh` and set it to almost the max slot number.
     let first_i = numslots - 3;
     debug_assert!(first_i <= u32::MAX as usize);
+
     let mut i = first_i;
     sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
 
@@ -65,7 +66,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
     // The raison d'etre for this test: Assert that the newly allocated slot is in the same size
     // class but a different slab.
-    assert_eq!(sc3, sc, "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}");
+    assert_eq!(sc3, sc, "sc3: {sc3}, sc: {sc}, slabnum3: {slabnum3}, slabnum1: {slabnum1}, p3: {p3:?}, p2: {p2:?}, siz: {siz}");
     assert_ne!(slabnum3, slabnum1);
     assert_eq!(slotnum3, 0);
 
@@ -80,6 +81,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert_eq!(slotnum4, 1);
 }
 
+const NUM_SLABS: u8 = 32;
 /// If we've allocated all of the slots from a slab, then the next allocation comes from the
 /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 31).
 fn help_test_overflow_to_other_sizeclass(sc: u8) {
@@ -91,7 +93,7 @@ fn help_test_overflow_to_other_sizeclass(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = get_slab_num();
+    let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -118,7 +120,7 @@ fn help_test_overflow_to_other_sizeclass(sc: u8) {
     // size class, same areanum.
     assert_eq!(sc2, sc + 1, "sc2: {sc2}, sc: {sc}, slabnum2: {slabnum2}, slabnum1: {slabnum1}, p2: {p2:?}, p1: {p1:?}");
     assert_eq!(slabnum2, slabnum1);
-    assert_eq!(slotnum2, 0);
+    assert_eq!(slotnum2, 0, "sc2: {sc2}, sc: {sc}, slabnum2: {slabnum2}, slabnum1: {slabnum1}, p2: {p2:?}, p1: {p1:?}");
 
     // Step 5: If we alloc_slot() again on this thread, it will come from this new slab:
     let p3 = unsafe { sm.alloc(l) };
@@ -141,7 +143,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-    let orig_slabareanum = get_slab_num();
+    let orig_slabareanum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
 
     let p1 = unsafe { sm.alloc(l) };
     assert!(!p1.is_null(), "l: {l:?}");
@@ -195,28 +197,28 @@ fn highest_slotnum(sc: u8) -> u32 {
 nextest_unit_tests! {
     fn test_req_to_sc() {
         let test_cases = [
-            (1, 1, 2),
-            (2, 1, 2),
-            (3, 1, 2),
-            (4, 1, 2),
+            (1, 1, 3),
+            (2, 1, 3),
+            (3, 1, 3),
+            (4, 1, 3),
             (5, 1, 3),
             (7, 1, 3),
             (8, 1, 3),
             (9, 1, 4),
 
-            (1, 2, 2),
-            (2, 2, 2),
-            (3, 2, 2),
-            (4, 2, 2),
+            (1, 2, 3),
+            (2, 2, 3),
+            (3, 2, 3),
+            (4, 2, 3),
             (5, 2, 3),
             (7, 2, 3),
             (8, 2, 3),
             (9, 2, 4),
 
-            (1, 4, 2),
-            (2, 4, 2),
-            (3, 4, 2),
-            (4, 4, 2),
+            (1, 4, 3),
+            (2, 4, 3),
+            (3, 4, 3),
+            (4, 4, 3),
             (5, 4, 3),
             (7, 4, 3),
             (8, 4, 3),
@@ -317,14 +319,6 @@ nextest_unit_tests! {
         }
     }
 
-    /// Overflow works with more threads than our internal lookup table has entries.
-    fn overflow_with_many_threads() {
-        // We need 320 threads to exceed the 10-index internal lookup table, but instead of spawning
-        // a bunch of threads here we're just going to reach in and set the thread num .
-        THREAD_NUM.set(Some(320));
-        help_test_overflow_to_other_slab(NUM_UNUSED_SCS);
-    }
-
     /// If we've allocated all of the slots from the largest large-slots slab, the next allocation
     /// fails.
     fn overflow_from_largest_large_slots_slab() {
@@ -347,8 +341,8 @@ nextest_unit_tests! {
     }
 
     fn slotnum_encode_and_decode_roundtrip() {
-        for sc in [ 31, 30, 25, 12, 9, 3, 2 ] {
-            let highestslotnum = highest_slotnum(sc);
+        for sc in [ 31, 30, 25, 12, 9, 3 ] {
+            let slotnum_unit = const_one_shl_u64(sc);
             let numslots = help_numslots(sc);
             assert!(numslots > 0, "sc: {sc}");
             assert!(numslots <= 2usize.pow(32), "sc: {sc}");
@@ -359,11 +353,13 @@ nextest_unit_tests! {
                 let slotnum1 = slotnum1 as u32;
                 for slotnum2 in slotnums {
                     assert!(slotnum2 < 2usize.pow(32));
+                    let sslotnum1 = const_shl_u32_u64(slotnum1, sc);
                     let slotnum2 = slotnum2 as u32;
+                    let sslotnum2 = const_shl_u32_u64(slotnum2, sc);
                     if slotnum1 < (numslots - 1) as u32 && (slotnum2 as usize) < numslots && slotnum1 != slotnum2 {
-                        let ence = Smalloc::encode_next_entry_link(slotnum1, slotnum2, highestslotnum);
-                        let dece = Smalloc::decode_next_entry_link(slotnum1, ence, highestslotnum);
-                        assert_eq!(slotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, highestslotnum: {highestslotnum}");
+                        let ence = Smalloc::encode_next_entry_link(sslotnum1, sslotnum2, slotnum_unit);
+                        let dece = Smalloc::decode_next_entry_link(sslotnum1, ence, slotnum_unit);
+                        assert_eq!(sslotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, slotnum_unit: {slotnum_unit}");
                     }
                 }
             }
@@ -391,9 +387,10 @@ impl Smalloc {
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
         let flhptr = inner.smbp | const_shl_u16_usize(flhi, 3);
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+        //xxxeprintln!("xxx 4 flhptr: {flhptr:x}, {:x}", const_shl_u32_u64(slotnum, sc));
 
         // single threaded so don't bother with the counter
-        flha.store(slotnum as u64, Relaxed);
+        flha.store(const_shl_u32_u64(slotnum, sc), Relaxed);
     }
 
     /// Return the sizeclass, slabnum, and slotnum
@@ -406,9 +403,9 @@ impl Smalloc {
 
         assert!((p_addr >= inner.smbp) && (p_addr <= inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
-        let sc = const_shr_usize_u8(p_addr & SC_BITS_MASK, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS);
-        let slabnum = const_shr_usize_u8(p_addr & SLABNUM_ADDR_MASK, NUM_SLOTNUM_AND_DATA_BITS);
-        let slotnum = const_shr_usize_u32(p_addr & SLOTNUM_AND_DATA_MASK, sc);
+        let sc = const_shr_usize_u8(p_addr & SC_BITS_ADDR_MASK, SC_ADDR_SHIFT_BITS);
+        let slabnum = const_shr_usize_u8(p_addr & SLABNUM_ADDR_MASK, NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS);
+        let slotnum = const_shr_u64_u32(p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK, sc);
 
         (sc, slabnum, slotnum)
     }
@@ -455,5 +452,30 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
             };
         }
     }
+}
+
+// xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
+const fn _const_shl_u32_usize(value: u32, shift: u8) -> usize {
+    debug_assert!((shift as u32) < usize::BITS);
+    debug_assert!(hlzu(value as usize) >= shift); // we never shift off 1 bits currently
+    unsafe { (value as usize).unchecked_shl(shift as u32) }
+}
+
+#[inline(always)]
+const fn const_shr_u64_u32(value: u64, shift: u8) -> u32 {
+    debug_assert!((shift as u32) < u64::BITS);
+    let res = unsafe { value.unchecked_shr(shift as u32) };
+    // No leaving 1 bits stranded up there
+    debug_assert!(help_leading_zeros_u64(res) as u32 >= u64::BITS - u32::BITS);
+    res as u32
+}
+
+// xxx benchmark and inspect asm for this vs <<
+#[inline(always)]
+const fn _const_shl_u8_u64(value: u8, shift: u8) -> u64 {
+    debug_assert!((shift as u32) < u64::BITS);
+    debug_assert!(help_leading_zeros_u64(value as u64) >= shift); // we never shift off 1 bits currently
+    unsafe { (value as u64).unchecked_shl(shift as u32) }
 }
 

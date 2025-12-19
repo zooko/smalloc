@@ -348,7 +348,8 @@ where
 use std::cmp::max;
 fn gen_layouts() -> [Layout; NUMLAYOUTS] {
     let mut ls = Vec::new();
-    for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000] {
+    //for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000] {
+    for siz in [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 32, 32, 35, 64, 8_000] {
         ls.push(Layout::from_size_align(siz, 1).unwrap());
 
         ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
@@ -392,7 +393,7 @@ impl<T> VecUncheckedExt<T> for Vec<T> {
 
 
 const NUMCOINS: usize = 1024;
-const NUMLAYOUTS: usize = 57;
+const NUMLAYOUTS: usize = 101;
 use std::collections::HashSet;
 pub struct TestState {
     coins: [u32; NUMCOINS],

@@ -20,6 +20,8 @@
 // 2025-11-30: The current smalloc (v6.1.0) requires 70,360,154,259,455 bytes.
 //
 // 2025-12-11: The current smalloc (v7.1.0) requires 70,360,449,210,367 bytes.
+// 
+// 2025-12-16: The current smalloc (v7.2.0) requires 70,366,596,694,014 bytes.
 
 
 #[cfg(any(target_os = "linux", doc))]

@@ -10,6 +10,7 @@ nextest_integration_tests! {
     fn one_alloc_and_dealloc_medium() {
         let l = Layout::from_size_align(120, 4).unwrap();
         let p = unsafe { get_devsmalloc!().alloc(l) };
+        assert!(!p.is_null());
         unsafe { get_devsmalloc!().dealloc(p, l) };
     }
 
