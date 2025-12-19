@@ -43,7 +43,6 @@ const NUM_UNUSED_SCS: u8 = 2;//xxx visit all uses and try to simplify
 const UNUSED_SC_MASK: usize = const_one_shl_usize(NUM_UNUSED_SCS - 1);
 
 // See the ASCII-art map in `README.md` for where these bit masks fit in.
-const NUM_SLABS: u8 = 2u8.pow(NUM_SLABS_BITS as u32); // 64
 const NUM_SCS: u8 = const_one_shl_u8(NUM_SC_BITS); // 32
 const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_SCS + NUM_UNUSED_SCS; // 34
 const NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS + NUM_SLABS_BITS; // 40
@@ -460,16 +459,6 @@ impl Smalloc {
 #[inline(always)]
 fn highest_slotnum(sc: u8) -> u32 {
     const_gen_mask_u32(NUM_SLOTNUM_AND_DATA_BITS - sc)
-}
-
-fn help_get_flh(flhbp: usize, sc: u8, slabnum: u8) -> u32 {
-    debug_assert!(sc >= NUM_UNUSED_SCS);
-    debug_assert!(sc < NUM_SCS);
-    let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-    let flhptr = flhbp | const_shl_u16_usize(flhi, 3);
-    let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-    let flhdword = flha.load(Relaxed);
-    (flhdword & u32::MAX as u64) as u32
 }
 
 use std::hint::unlikely;

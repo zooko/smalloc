@@ -25,52 +25,41 @@ pub fn main() {
     println!("Using seed: {}", seed);
     
     if compare {
-        compare_hs_bench!(1, 100_000);
-        compare_hs_bench!(2, 100_000);
-        compare_hs_bench!(4, 100_000);
-        compare_hs_bench!(8, 100_000);
-        compare_hs_bench!(16, 100_000);
-        compare_hs_bench!(32, 100_000);
+        compare_hs_bench!(64, 100_000);
+
+        println!();
+
         compare_mt_bench!(adww, 1024, 10_000, seed);
         compare_mt_bench!(ad, 1024, 10_000, seed);
-        compare_mt_bench!(adrww, 1024, 10_000, seed);
-        compare_mt_bench!(adrww, 32, 300_000, seed);
-        compare_mt_bench!(adrww, 4, 600_000, seed);
+        compare_mt_bench!(adrww, 4096, 10_000, seed);
         compare_mt_bench!(adr, 1024, 10_000, seed);
-        compare_st_bench!(aww, 1_000_000, seed);
-        compare_st_bench!(a, 1_000_000, seed);
         compare_st_bench!(adww, 1_000_000, seed);
         compare_st_bench!(ad, 1_000_000, seed);
         compare_st_bench!(adrww, 1_000_000, seed);
         compare_st_bench!(adr, 1_000_000, seed);
-        compare_mt_bench!(aww, 512, 10_000, seed);
-        compare_mt_bench!(a, 1024, 10_000, seed);
+        compare_st_bench!(aww, 1_000_000, seed);
+        compare_st_bench!(a, 1_000_000, seed);
+        compare_mt_bench!(aww, 512, 1_000, seed);
+        compare_mt_bench!(a, 1024, 1_000, seed);
     } else {
         let l = Layout::from_size_align(32, 1).unwrap();
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
-        multithread_hotspot(1, 100_000, "mthssm", sm, l);
-        multithread_hotspot(2, 100_000, "mthssm", sm, l);
-        multithread_hotspot(4, 100_000, "mthssm", sm, l);
-        multithread_hotspot(8, 100_000, "mthssm", sm, l);
-        multithread_hotspot(16, 100_000, "mthssm", sm, l);
-        multithread_hotspot(32, 100_000, "mthssm", sm, l);
+        multithread_hotspot(64, 100_000, "mthssm", sm, l);
 
         println!();
 
         mt_bench!(adww, 1024, 10_000, seed);
         mt_bench!(ad, 1024, 10_000, seed);
-        mt_bench!(adrww, 1024, 10_000, seed);
-        mt_bench!(adrww, 32, 300_000, seed);
-        mt_bench!(adrww, 4, 600_000, seed);
+        mt_bench!(adrww, 4096, 10_000, seed);
         mt_bench!(adr, 1024, 10_000, seed);
-        st_bench!(aww, 1_000_000, seed);
-        st_bench!(a, 1_000_000, seed);
         st_bench!(adww, 1_000_000, seed);
         st_bench!(ad, 1_000_000, seed);
         st_bench!(adrww, 1_000_000, seed);
         st_bench!(adr, 1_000_000, seed);
-        mt_bench!(aww, 512, 10_000, seed);
-        mt_bench!(a, 1024, 10_000, seed);
+        st_bench!(aww, 1_000_000, seed);
+        st_bench!(a, 1_000_000, seed);
+        mt_bench!(aww, 512, 1_000, seed);
+        mt_bench!(a, 1024, 1_000, seed);
     }
 }
