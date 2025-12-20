@@ -320,9 +320,9 @@ nextest_unit_tests! {
         }
     }
 
-    /// If we've allocated all of the slots from the largest large-slots slab, the next allocation
-    /// fails.
-    fn overflow_from_largest_large_slots_slab() {
+    /// If we've allocated all of the slots from all of the largest large-slots slabs, the next
+    /// allocation will fail.
+    fn overflow_from_all_largest_large_slots_slabs() {
         let sm = get_testsmalloc!();
 
         let sc = NUM_SCS - 1;
@@ -339,6 +339,28 @@ nextest_unit_tests! {
         // Step 1: allocate a slot
         let p1 = unsafe { sm.alloc(l) };
         assert!(p1.is_null(), "p1: {p1:?}, sc: {sc}, l: {l:?}");
+    }
+
+    /// If we've allocated all of the slots from one of the largest large-slots slab, the next
+    /// allocation will come from another one.
+    fn overflow_from_one_largest_large_slots_slab() {
+        let sm = get_testsmalloc!();
+
+        let sc = NUM_SCS - 1;
+        let siz = help_slotsize(sc);
+        let l = Layout::from_size_align(siz, 1).unwrap();
+
+        let highestslotnum = highest_slotnum(sc);
+
+        // Step 0: reach into the current slab's `flh` and set it to the max slot number.
+        let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
+        sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
+
+        // Step 1: allocate a slot
+        let p1 = unsafe { sm.alloc(l) };
+        assert!(!p1.is_null(), "p1: {p1:?}, sc: {sc}, l: {l:?}");
+        let (sc1, _slabnum1, _slotnum1) = sm.help_ptr_to_loc(p1, l);
+        assert_eq!(sc1, sc);
     }
 
     fn slotnum_encode_and_decode_roundtrip() {
