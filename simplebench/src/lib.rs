@@ -84,7 +84,7 @@ where
     let elap_ns = end - start;
     let nspi = elap_ns / iters;
     let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
-    println!("name: {name:>13}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
 
@@ -113,7 +113,7 @@ where
     let nspi = elap_ns / iters;
     let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
     let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
-    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
@@ -142,7 +142,7 @@ where
     T: GlobalAlloc + Send + Sync,
 {
     // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
-    const NUM_SLABS: usize = 64;
+    const NUM_SLABS: usize = 32;
 
     let hotspot_threads = hotspot_threads as usize;
     let iters = iters as usize;
@@ -221,7 +221,7 @@ where
     let pspi = elap_ps / iters as u64;
     let hundredpses = (pspi / 100) % 10;
     let nspi = pspi / 1000;
-    println!("name: {name:>13}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     pspi
 }
@@ -238,7 +238,7 @@ where
         let f = |al: &smalloc::Smalloc, s: &mut TestState| {
             $func(al, s)
         };
-        let sm_name = format!("sm st {func_name}");
+        let sm_name = format!("sm_st_{func_name}-1");
         $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
 
     }}
@@ -325,7 +325,7 @@ where
                 let f = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
                     $func(al, s)
                 };
-                let bi_name = format!("bi st {func_name}");
+                let bi_name = format!("bi_st_{func_name}-1");
                 baseline_ns = $crate::singlethread_bench(f, $iters, &bi_name, &bi, $seed); 
             });
             scope.spawn(|| { 
@@ -333,7 +333,7 @@ where
                 let f = |al: &mimalloc::MiMalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let mm_name = format!("mm st {func_name}");
+                let mm_name = format!("mm_st_{func_name}-1");
                 mm_ns = $crate::singlethread_bench(f, $iters, &mm_name, &mm, $seed); 
             });
             scope.spawn(|| { 
@@ -341,7 +341,7 @@ where
                 let f = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let jm_name = format!("jm st {func_name}");
+                let jm_name = format!("jm_st_{func_name}-1");
                 jm_ns = $crate::singlethread_bench(f, $iters, &jm_name, &jm, $seed); 
             });
             scope.spawn(|| { 
@@ -349,7 +349,7 @@ where
                 let f = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let nm_name = format!("nm st {func_name}");
+                let nm_name = format!("nm_st_{func_name}-1");
                 nm_ns = $crate::singlethread_bench(f, $iters, &nm_name, &nm, $seed); 
             });
             scope.spawn(|| { 
@@ -357,7 +357,7 @@ where
                 let f = |al: &smalloc::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
-                let sm_name = format!("sm st {func_name}");
+                let sm_name = format!("sm_st_{func_name}-1");
                 candidat_ns = $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
             });
         });
@@ -387,7 +387,7 @@ where
             $func(al, s)
         };
 
-        let sm_name = format!("sm mt {func_name}");
+        let sm_name = format!("sm_mt_{func_name}-{}", $threads);
         $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
         // sm.dump_map_of_slabs();
@@ -406,7 +406,7 @@ where
             $func(al, s)
         };
 
-        let bi_name = format!("bi mt {func_name}");
+        let bi_name = format!("bi_mt_{func_name}-{}", $threads);
         let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
 
 
@@ -417,7 +417,7 @@ where
             $func(al, s)
         };
 
-        let mm_name = format!("mm mt {func_name}");
+        let mm_name = format!("mm_mt_{func_name}-{}", $threads);
         let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
 
 
@@ -428,7 +428,7 @@ where
             $func(al, s)
         };
 
-        let jm_name = format!("jm mt {func_name}");
+        let jm_name = format!("jm_mt_{func_name}-{}", $threads);
         let jm_ns = $crate::multithread_bench(fjm, $threads, $iters, jm_name.as_str(), &jm, $seed);
 
         
@@ -439,7 +439,7 @@ where
             $func(al, s)
         };
 
-        let nm_name = format!("nm mt {func_name}");
+        let nm_name = format!("nm_mt_{func_name}-{}", $threads);
         let nm_ns = $crate::multithread_bench(fnm, $threads, $iters, nm_name.as_str(), &nm, $seed);
 
 
@@ -451,7 +451,7 @@ where
             $func(al, s)
         };
 
-        let sm_name = format!("sm mt {func_name}");
+        let sm_name = format!("sm_mt_{func_name}-{}", $threads);
         let candidat_ns = $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
 
 

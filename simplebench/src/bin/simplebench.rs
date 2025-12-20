@@ -24,42 +24,88 @@ pub fn main() {
 
     println!("Using seed: {}", seed);
     
+    const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 32;
+    const THREADS_WAY_TOO_MANY: u32 = 1024;
+
+    // for benchmarks that are going to re-use space
+    const ITERS_MANY: u64 = 1_000_000;
+
+    // for benchmarks that are not going to re-use space, so they'll run out of space if we do
+    // ITERS_MANY
+    const ITERS_FEW: u64 = 10_000;
+
     if compare {
-        compare_hs_bench!(64, 100_000);
+        // This benchmark simulates a somewhat plausible scenario, which is a worst-case-scenario
+        // for smalloc before v7.2, when a bunch of threads are all trying to alloc/dealloc from the
+        // same slab. This benchmark is structured specifically to exerise smalloc's hotspot: every
+        // 64'th thread is active and the intervening 63 are quiescent, because every 64'th thread
+        // will get mapped to the same slab by smalloc. So it doesn't make a whole lot of sense to
+        // compare smalloc's performance on this particular benchmark to the performance of other
+        // allocators, which presumably have different hotspots/worst-case-scenarios.
+        compare_hs_bench!(THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY);
 
-        println!();
+        // These benchmarks with 1024 threads are worst-case-scenarios. This is the case that there
+        // are more threads than cores *and* every thread is hammering on the allocator as fast as
+        // it can. This is not something to optimize for at the cost of performance in other cases,
+        // because the user code shouldn't do that. However, we do want to benchmark it, partially
+        // just in order to look for pathological behavior in smalloc, and also in order to optimize
+        // it if we can do so without penalizing other cases. In particular smalloc v7.2 made it so
+        // on flh-collision, alloc fails over to another slab. This substantially xxxx hmm well
+        // actually why is it still slower in single-threaded tests... *thinky face*
+        
+        compare_mt_bench!(adrww, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        compare_st_bench!(adrww, ITERS_FEW, seed);
 
-        compare_mt_bench!(adww, 1024, 10_000, seed);
-        compare_mt_bench!(ad, 1024, 10_000, seed);
-        compare_mt_bench!(adrww, 4096, 10_000, seed);
-        compare_mt_bench!(adr, 1024, 10_000, seed);
-        compare_st_bench!(adww, 1_000_000, seed);
-        compare_st_bench!(ad, 1_000_000, seed);
-        compare_st_bench!(adrww, 1_000_000, seed);
-        compare_st_bench!(adr, 1_000_000, seed);
-        compare_st_bench!(aww, 1_000_000, seed);
-        compare_st_bench!(a, 1_000_000, seed);
-        compare_mt_bench!(aww, 512, 1_000, seed);
-        compare_mt_bench!(a, 1024, 1_000, seed);
+        compare_mt_bench!(adr, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        compare_st_bench!(adr, ITERS_FEW, seed);
+
+        compare_mt_bench!(adww, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        compare_st_bench!(adww, ITERS_FEW, seed);
+
+        compare_mt_bench!(ad, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        compare_st_bench!(ad, ITERS_FEW, seed);
+
+        compare_mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, seed);
+        compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, seed);
+        compare_st_bench!(aww, ITERS_FEW, seed);
+
+        compare_mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, seed);
+        compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, seed);
+        compare_st_bench!(a, ITERS_FEW, seed);
     } else {
         let l = Layout::from_size_align(32, 1).unwrap();
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
-        multithread_hotspot(64, 100_000, "mthssm", sm, l);
+        multithread_hotspot(THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, "mthssm", sm, l);
 
         println!();
 
-        mt_bench!(adww, 1024, 10_000, seed);
-        mt_bench!(ad, 1024, 10_000, seed);
-        mt_bench!(adrww, 4096, 10_000, seed);
-        mt_bench!(adr, 1024, 10_000, seed);
-        st_bench!(adww, 1_000_000, seed);
-        st_bench!(ad, 1_000_000, seed);
-        st_bench!(adrww, 1_000_000, seed);
-        st_bench!(adr, 1_000_000, seed);
-        st_bench!(aww, 1_000_000, seed);
-        st_bench!(a, 1_000_000, seed);
-        mt_bench!(aww, 512, 1_000, seed);
-        mt_bench!(a, 1024, 1_000, seed);
+        mt_bench!(adrww, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        st_bench!(adrww, ITERS_MANY, seed);
+
+        mt_bench!(adr, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        st_bench!(adr, ITERS_MANY, seed);
+
+        mt_bench!(adww, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        st_bench!(adww, ITERS_MANY, seed);
+
+        mt_bench!(ad, THREADS_WAY_TOO_MANY, ITERS_MANY, seed);
+        mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, seed);
+        st_bench!(ad, ITERS_MANY, seed);
+
+        mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, seed);
+        mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, seed);
+        st_bench!(aww, ITERS_FEW, seed);
+
+        mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, seed);
+        mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, seed);
+        st_bench!(a, ITERS_FEW, seed);
     }
 }
