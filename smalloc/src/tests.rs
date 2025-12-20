@@ -81,7 +81,8 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert_eq!(slotnum4, 1);
 }
 
-const NUM_SLABS: u8 = 32;
+const NUM_SLABS: u8 = const_one_shl_u8(NUM_SLABS_BITS);
+
 /// If we've allocated all of the slots from a slab, then the next allocation comes from the
 /// next-bigger slab. This test doesn't work on the biggest sizeclass (sc 31).
 fn help_test_overflow_to_other_sizeclass(sc: u8) {

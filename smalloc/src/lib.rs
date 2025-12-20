@@ -27,7 +27,7 @@
 const NUM_SC_BITS: u8 = 5;
 
 // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
-const NUM_SLABS_BITS: u8 = 5;
+pub(crate) const NUM_SLABS_BITS: u8 = 5;
 
 // The first three size classes (which would hold 1-byte, 2-byte, and 4-byte slots) are not used. In
 // fact, we re-use the unused space in size class 0 to hold flh's.
@@ -163,8 +163,8 @@ struct SmallocInner {
 /// Which new slabnumber shall we fail over to? A certain number, d, added to the current slab
 /// number, and d should have these properties:
 ///
-/// 1. It should be relatively prime to NUM_SLABS so that we will try all slabs before returning to
-///    the original one.
+/// 1. It should be relatively prime to the number of slabs so that we will try all slabs before
+///    returning to the original one.
 ///
 /// 2. It should use the information from the thread number, not just the (strictly lesser)
 ///    information from the original slab number.
@@ -362,7 +362,7 @@ impl Smalloc {
                     // was full, then overflow to the next larger size class. (Else, keep trying
                     // different slabs in this size class.)
                     if unlikely(a_slab_was_full) {
-                        if unlikely(slnsc & SC_FLH_ADDR_MASK == SC_FLH_ADDR_MASK) {
+                        if unlikely((slnsc & SC_FLH_ADDR_MASK) == SC_FLH_ADDR_MASK) {
                             // This is the largest size class and we've exhausted at least one slab
                             // in it.
                             eprintln!("smalloc exhausted");
@@ -416,7 +416,7 @@ impl Smalloc {
 //             let slotsize = 2u64.pow(sc as u32);
 //             print!("slots: {}, slotsize: {}", highestslotnum, slotsize);
 
-//             for slabnum in 0..NUM_SLABS {
+//             for slabnum in 0..const_one_shl_u8(NUM_SLABS_BITS) {
 // //                print!(" {slabnum}");
                 
 //                 let headelement = help_get_flh(inner.smbp, sc, slabnum);
