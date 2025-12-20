@@ -101,7 +101,6 @@ const SLNSC_SHIFT_FLH_TO_DATA: u8 = SC_ADDR_SHIFT_BITS - FLHDWORD_SIZE_BITS;
 
 use std::sync::atomic::{AtomicU8, AtomicU64};
 use std::cell::Cell;
-use std::sync::atomic::Ordering::Relaxed;
 
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
 
@@ -239,7 +238,7 @@ impl Smalloc {
 
         loop {
             // Load the value (current first entry slot num) from the flh
-            let flhdword = flh.load(Acquire);
+            let flhdword = flh.load(Relaxed);
             let curfirstentryslotnum = flhdword & SLOTNUM_AND_DATA_ADDR_MASK;
             debug_assert!(help_trailing_zeros_u64(curfirstentryslotnum) >= sc);
             debug_assert!(newslotnum != curfirstentryslotnum);
@@ -261,7 +260,7 @@ impl Smalloc {
             let newflhdword = counter | newslotnum;
 
             // Compare and exchange
-            if flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok() { // xxx weaker ordering constraints okay?
+            if flh.compare_exchange_weak(flhdword, newflhdword, Release, Relaxed).is_ok() {
                 break;
             }
         }
@@ -297,7 +296,7 @@ impl Smalloc {
             // Load the value from the flh
             let flhptr = smbp | slnsc;
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-            let flhdword = flh.load(Acquire); // xxx weaker ordering constraints ok?
+            let flhdword = flh.load(Acquire);
             let curfirstentryslotnum = flhdword & SLOTNUM_AND_DATA_ADDR_MASK;
             debug_assert!(help_trailing_zeros_u64(curfirstentryslotnum) >= const_shr_usize_u8(slnsc & SC_FLH_ADDR_MASK, FLHDWORD_SIZE_BITS));
 
@@ -327,7 +326,7 @@ impl Smalloc {
                 let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
 
                 // Compare and exchange
-                if likely(flh.compare_exchange(flhdword, newflhdword, AcqRel, Acquire).is_ok()) { // xxx weaker ordering constraints okay?
+                if likely(flh.compare_exchange_weak(flhdword, newflhdword, Acquire, Relaxed).is_ok()) { 
                     debug_assert!(help_trailing_zeros_u64(newfirstentryslotnum) >= const_shr_usize_u8(slnsc & SC_FLH_ADDR_MASK, FLHDWORD_SIZE_BITS));
                     if unlikely(orig_slabnum_for_flhp != (slnsc & SLABNUM_FLH_ADDR_MASK)) {
                         // The slabnum changed. Save the new slabnum for next time.
@@ -586,7 +585,7 @@ unsafe impl GlobalAlloc for Smalloc {
 // utility functions
 
 use core::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::Ordering::{AcqRel, Acquire};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use plat::p::sys_alloc;
 use std::ptr::{copy_nonoverlapping, null_mut};
 
