@@ -1,5 +1,3 @@
-#![cfg_attr(target_arch = "aarch64", feature(stdarch_aarch64_prefetch))]
-
 // Abstract over system virtual memory functions
 
 #[derive(Debug)]

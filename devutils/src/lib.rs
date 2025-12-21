@@ -482,7 +482,6 @@ impl TestState {
         debug_assert!(self.nextp < self.ps.len());
         debug_assert!(!self.ps.is_empty());
         let (u, l) = unsafe { self.ps.swap_remove_unchecked(self.nextp) };
-        // xxx prefetch
         if likely(!self.ps.is_empty()) {
             if self.nextp.is_multiple_of(1000) {
                 self.nextp = self.next_coin() as usize % self.ps.len();
