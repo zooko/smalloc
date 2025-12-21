@@ -280,6 +280,13 @@ where
             $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
         })(&nm);
 
+        let rp = rpmalloc::RpMalloc;
+
+        let rp_ns = (|al: &rpmalloc::RpMalloc| {
+            let name = format!("rp_hs_{func_name}-{}", $threads);
+            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
+        })(&rp);
+
 
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
@@ -298,6 +305,8 @@ where
         println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
         let smnmdiffperc = 100.0 * (sm_ns as f64 - nm_ns as f64) / (nm_ns as f64);
         println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
+        let smrpdiffperc = 100.0 * (sm_ns as f64 - rp_ns as f64) / (rp_ns as f64);
+        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
         println!("");
     }}
 }
@@ -312,6 +321,7 @@ where
         let mut mm_ns = 42;
         let mut jm_ns = 42;
         let mut nm_ns = 42;
+        let mut rp_ns = 42;
 
         let bi = $crate::GlobalAllocWrap;
 
@@ -320,6 +330,8 @@ where
         let jm = tikv_jemallocator::Jemalloc;
 
         let nm = snmalloc_rs::SnMalloc;
+
+        let rp = rpmalloc::RpMalloc;
 
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
@@ -359,6 +371,14 @@ where
             });
             scope.spawn(|| { 
                 // Create a closure that specifies the type
+                let f = |al: &rpmalloc::RpMalloc, s: &mut TestState| {
+                    $func(al, s)
+                };
+                let rp_name = format!("rp_st_{func_name}-1");
+                rp_ns = $crate::singlethread_bench(f, $iters, &rp_name, &rp, $seed); 
+            });
+            scope.spawn(|| { 
+                // Create a closure that specifies the type
                 let f = |al: &smalloc::Smalloc, s: &mut TestState| {
                     $func(al, s)
                 };
@@ -375,6 +395,8 @@ where
         println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
         let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
         println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
+        let smrpdiffperc = 100.0 * (candidat_ns as f64 - rp_ns as f64) / (rp_ns as f64);
+        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
         println!("");
     }}
 }
@@ -448,6 +470,17 @@ where
         let nm_ns = $crate::multithread_bench(fnm, $threads, $iters, nm_name.as_str(), &nm, $seed);
 
 
+        let rp = rpmalloc::RpMalloc;
+
+        // create a closure that specifies the type
+        let frp = |al: &rpmalloc::RpMalloc, s: &mut TestState| {
+            $func(al, s)
+        };
+
+        let rp_name = format!("rp_mt_{func_name}-{}", $threads);
+        let rp_ns = $crate::multithread_bench(frp, $threads, $iters, rp_name.as_str(), &rp, $seed);
+
+
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
@@ -468,6 +501,8 @@ where
         println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
         let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
         println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
+        let smrpdiffperc = 100.0 * (candidat_ns as f64 - rp_ns as f64) / (rp_ns as f64);
+        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
         println!("");
     }}
 }
