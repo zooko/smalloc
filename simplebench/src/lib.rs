@@ -1,9 +1,13 @@
+// Thanks to Claude Opus 4.5 for refactoring this entire file with me.
+
 mod platform;
 use platform::ClockType;
 use std::mem::MaybeUninit;
 
 use std::alloc::GlobalAlloc;
 pub struct GlobalAllocWrap;
+
+pub use thousands::Separable;
 
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
@@ -50,7 +54,6 @@ pub fn bench_itered<F: FnMut()>(name: &str, iters: usize, mut f: F, clocktype: C
     println!("name: {name}, threads:        1, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
 }
 
-use thousands::Separable;
 #[inline(never)]
 pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
     let start = clock(clocktype);
@@ -82,8 +85,6 @@ where
     let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
     println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
-    // println!("num popped out of 8 cache: {}, num popped out of 512 cache: {}", s.num_popped_out_of_8_cache, s.num_popped_out_of_512_cache);
-
     s.clean_up(al);
 
     elap_ns
@@ -102,20 +103,19 @@ where
     let start = clock(libc::CLOCK_MONOTONIC_RAW);
 
     help_test_multithreaded_with_allocator(bf, threads, iters, al, &mut tses);
-    
+
     let end = clock(libc::CLOCK_MONOTONIC_RAW);
     assert!(end > start);
     let elap_ns = end - start;
     let nspi = elap_ns / iters;
-    let fstr = format!("{:.1}", elap_ns as f64 / iters as f64);
-    let nspi_sub_str = &fstr[fstr.find('.').unwrap()..];
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}{}", threads, iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas(), nspi_sub_str);
+    let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
         ts.clean_up(al);
     }
-    
+
     elap_ns
 }
 
@@ -224,285 +224,263 @@ where
     pspi
 }
 
-#[macro_export]
-    macro_rules! st_bench {
-    ($func:path, $iters:expr, $seed:expr) => {{
-        let func_name = stringify!($func);
+/// Print comparison percentages
+pub fn print_comparisons(candidate_ns: u64, baselines: &[(&str, u64)]) {
+    for (name, baseline_ns) in baselines {
+        let diff_perc = 100.0 * (candidate_ns as f64 - *baseline_ns as f64) / (*baseline_ns as f64);
+        println!("smalloc diff from {:>8}: {:+4.0}%", name, diff_perc);
+    }
+    println!();
+}
 
+// ============================================================================
+// ALLOCATOR REGISTRY - Add new allocators here!
+// ============================================================================
+//
+// Each allocator entry is: (short_name, display_name, constructor, setup_block)
+//
+// - short_name: Used for benchmark output prefixes (e.g., "mm" -> "mm_st_funcname-1")  
+// - display_name: Used in comparison output (e.g., "smalloc diff from mimalloc: +5%")
+// - constructor: Expression that creates the allocator instance
+// - setup_block: Code to run after construction (use {} for none)
+//
+// The LAST entry is treated as the "candidate" (the one being compared against others).
+
+#[macro_export]
+macro_rules! with_all_allocators {
+    ($($macro_path:tt)::+ ! ( $($args:tt)* )) => {
+        $($macro_path)::+! {
+            $($args)* ;
+            @allocators
+                bi, "builtin",  $crate::GlobalAllocWrap,       {}; // This causes a crash on Macos+M4Max
+                mm, "mimalloc", mimalloc::MiMalloc,            {};
+                jm, "jemalloc", tikv_jemallocator::Jemalloc,   {};
+                nm, "snmalloc", snmalloc_rs::SnMalloc,         {};
+                rp, "rpmalloc", rpmalloc::RpMalloc,            {};
+            @candidate
+                sm, "smalloc",  devutils::get_devsmalloc!(),   { devutils::dev_instance::setup(); };
+        }
+    };
+}
+
+// ============================================================================
+// Single-threaded benchmarks
+// ============================================================================
+
+#[macro_export]
+macro_rules! st_bench {
+    ($func:path, $iters:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
-        // Create a closure that specifies the type
-        let f = |al: &smalloc::Smalloc, s: &mut TestState| {
-            $func(al, s)
-        };
-        let sm_name = format!("sm_st_{func_name}-1");
-        $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
-
-    }}
+        let func_name = stringify!($func);
+        let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
+        let name = format!("sm_st_{func_name}-1");
+        $crate::singlethread_bench(f, $iters, &name, &sm, $seed);
+    }};
 }
 
 #[macro_export]
-    macro_rules! compare_hs_bench {
-    ($func:expr, $threads:expr, $iters:expr) => {{
+macro_rules! compare_st_bench_impl {
+    (
+        $func:path, $iters:expr, $seed:expr ;
+        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
+        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+    ) => {{
+        use $crate::Separable;
+        use std::sync::atomic::{AtomicU64, Ordering};
         let func_name = stringify!($func);
 
-        let l = Layout::from_size_align(32, 1).unwrap();
+        // Create all allocator instances and run setup
+        $(
+            let $short = $instance;
+            $($setup)*
+        )+
+        let $cand_short = $cand_instance;
+        $($cand_setup)*
 
-        // let bi = $crate::GlobalAllocWrap;
+        // Create atomic storage for results
+        let results: Vec<(AtomicU64, &str)> = vec![
+            $( (AtomicU64::new(0), $display), )+
+        ];
+        let candidate_result = AtomicU64::new(0);
 
-        // let baseline_ns = (|al: &$crate::GlobalAllocWrap| {
-        //     let name = format!("bi_hs_{func_name}-{}", $threads);
-        //     $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        // })(&bi);
-
-
-        let mm = mimalloc::MiMalloc;
-
-        let mm_ns = (|al: &mimalloc::MiMalloc| {
-            let name = format!("mm_hs_{func_name}-{}", $threads);
-            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        })(&mm);
-
-
-        let jm = tikv_jemallocator::Jemalloc;
-
-        let jm_ns = (|al: &tikv_jemallocator::Jemalloc| {
-            let name = format!("jm_hs_{func_name}-{}", $threads);
-            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        })(&jm);
-
-        
-        let nm = snmalloc_rs::SnMalloc;
-
-        let nm_ns = (|al: &snmalloc_rs::SnMalloc| {
-            let name = format!("nm_hs_{func_name}-{}", $threads);
-            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        })(&nm);
-
-        let rp = rpmalloc::RpMalloc;
-
-        let rp_ns = (|al: &rpmalloc::RpMalloc| {
-            let name = format!("rp_hs_{func_name}-{}", $threads);
-            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        })(&rp);
-
-
-        let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
-
-        let sm_ns = (|al: &smalloc::Smalloc| {
-            let name = format!("sm_hs_{func_name}-{}", $threads);
-            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
-        })(&sm);
-
-
-        // let smbidiffperc = 100.0 * (sm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        // println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
-        let smmmdiffperc = 100.0 * (sm_ns as f64 - mm_ns as f64) / (mm_ns as f64);
-        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
-        let smjmdiffperc = 100.0 * (sm_ns as f64 - jm_ns as f64) / (jm_ns as f64);
-        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
-        let smnmdiffperc = 100.0 * (sm_ns as f64 - nm_ns as f64) / (nm_ns as f64);
-        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
-        let smrpdiffperc = 100.0 * (sm_ns as f64 - rp_ns as f64) / (rp_ns as f64);
-        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
-        println!("");
-    }}
-}
-
-#[macro_export]
-    macro_rules! compare_st_bench {
-    ($func:path, $iters:expr, $seed:expr) => {{
-        let func_name = stringify!($func);
-
-        let mut baseline_ns = 42;
-        let mut candidat_ns = 42;
-        let mut mm_ns = 42;
-        let mut jm_ns = 42;
-        let mut nm_ns = 42;
-        let mut rp_ns = 42;
-
-        let bi = $crate::GlobalAllocWrap;
-
-        let mm = mimalloc::MiMalloc;
-
-        let jm = tikv_jemallocator::Jemalloc;
-
-        let nm = snmalloc_rs::SnMalloc;
-
-        let rp = rpmalloc::RpMalloc;
-
-        let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
-
+        // Spawn threads for each allocator
         std::thread::scope(|scope| {
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let bi_name = format!("bi_st_{func_name}-1");
-                baseline_ns = $crate::singlethread_bench(f, $iters, &bi_name, &bi, $seed); 
-            });
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &mimalloc::MiMalloc, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let mm_name = format!("mm_st_{func_name}-1");
-                mm_ns = $crate::singlethread_bench(f, $iters, &mm_name, &mm, $seed); 
-            });
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let jm_name = format!("jm_st_{func_name}-1");
-                jm_ns = $crate::singlethread_bench(f, $iters, &jm_name, &jm, $seed); 
-            });
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let nm_name = format!("nm_st_{func_name}-1");
-                nm_ns = $crate::singlethread_bench(f, $iters, &nm_name, &nm, $seed); 
-            });
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &rpmalloc::RpMalloc, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let rp_name = format!("rp_st_{func_name}-1");
-                rp_ns = $crate::singlethread_bench(f, $iters, &rp_name, &rp, $seed); 
-            });
-            scope.spawn(|| { 
-                // Create a closure that specifies the type
-                let f = |al: &smalloc::Smalloc, s: &mut TestState| {
-                    $func(al, s)
-                };
-                let sm_name = format!("sm_st_{func_name}-1");
-                candidat_ns = $crate::singlethread_bench(f, $iters, &sm_name, &sm, $seed); 
+            let mut _idx = 0usize;
+            $(
+                let result_ref = &results[_idx].0;
+                let alloc_ref = &$short;
+                let short_str = stringify!($short);
+                let iters = $iters;
+                let seed = $seed;
+                scope.spawn(move || {
+                    let name = format!("{}_st_{}-1", short_str, func_name);
+                    let mut s = devutils::TestState::new(iters, seed);
+
+                    let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                    for _i in 0..iters {
+                        $func(alloc_ref, &mut s);
+                    }
+                    let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+
+                    let ns = end - start;
+                    let nspi = ns / iters;
+                    let frac = ((ns * 10) / iters) % 10;
+                    let name = format!("{}_st_{}-1", &short_str, stringify!($func));
+                    println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters.separate_with_commas(), ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+
+                    result_ref.store(ns, Ordering::Relaxed);
+                });
+                _idx += 1;
+            )+
+
+            // Candidate allocator
+            let cand_result_ref = &candidate_result;
+            let cand_ref = $cand_short;
+            let cand_short_str = stringify!($cand_short);
+            let iters = $iters;
+            let seed = $seed;
+            scope.spawn(move || {
+                let name = format!("{}_st_{}-1", cand_short_str, func_name);
+                let mut s = devutils::TestState::new(iters, seed);
+
+                let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                for _i in 0..iters {
+                    $func(cand_ref, &mut s);
+                }
+                let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+
+                let ns = end - start;
+                let nspi = ns / iters;
+                let frac = ((ns * 10) / iters) % 10;
+                let name = format!("{}_st_{}-1", stringify!($cand_short), stringify!($func));
+                println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters.separate_with_commas(), ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+
+                cand_result_ref.store(ns, Ordering::Relaxed);
             });
         });
 
-        let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
-        let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
-        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
-        let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
-        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
-        let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
-        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
-        let smrpdiffperc = 100.0 * (candidat_ns as f64 - rp_ns as f64) / (rp_ns as f64);
-        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
-        println!("");
-    }}
+        // Collect results and print comparisons
+        let candidate_ns = candidate_result.load(Ordering::Relaxed);
+        let comparisons: Vec<(&str, u64)> = results
+            .iter()
+            .map(|(atomic, name)| (*name, atomic.load(Ordering::Relaxed)))
+            .collect();
+
+        $crate::print_comparisons(candidate_ns, &comparisons);
+    }};
 }
 
 #[macro_export]
-    macro_rules! mt_bench {
-    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {{
-        let func_name = stringify!($func);
+macro_rules! compare_st_bench {
+    ($func:path, $iters:expr, $seed:expr) => {
+        $crate::with_all_allocators!($crate::compare_st_bench_impl!($func, $iters, $seed))
+    };
+}
 
+// ============================================================================
+// Multi-threaded benchmarks
+// ============================================================================
+
+#[macro_export]
+macro_rules! mt_bench {
+    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
-        // Create a closure that specifies the type
-        let fsm = |al: &smalloc::Smalloc, s: &mut TestState| {
-            $func(al, s)
-        };
-
-        let sm_name = format!("sm_mt_{func_name}-{}", $threads);
-        $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
-
-        // sm.dump_map_of_slabs();
-    }}
+        let func_name = stringify!($func);
+        let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
+        let name = format!("sm_mt_{func_name}-{}", $threads);
+        $crate::multithread_bench(f, $threads, $iters, &name, &sm, $seed);
+    }};
 }
 
 #[macro_export]
-    macro_rules! compare_mt_bench {
-    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {{
+macro_rules! compare_mt_bench_impl {
+    (
+        $func:path, $threads:expr, $iters:expr, $seed:expr ;
+        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
+        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+    ) => {{
         let func_name = stringify!($func);
 
-        let bi = $crate::GlobalAllocWrap;
+        // Create all allocator instances and run setup
+        $(
+            let $short = $instance;
+            $($setup)*
+        )+
+        let $cand_short = $cand_instance;
+        $($cand_setup)*
 
-        // Create a closure that specifies the type
-        let fbi = |al: &$crate::GlobalAllocWrap, s: &mut TestState| {
-            $func(al, s)
-        };
+        // Run benchmarks sequentially (mt_bench already uses multiple threads internally)
+        let mut results: Vec<(&str, u64)> = Vec::new();
+        $(
+            let f = |al: &_, s: &mut TestState| { $func(al, s) };
+            let name = format!("{}_mt_{}-{}", stringify!($short), func_name, $threads);
+            let ns = $crate::multithread_bench(f, $threads, $iters, &name, &$short, $seed);
+            results.push(($display, ns));
+        )+
 
-        let bi_name = format!("bi_mt_{func_name}-{}", $threads);
-        let baseline_ns = $crate::multithread_bench(fbi, $threads, $iters, bi_name.as_str(), &bi, $seed);
+        // Candidate
+        let f = |al: &_, s: &mut TestState| { $func(al, s) };
+        let name = format!("{}_mt_{}-{}", stringify!($cand_short), func_name, $threads);
+        let candidate_ns = $crate::multithread_bench(f, $threads, $iters, &name, $cand_short, $seed);
 
+        $crate::print_comparisons(candidate_ns, &results);
+    }};
+}
 
-        let mm = mimalloc::MiMalloc;
+#[macro_export]
+macro_rules! compare_mt_bench {
+    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {
+        $crate::with_all_allocators!($crate::compare_mt_bench_impl!($func, $threads, $iters, $seed))
+    };
+}
 
-        // create a closure that specifies the type
-        let fmm = |al: &mimalloc::MiMalloc, s: &mut TestState| {
-            $func(al, s)
-        };
+// ============================================================================
+// Hotspot benchmarks
+// ============================================================================
 
-        let mm_name = format!("mm_mt_{func_name}-{}", $threads);
-        let mm_ns = $crate::multithread_bench(fmm, $threads, $iters, mm_name.as_str(), &mm, $seed);
+#[macro_export]
+macro_rules! compare_hs_bench_impl {
+    (
+        $func:expr, $threads:expr, $iters:expr ;
+        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
+        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+    ) => {{
+        let func_name = stringify!($func);
+        let l = Layout::from_size_align(32, 1).unwrap();
 
+        // Create all allocator instances and run setup
+        $(
+            let $short = $instance;
+            $($setup)*
+        )+
+        let $cand_short = $cand_instance;
+        $($cand_setup)*
 
-        let jm = tikv_jemallocator::Jemalloc;
+        // Run benchmarks and collect results
+        let mut results: Vec<(&str, u64)> = Vec::new();
+        $(
+            let f = |al: &_, s: &mut TestState| { $func(al, s) };
+            let name = format!("{}_hs_{}-{}", stringify!($short), func_name, $threads);
+            let ns = $crate::multithread_hotspot(f, $threads, $iters, &name, &$short, l);
+            results.push(($display, ns));
+        )+
 
-        // create a closure that specifies the type
-        let fjm = |al: &tikv_jemallocator::Jemalloc, s: &mut TestState| {
-            $func(al, s)
-        };
+        // Candidate
+        let f = |al: &_, s: &mut TestState| { $func(al, s) };
+        let name = format!("{}_hs_{}-{}", stringify!($cand_short), func_name, $threads);
+        let candidate_ns = $crate::multithread_hotspot(f, $threads, $iters, &name, $cand_short, l);
 
-        let jm_name = format!("jm_mt_{func_name}-{}", $threads);
-        let jm_ns = $crate::multithread_bench(fjm, $threads, $iters, jm_name.as_str(), &jm, $seed);
+        $crate::print_comparisons(candidate_ns, &results);
+    }};
+}
 
-        
-        let nm = snmalloc_rs::SnMalloc;
-
-        // create a closure that specifies the type
-        let fnm = |al: &snmalloc_rs::SnMalloc, s: &mut TestState| {
-            $func(al, s)
-        };
-
-        let nm_name = format!("nm_mt_{func_name}-{}", $threads);
-        let nm_ns = $crate::multithread_bench(fnm, $threads, $iters, nm_name.as_str(), &nm, $seed);
-
-
-        let rp = rpmalloc::RpMalloc;
-
-        // create a closure that specifies the type
-        let frp = |al: &rpmalloc::RpMalloc, s: &mut TestState| {
-            $func(al, s)
-        };
-
-        let rp_name = format!("rp_mt_{func_name}-{}", $threads);
-        let rp_ns = $crate::multithread_bench(frp, $threads, $iters, rp_name.as_str(), &rp, $seed);
-
-
-        let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
-
-        // create a closure that specifies the type
-        let fsm = |al: &smalloc::Smalloc, s: &mut TestState| {
-            $func(al, s)
-        };
-
-        let sm_name = format!("sm_mt_{func_name}-{}", $threads);
-        let candidat_ns = $crate::multithread_bench(fsm, $threads, $iters, sm_name.as_str(), &sm, $seed);
-
-
-        let smbidiffperc = 100.0 * (candidat_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
-        let smmmdiffperc = 100.0 * (candidat_ns as f64 - mm_ns as f64) / (mm_ns as f64);
-        println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
-        let smjmdiffperc = 100.0 * (candidat_ns as f64 - jm_ns as f64) / (jm_ns as f64);
-        println!("smalloc diff from jemalloc: {smjmdiffperc:+4.0}%");
-        let smnmdiffperc = 100.0 * (candidat_ns as f64 - nm_ns as f64) / (nm_ns as f64);
-        println!("smalloc diff from snmalloc: {smnmdiffperc:+4.0}%");
-        let smrpdiffperc = 100.0 * (candidat_ns as f64 - rp_ns as f64) / (rp_ns as f64);
-        println!("smalloc diff from rpmalloc: {smrpdiffperc:+4.0}%");
-        println!("");
-    }}
+#[macro_export]
+macro_rules! compare_hs_bench {
+    ($func:expr, $threads:expr, $iters:expr) => {
+        $crate::with_all_allocators!($crate::compare_hs_bench_impl!($func, $threads, $iters))
+    };
 }
