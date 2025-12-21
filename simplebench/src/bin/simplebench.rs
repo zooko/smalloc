@@ -42,7 +42,8 @@ pub fn main() {
         // will get mapped to the same slab by smalloc. So it doesn't make a whole lot of sense to
         // compare smalloc's performance on this particular benchmark to the performance of other
         // allocators, which presumably have different hotspots/worst-case-scenarios.
-        compare_hs_bench!(THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY);
+        compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY);
+        compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY);
 
         // These benchmarks with 1024 threads are worst-case-scenarios. This is the case that there
         // are more threads than cores *and* every thread is hammering on the allocator as fast as
@@ -80,7 +81,8 @@ pub fn main() {
         let l = Layout::from_size_align(32, 1).unwrap();
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
-        multithread_hotspot(THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, "mthssm", sm, l);
+        multithread_hotspot(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, "mthssm", sm, l);
+        multithread_hotspot(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_MANY, "mthssm", sm, l);
 
         println!();
 

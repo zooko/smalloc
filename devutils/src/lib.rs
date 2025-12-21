@@ -324,6 +324,15 @@ pub fn a<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     s.ps.push((p as usize, lt));
 }
 
+#[inline(always)]
+pub fn one_ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // Malloc
+    let lt = s.next_layout();
+    let p = unsafe { al.alloc(lt) };
+    debug_assert!(!p.is_null(), "lt: {lt:?}");
+    unsafe { al.dealloc(p, lt) };
+}
+
 pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters: u64, al: &T, tses: &mut [TestState])
 where
     T: GlobalAlloc + Send + Sync,

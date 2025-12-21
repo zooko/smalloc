@@ -4,10 +4,6 @@ use std::mem::MaybeUninit;
 
 use std::alloc::GlobalAlloc;
 pub struct GlobalAllocWrap;
-//use mimalloc::MiMalloc;
-//use smalloc::Smalloc;
-//use tikv_jemallocator::Jemalloc;
-//use snmalloc_rs::SnMalloc;
 
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
@@ -137,9 +133,10 @@ use std::thread;
 /// per (iter * total_threads)). picoseconds per iter
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_hotspot<T>(hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
+pub fn multithread_hotspot<T, F>(f: F, hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
 where
     T: GlobalAlloc + Send + Sync,
+    F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
     // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
     const NUM_SLABS: usize = 32;
@@ -173,14 +170,15 @@ where
             // Spawn hot thread
             s.spawn(|| {
                 let _ptr = unsafe { al.alloc(l) };
+                let mut s = TestState::new(iters as u64, 0);
+
                 hot_barrier.wait();  // Use reference directly
 
                 setup_complete_barrier.wait();
                 hot_start_barrier.wait();
 
                 for _ in 0..iters {
-                    let ptr = unsafe { al.alloc(l) };
-                    unsafe { al.dealloc(ptr, l) };
+                    f(al, &mut s);
                 }
 
                 hot_finish_barrier.wait();
@@ -246,34 +244,40 @@ where
 
 #[macro_export]
     macro_rules! compare_hs_bench {
-    ($threads:expr, $iters:expr) => {{
+    ($func:expr, $threads:expr, $iters:expr) => {{
+        let func_name = stringify!($func);
+
         let l = Layout::from_size_align(32, 1).unwrap();
 
-        let bi = $crate::GlobalAllocWrap;
+        // let bi = $crate::GlobalAllocWrap;
 
-        let baseline_ns = (|al: &$crate::GlobalAllocWrap| {
-            $crate::multithread_hotspot($threads, $iters, "bi hs", al, l)
-        })(&bi);
+        // let baseline_ns = (|al: &$crate::GlobalAllocWrap| {
+        //     let name = format!("bi_hs_{func_name}-{}", $threads);
+        //     $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
+        // })(&bi);
 
 
         let mm = mimalloc::MiMalloc;
 
         let mm_ns = (|al: &mimalloc::MiMalloc| {
-            $crate::multithread_hotspot($threads, $iters, "mm hs", al, l)
+            let name = format!("mm_hs_{func_name}-{}", $threads);
+            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
         })(&mm);
 
 
         let jm = tikv_jemallocator::Jemalloc;
 
         let jm_ns = (|al: &tikv_jemallocator::Jemalloc| {
-            $crate::multithread_hotspot($threads, $iters, "jm hs", al, l)
+            let name = format!("jm_hs_{func_name}-{}", $threads);
+            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
         })(&jm);
 
         
         let nm = snmalloc_rs::SnMalloc;
 
         let nm_ns = (|al: &snmalloc_rs::SnMalloc| {
-            $crate::multithread_hotspot($threads, $iters, "nm hs", al, l)
+            let name = format!("nm_hs_{func_name}-{}", $threads);
+            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
         })(&nm);
 
 
@@ -281,12 +285,13 @@ where
         devutils::dev_instance::setup();
 
         let sm_ns = (|al: &smalloc::Smalloc| {
-            $crate::multithread_hotspot($threads, $iters, "sm hs", al, l)
+            let name = format!("sm_hs_{func_name}-{}", $threads);
+            $crate::multithread_hotspot($func, $threads, $iters, &name, al, l)
         })(&sm);
 
 
-        let smbidiffperc = 100.0 * (sm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
-        println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
+        // let smbidiffperc = 100.0 * (sm_ns as f64 - baseline_ns as f64) / (baseline_ns as f64);
+        // println!("smalloc diff from  builtin: {smbidiffperc:+4.0}%");
         let smmmdiffperc = 100.0 * (sm_ns as f64 - mm_ns as f64) / (mm_ns as f64);
         println!("smalloc diff from mimalloc: {smmmdiffperc:+4.0}%");
         let smjmdiffperc = 100.0 * (sm_ns as f64 - jm_ns as f64) / (jm_ns as f64);
