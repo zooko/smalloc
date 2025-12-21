@@ -9,6 +9,8 @@ pub struct GlobalAllocWrap;
 
 pub use thousands::Separable;
 
+pub const NUM_BATCHES: u64 = 20;
+
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
     let retval = unsafe { libc::clock_gettime(clocktype, tp.as_mut_ptr()) };
@@ -64,30 +66,36 @@ pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
 
 use devutils::*;
 
-/// Returns elapsed nanoseconds
+/// Returns elapsed nanoseconds (best of NUM_BATCHES batches)
 pub fn singlethread_bench<T, F>(bf: F, iters: u64, name: &str, al: &T, seed: u64) -> u64
 where
     T: GlobalAlloc,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
+    let iters_per_batch = iters / NUM_BATCHES;
+    let mut best_ns = u64::MAX;
     let mut s = TestState::new(iters, seed);
 
-    let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
-
-    for _i in 0..iters {
-        bf(al, &mut s);
+    for _batch in 0..NUM_BATCHES {
+        let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        for _i in 0..iters_per_batch {
+            bf(al, &mut s);
+        }
+        let end = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        let batch_ns = end - start;
+        if batch_ns < best_ns {
+            best_ns = batch_ns;
+        }
     }
 
-    let end = clock(libc::CLOCK_THREAD_CPUTIME_ID);
-    assert!(end > start);
-    let elap_ns = end - start;
-    let nspi = elap_ns / iters;
-    let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
-    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    let total_iters = iters_per_batch; // Report ns/i based on batch size
+    let nspi = best_ns / total_iters;
+    let hundredpses_per_iter = ((best_ns * 10) / total_iters) % 10;
+    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", total_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     s.clean_up(al);
 
-    elap_ns
+    best_ns
 }
 
 pub fn multithread_bench<T, F>(bf: F, threads: u32, iters: u64, name: &str, al: &T, seed: u64) -> u64
@@ -95,28 +103,35 @@ where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
+    let iters_per_batch = iters / NUM_BATCHES;
+    let mut best_ns = u64::MAX;
+
     let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
     for _i in 0..threads {
         tses.push(TestState::new(iters, seed));
     }
 
-    let start = clock(libc::CLOCK_MONOTONIC_RAW);
+    for _batch in 0..NUM_BATCHES {
+        let start = clock(libc::CLOCK_MONOTONIC_RAW);
+        help_test_multithreaded_with_allocator(bf, threads, iters_per_batch, al, &mut tses);
+        let end = clock(libc::CLOCK_MONOTONIC_RAW);
+        let batch_ns = end - start;
+        if batch_ns < best_ns {
+            best_ns = batch_ns;
+        }
+    }
 
-    help_test_multithreaded_with_allocator(bf, threads, iters, al, &mut tses);
-
-    let end = clock(libc::CLOCK_MONOTONIC_RAW);
-    assert!(end > start);
-    let elap_ns = end - start;
-    let nspi = elap_ns / iters;
-    let hundredpses_per_iter = ((elap_ns * 10) / iters) % 10;
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    let total_iters = iters_per_batch;
+    let nspi = best_ns / total_iters;
+    let hundredpses_per_iter = ((best_ns * 10) / total_iters) % 10;
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), total_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
         ts.clean_up(al);
     }
 
-    elap_ns
+    best_ns
 }
 
 use std::sync::Barrier;
@@ -141,85 +156,92 @@ where
     // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
     const NUM_SLABS: usize = 32;
 
-    let hotspot_threads = hotspot_threads as usize;
-    let iters = iters as usize;
+    let hotspot_threads_usize = hotspot_threads as usize;
+    let iters_per_batch = (iters / NUM_BATCHES) as usize;
     let cool_threads_per_round: usize = NUM_SLABS - 1;
 
     // One hot thread per 63 cool threads
-    let total_threads: usize = hotspot_threads * (1 + cool_threads_per_round);
+    let total_threads: usize = hotspot_threads_usize * (1 + cool_threads_per_round);
 
-    let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads)
-        .map(|_| Barrier::new(2))
-        .collect();
+    let mut best_ns = u64::MAX;
 
-    let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads)
-        .map(|_| Barrier::new(cool_threads_per_round + 1))
-        .collect();
+    for _batch in 0..NUM_BATCHES {
+        let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads_usize)
+            .map(|_| Barrier::new(2))
+            .collect();
 
-    let setup_complete_barrier = Barrier::new(total_threads + 1);
-    let hot_start_barrier = Barrier::new(hotspot_threads + 1);
-    let hot_finish_barrier = Barrier::new(hotspot_threads + 1);
-    let final_barrier = Barrier::new(total_threads + 1);
+        let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads_usize)
+            .map(|_| Barrier::new(cool_threads_per_round + 1))
+            .collect();
 
-    let elap_ns = thread::scope(|s| {
-        for round in 0..hotspot_threads {
-            // Extract references before spawning
-            let hot_barrier = &hot_done_barriers[round];
-            let cool_barrier = &cool_done_barriers[round];
+        let setup_complete_barrier = Barrier::new(total_threads + 1);
+        let hot_start_barrier = Barrier::new(hotspot_threads_usize + 1);
+        let hot_finish_barrier = Barrier::new(hotspot_threads_usize + 1);
+        let final_barrier = Barrier::new(total_threads + 1);
 
-            // Spawn hot thread
-            s.spawn(|| {
-                let _ptr = unsafe { al.alloc(l) };
-                let mut s = TestState::new(iters as u64, 0);
+        let batch_ns = thread::scope(|s| {
+            for round in 0..hotspot_threads_usize {
+                // Extract references before spawning
+                let hot_barrier = &hot_done_barriers[round];
+                let cool_barrier = &cool_done_barriers[round];
 
-                hot_barrier.wait();  // Use reference directly
-
-                setup_complete_barrier.wait();
-                hot_start_barrier.wait();
-
-                for _ in 0..iters {
-                    f(al, &mut s);
-                }
-
-                hot_finish_barrier.wait();
-                final_barrier.wait();
-            });
-
-            hot_barrier.wait();
-
-            // Spawn cool threads
-            for _ in 0..cool_threads_per_round {
+                // Spawn hot thread
                 s.spawn(|| {
                     let _ptr = unsafe { al.alloc(l) };
-                    cool_barrier.wait();  // Use reference directly
+                    let mut ts = TestState::new(iters_per_batch as u64, 0);
+
+                    hot_barrier.wait();
+
                     setup_complete_barrier.wait();
+                    hot_start_barrier.wait();
+
+                    for _ in 0..iters_per_batch {
+                        f(al, &mut ts);
+                    }
+
+                    hot_finish_barrier.wait();
                     final_barrier.wait();
                 });
+
+                hot_barrier.wait();
+
+                // Spawn cool threads
+                for _ in 0..cool_threads_per_round {
+                    s.spawn(|| {
+                        let _ptr = unsafe { al.alloc(l) };
+                        cool_barrier.wait();
+                        setup_complete_barrier.wait();
+                        final_barrier.wait();
+                    });
+                }
+
+                cool_barrier.wait();
             }
 
-            cool_barrier.wait();
+            setup_complete_barrier.wait();
+
+            // Start timing right before releasing hot threads
+            let start = clock(libc::CLOCK_MONOTONIC_RAW);
+            hot_start_barrier.wait();
+            // Wait for all hot threads to finish
+            hot_finish_barrier.wait();
+            let end = clock(libc::CLOCK_MONOTONIC_RAW);
+
+            final_barrier.wait();
+
+            end - start
+        });
+
+        if batch_ns < best_ns {
+            best_ns = batch_ns;
         }
+    }
 
-        setup_complete_barrier.wait();
-
-        // Start timing right before releasing hot threads
-        let start = clock(libc::CLOCK_MONOTONIC_RAW);
-        hot_start_barrier.wait();
-        // Wait for all hot threads to finish
-        hot_finish_barrier.wait();
-        let end = clock(libc::CLOCK_MONOTONIC_RAW);
-        assert!(end > start);
-
-        final_barrier.wait();
-
-        end - start
-    });
-
-    let elap_ps = elap_ns * 1000;
-    let pspi = elap_ps / iters as u64;
+    let elap_ps = best_ns * 1000;
+    let pspi = elap_ps / iters_per_batch as u64;
     let hundredpses = (pspi / 100) % 10;
     let nspi = pspi / 1000;
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters.separate_with_commas(), elap_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     pspi
 }
@@ -291,6 +313,9 @@ macro_rules! compare_st_bench_impl {
         use std::sync::atomic::{AtomicU64, Ordering};
         let func_name = stringify!($func);
 
+        const NUM_BATCHES: u64 = $crate::NUM_BATCHES;
+        let iters_per_batch = $iters / NUM_BATCHES;
+
         // Create all allocator instances and run setup
         $(
             let $short = $instance;
@@ -315,22 +340,27 @@ macro_rules! compare_st_bench_impl {
                 let iters = $iters;
                 let seed = $seed;
                 scope.spawn(move || {
-                    let name = format!("{}_st_{}-1", short_str, func_name);
                     let mut s = devutils::TestState::new(iters, seed);
+                    let mut best_ns = u64::MAX;
 
-                    let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                    for _i in 0..iters {
-                        $func(alloc_ref, &mut s);
+                    for _batch in 0..NUM_BATCHES {
+                        let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                        for _i in 0..iters_per_batch {
+                            $func(alloc_ref, &mut s);
+                        }
+                        let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                        let batch_ns = end - start;
+                        if batch_ns < best_ns {
+                            best_ns = batch_ns;
+                        }
                     }
-                    let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
 
-                    let ns = end - start;
-                    let nspi = ns / iters;
-                    let frac = ((ns * 10) / iters) % 10;
-                    let name = format!("{}_st_{}-1", &short_str, stringify!($func));
-                    println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters.separate_with_commas(), ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                    let nspi = best_ns / iters_per_batch;
+                    let frac = ((best_ns * 10) / iters_per_batch) % 10;
+                    let name = format!("{}_st_{}-1", short_str, stringify!($func));
+                    println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
 
-                    result_ref.store(ns, Ordering::Relaxed);
+                    result_ref.store(best_ns, Ordering::Relaxed);
                 });
                 _idx += 1;
             )+
@@ -342,22 +372,27 @@ macro_rules! compare_st_bench_impl {
             let iters = $iters;
             let seed = $seed;
             scope.spawn(move || {
-                let name = format!("{}_st_{}-1", cand_short_str, func_name);
                 let mut s = devutils::TestState::new(iters, seed);
+                let mut best_ns = u64::MAX;
 
-                let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                for _i in 0..iters {
-                    $func(cand_ref, &mut s);
+                for _batch in 0..NUM_BATCHES {
+                    let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                    for _i in 0..iters_per_batch {
+                        $func(cand_ref, &mut s);
+                    }
+                    let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                    let batch_ns = end - start;
+                    if batch_ns < best_ns {
+                        best_ns = batch_ns;
+                    }
                 }
-                let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
 
-                let ns = end - start;
-                let nspi = ns / iters;
-                let frac = ((ns * 10) / iters) % 10;
-                let name = format!("{}_st_{}-1", stringify!($cand_short), stringify!($func));
-                println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters.separate_with_commas(), ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                let nspi = best_ns / iters_per_batch;
+                let frac = ((best_ns * 10) / iters_per_batch) % 10;
+                let name = format!("{}_st_{}-1", cand_short_str, stringify!($func));
+                println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
 
-                cand_result_ref.store(ns, Ordering::Relaxed);
+                cand_result_ref.store(best_ns, Ordering::Relaxed);
             });
         });
 
