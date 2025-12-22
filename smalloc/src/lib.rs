@@ -319,14 +319,13 @@ impl Smalloc {
                 let curfirstentrylink_v = unsafe { *curfirstentry_p };
                 let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, slotnum_unit);
 
-                debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
-                
                 // Write the new first entry slot num in place of the old in our local (in a
                 // register) copy of flhdword, leaving the push-counter bits unchanged.
                 let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
 
                 // Compare and exchange
                 if likely(flh.compare_exchange_weak(flhdword, newflhdword, Acquire, Relaxed).is_ok()) { 
+                    debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
                     debug_assert!(help_trailing_zeros_u64(newfirstentryslotnum) >= const_shr_usize_u8(slnsc & SC_FLH_ADDR_MASK, FLHDWORD_SIZE_BITS));
                     if unlikely(orig_slabnum_for_flhp != (slnsc & SLABNUM_FLH_ADDR_MASK)) {
                         // The slabnum changed. Save the new slabnum for next time.
