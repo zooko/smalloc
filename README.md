@@ -54,6 +54,35 @@ cargo --frozen build --release --package simplebench
 ./target/release/simplebench
 ```
 
+# Map of the Source Code
+
+## Packages within the workspace
+
+This workspace contains seven packages:
+ * smalloc: the core memory allocator
+ * plat: interface to the operating system's `mmap` or equivalent system call to allocate virtual
+   address space
+
+These are usually the only two you need to use smalloc.
+
+ * smalloc-macros: a proc macro to generate a `main()` function that initializes smalloc before the
+   Rust runtime's initialization; You need this only if the `ctor`-based initialization doesn't work
+   in your system.
+ * simplebench: micro-benchmarking tool to measure latency of operations and compare to other memory
+   allocators
+ * hellomalloc: a pair of sample apps that show the two ways to initialize smalloc as the global
+   allocator in Rust code
+ * find_max_vm_addresses_reservable: a tool used in the development of smalloc to determine how much
+   virtual address is allocatable on the current system
+ * devutils: code used in both tests and benchmarks
+
+## Organization of the core code
+
+Within the smalloc package, there are three files:
+ * smalloc/src/lib.rs: the core memory allocator
+ * smalloc/src/tests.rs: transparent-box tests that use internals of the core to test it
+ * smalloc/tests/integration.rs: opaque-box tests that use only the public API
+ 
 ```
        [unused                                     ]
 pad    000000000000000000000000000000000000000000000 // xxx is this even a thing anymore?

@@ -1,4 +1,4 @@
-use crate::*; 
+use crate::*;
 use std::alloc::Layout;
 use std::alloc::GlobalAlloc;
 
@@ -14,7 +14,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
 
-    let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
+    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     let numslots = help_numslots(sc);
     debug_assert!(numslots >= 3);
@@ -35,7 +35,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert_eq!(slotnum1 as usize, i);
 
     i += 1;
-    
+
     // Step 2: allocate all the rest of the slots in this slab except the last one:
     while i < numslots - 2 {
         let pt = unsafe { sm.alloc(l) };
@@ -81,7 +81,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert_eq!(slotnum4, 1);
 }
 
-const NUM_SLABS: u8 = const_one_shl_u8(NUM_SLABS_BITS);
+const NUM_SLABS: u8 = 1 << NUM_SLABS_BITS;
 
 /// This test doesn't work on the biggest sizeclass (sc 31).
 fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
@@ -93,7 +93,7 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
+    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -277,7 +277,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
 
 /// Allocate this size+align three times, then free the middle one, then allocate a fourth time,
 /// then assert that the fourth slot is the same as the second slot. Also asserts that the
-/// slabareanum is the same as this thread num.
+/// slab num is the same as this thread num.
 fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: usize) {
     assert!(reqsize > 0);
     assert!(reqsize <= help_slotsize(NUM_SCS - 1));
@@ -285,14 +285,14 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-    let orig_slabareanum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
+    let orig_slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     let p1 = unsafe { sm.alloc(l) };
     assert!(!p1.is_null(), "l: {l:?}");
 
     let (sc1, slabnum1, slotnum1) = sm.help_ptr_to_loc(p1);
     assert!(help_slotsize(sc1) >= reqsize);
-    assert_eq!(slabnum1, orig_slabareanum);
+    assert_eq!(slabnum1, orig_slabnum);
 
     let p2 = unsafe { sm.alloc(l) };
     assert!(!p2.is_null());
@@ -300,7 +300,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
     let (sc2, slabnum2, slotnum2) = sm.help_ptr_to_loc(p2);
     assert!(help_slotsize(sc2) >= reqsize);
     assert_eq!(slabnum2, slabnum1, "p1: {p1:?}, p2: {p2:?}, slabnum1: {slabnum1}, slabnum2: {slabnum2}, slotnum1: {slotnum1}, slotnum2: {slotnum2}");
-    assert_eq!(slabnum2, orig_slabareanum);
+    assert_eq!(slabnum2, orig_slabnum);
 
     let p3 = unsafe { sm.alloc(l) };
     assert!(!p3.is_null());
@@ -308,7 +308,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
     let (sc3, slabnum3, _slotnum3) = sm.help_ptr_to_loc(p3);
     assert!(help_slotsize(sc3) >= reqsize);
     assert_eq!(slabnum3, slabnum1);
-    assert_eq!(slabnum3, orig_slabareanum);
+    assert_eq!(slabnum3, orig_slabnum);
 
     // Now free the middle one.
     unsafe { sm.dealloc(p2, l) };
@@ -320,7 +320,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
     let (sc4, slabnum4, slotnum4) = sm.help_ptr_to_loc(p4);
     assert!(help_slotsize(sc4) >= reqsize);
     assert_eq!(slabnum4, slabnum1);
-    assert_eq!(slabnum4, orig_slabareanum);
+    assert_eq!(slabnum4, orig_slabnum);
 
     // It should have allocated slot num 2 again
     assert_eq!(slotnum4, slotnum2);
@@ -332,7 +332,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 }
 
 fn highest_slotnum(sc: u8) -> u32 {
-    const_gen_mask_u32(NUM_SLOTNUM_AND_DATA_BITS - sc)
+    (1 << (NUM_SLOTNUM_AND_DATA_BITS - sc)) - 1
 }
 
 
@@ -448,7 +448,7 @@ nextest_unit_tests! {
     /// If we've allocated all of the slots from a slab, the subsequent allocations come from a
     /// different slab in the same sizeclass.
     fn overflow_to_other_slab() {
-        for sc in NUM_UNUSED_SCS..NUM_SCS - 1 { 
+        for sc in NUM_UNUSED_SCS..NUM_SCS - 1 {
             help_test_overflow_to_other_slab(sc);
         }
     }
@@ -489,7 +489,7 @@ nextest_unit_tests! {
         let l = Layout::from_size_align(siz, 1).unwrap();
 
         let highestslotnum = highest_slotnum(sc);
-        
+
         // Step 0: reach into each slab's `flh` and set it to the max slot number.
         for slabnum in 0..NUM_SLABS {
             sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
@@ -512,7 +512,7 @@ nextest_unit_tests! {
         let highestslotnum = highest_slotnum(sc);
 
         // Step 0: reach into the current slab's `flh` and set it to the max slot number.
-        let slabnum = const_shr_usize_u8(get_slab_num(), SLABNUM_FLH_SHIFT_BITS);
+        let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
         sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot
@@ -524,24 +524,23 @@ nextest_unit_tests! {
 
     fn slotnum_encode_and_decode_roundtrip() {
         for sc in [ 31, 30, 25, 12, 9, 3 ] {
-            let slotnum_unit = const_one_shl_u64(sc);
             let numslots = help_numslots(sc);
             assert!(numslots > 0, "sc: {sc}");
             assert!(numslots <= 2usize.pow(32), "sc: {sc}");
-            
+
             let slotnums = [ 0, 1, 2, 3, 4, numslots.wrapping_sub(4), numslots.wrapping_sub(3), numslots.wrapping_sub(2), numslots.wrapping_sub(1) ];
             for slotnum1 in slotnums {
                 assert!(slotnum1 < 2usize.pow(32));
                 let slotnum1 = slotnum1 as u32;
                 for slotnum2 in slotnums {
                     assert!(slotnum2 < 2usize.pow(32));
-                    let sslotnum1 = const_shl_u32_u64(slotnum1, sc);
+                    let sslotnum1 = (slotnum1 as u64) << sc;
                     let slotnum2 = slotnum2 as u32;
-                    let sslotnum2 = const_shl_u32_u64(slotnum2, sc);
+                    let sslotnum2 = (slotnum2 as u64) << sc;
                     if slotnum1 < (numslots - 1) as u32 && (slotnum2 as usize) < numslots && slotnum1 != slotnum2 {
-                        let ence = Smalloc::encode_next_entry_link(sslotnum1, sslotnum2, slotnum_unit);
-                        let dece = Smalloc::decode_next_entry_link(sslotnum1, ence, slotnum_unit);
-                        assert_eq!(sslotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, slotnum_unit: {slotnum_unit}");
+                        let ence = Smalloc::encode_next_entry_link(sslotnum1, sslotnum2, 1 << sc);
+                        let dece = Smalloc::decode_next_entry_link(sslotnum1, ence, 1 << sc);
+                        assert_eq!(sslotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, sc: {sc}");
                     }
                 }
             }
@@ -567,12 +566,11 @@ impl Smalloc {
         let inner = self.inner();
 
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = inner.smbp | const_shl_u16_usize(flhi, 3);
+        let flhptr = inner.smbp | (flhi as usize) << 3;
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-        //xxxeprintln!("xxx 4 flhptr: {flhptr:x}, {:x}", const_shl_u32_u64(slotnum, sc));
 
         // single threaded so don't bother with the counter
-        flha.store(const_shl_u32_u64(slotnum, sc), Relaxed);
+        flha.store((slotnum as u64) << sc, Relaxed);
     }
 
     /// Return the sizeclass, slabnum, and slotnum
@@ -583,9 +581,9 @@ impl Smalloc {
 
         assert!((p_addr >= inner.smbp) && (p_addr <= inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
-        let sc = const_shr_usize_u8(p_addr & SC_BITS_ADDR_MASK, SC_ADDR_SHIFT_BITS);
-        let slabnum = const_shr_usize_u8(p_addr & SLABNUM_ADDR_MASK, NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS);
-        let slotnum = const_shr_u64_u32(p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK, sc);
+        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
+        let slabnum = ((p_addr & SLABNUM_ADDR_MASK) >>  (NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS)) as u8;
+        let slotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
 
         (sc, slabnum, slotnum)
     }
@@ -633,29 +631,3 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
         }
     }
 }
-
-// xxx benchmark and inspect asm for this vs <<
-#[inline(always)]
-const fn _const_shl_u32_usize(value: u32, shift: u8) -> usize {
-    debug_assert!((shift as u32) < usize::BITS);
-    debug_assert!(hlzu(value as usize) >= shift); // we never shift off 1 bits currently
-    unsafe { (value as usize).unchecked_shl(shift as u32) }
-}
-
-#[inline(always)]
-const fn const_shr_u64_u32(value: u64, shift: u8) -> u32 {
-    debug_assert!((shift as u32) < u64::BITS);
-    let res = unsafe { value.unchecked_shr(shift as u32) };
-    // No leaving 1 bits stranded up there
-    debug_assert!(help_leading_zeros_u64(res) as u32 >= u64::BITS - u32::BITS);
-    res as u32
-}
-
-// xxx benchmark and inspect asm for this vs <<
-#[inline(always)]
-const fn _const_shl_u8_u64(value: u8, shift: u8) -> u64 {
-    debug_assert!((shift as u32) < u64::BITS);
-    debug_assert!(help_leading_zeros_u64(value as u64) >= shift); // we never shift off 1 bits currently
-    unsafe { (value as u64).unchecked_shl(shift as u32) }
-}
-
