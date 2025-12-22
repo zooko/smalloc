@@ -5,7 +5,10 @@ edition.workspace = true
 
 [dependencies]
 smalloc = { path = "../smalloc" }
-wyrand = "0.3.2"
+ctor = "0.2"
 
 [[bin]]
-name = "hellosmalloc"
+name = "hellosmalloc_procmacro"
+
+[[bin]]
+name = "hellosmalloc_ctor"
