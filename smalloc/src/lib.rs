@@ -490,7 +490,6 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let reqsc = req_to_sc(reqsize, oldalignment);
         debug_assert!(reqsc >= NUM_UNUSED_SCS);
-        debug_assert!(reqsc < NUM_SCS);
 
         // If the requested slot is <= the original slot, just return the pointer and we're done.
         if unlikely(reqsc <= oldsc) {
