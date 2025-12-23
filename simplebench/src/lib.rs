@@ -46,69 +46,48 @@ pub fn alloc_and_free(al: &Arc<impl GlobalAlloc>) {
     unsafe { al.dealloc(p, l) };
 }
 
-#[inline(never)]
-pub fn bench_itered<F: FnMut()>(name: &str, iters: usize, mut f: F, clocktype: ClockType) {
-    let start = clock(clocktype);
-    for _i in 0..iters {
-        f();
-    }
-    let elap = clock(clocktype) - start;
-    println!("name: {name}, threads:        1, iters: {iters}, ns: {elap}, ns/i: {}", elap/iters as u64);
-}
-
-#[inline(never)]
-pub fn bench_once<F: FnOnce()>(name: &str, f: F, clocktype: ClockType) {
-    let start = clock(clocktype);
-    f();
-    let elap = clock(clocktype) - start;
-    println!("name: {name}, ns: {}", elap.separate_with_commas());
-}
-
 use devutils::*;
 
 /// Returns elapsed nanoseconds (best of NUM_BATCHES batches)
-pub fn singlethread_bench<T, F>(bf: F, iters: u64, name: &str, al: &T, seed: u64) -> u64
+pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, name: &str, al: &T, seed: u64) -> u64
 where
     T: GlobalAlloc,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
-    let iters_per_batch = iters / NUM_BATCHES;
     let mut best_ns = u64::MAX;
-    let mut s = TestState::new(iters, seed);
 
     for _batch in 0..NUM_BATCHES {
+        let mut s = TestState::new(iters_per_batch, seed);
         let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
         for _i in 0..iters_per_batch {
             bf(al, &mut s);
         }
         let end = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        s.clean_up(al);
+
         let batch_ns = end - start;
         if batch_ns < best_ns {
             best_ns = batch_ns;
         }
     }
 
-    let total_iters = iters_per_batch; // Report ns/i based on batch size
-    let nspi = best_ns / total_iters;
-    let hundredpses_per_iter = ((best_ns * 10) / total_iters) % 10;
-    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", total_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
-
-    s.clean_up(al);
+    let nspi = best_ns / iters_per_batch;
+    let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
+    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     best_ns
 }
 
-pub fn multithread_bench<T, F>(bf: F, threads: u32, iters: u64, name: &str, al: &T, seed: u64) -> u64
+pub fn multithread_bench<T, F>(bf: F, threads: u32, iters_per_batch: u64, name: &str, al: &T, seed: u64) -> u64
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
-    let iters_per_batch = iters / NUM_BATCHES;
     let mut best_ns = u64::MAX;
 
     let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
     for _i in 0..threads {
-        tses.push(TestState::new(iters, seed));
+        tses.push(TestState::new(iters_per_batch, seed));
     }
 
     for _batch in 0..NUM_BATCHES {
@@ -121,10 +100,9 @@ where
         }
     }
 
-    let total_iters = iters_per_batch;
-    let nspi = best_ns / total_iters;
-    let hundredpses_per_iter = ((best_ns * 10) / total_iters) % 10;
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), total_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    let nspi = best_ns / iters_per_batch;
+    let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
+    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
@@ -137,6 +115,14 @@ where
 use std::sync::Barrier;
 use std::thread;
 
+#[macro_export]
+macro_rules! multithread_hotspot {
+    ($f:expr, $threads:expr, $iters:expr, $al:expr, $l:expr) => {{
+        let name = concat!("mths-", stringify!($f));
+        $crate::multithread_hotspot_inner($f, $threads, $iters, name, $al, $l)
+    }};
+}
+
 /// This is to stress test the case that one slab's flh is under heavy multi-threading contention
 /// but the other slabs's flh's are not.
 ///
@@ -148,7 +134,7 @@ use std::thread;
 /// per (iter * total_threads)). picoseconds per iter
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_hotspot<T, F>(f: F, hotspot_threads: u32, iters: u64, name: &str, al: &T, l: Layout) -> u64
+pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_per_batch: u64, name: &str, al: &T, l: Layout) -> u64
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -157,7 +143,6 @@ where
     const NUM_SLABS: usize = 32;
 
     let hotspot_threads_usize = hotspot_threads as usize;
-    let iters_per_batch = (iters / NUM_BATCHES) as usize;
     let cool_threads_per_round: usize = NUM_SLABS - 1;
 
     // One hot thread per 63 cool threads
@@ -188,7 +173,7 @@ where
                 // Spawn hot thread
                 s.spawn(|| {
                     let _ptr = unsafe { al.alloc(l) };
-                    let mut ts = TestState::new(iters_per_batch as u64, 0);
+                    let mut ts = TestState::new(iters_per_batch, 0);
 
                     hot_barrier.wait();
 
@@ -200,6 +185,7 @@ where
                     }
 
                     hot_finish_barrier.wait();
+                    ts.clean_up(al);
                     final_barrier.wait();
                 });
 
@@ -238,7 +224,7 @@ where
     }
 
     let elap_ps = best_ns * 1000;
-    let pspi = elap_ps / iters_per_batch as u64;
+    let pspi = elap_ps / iters_per_batch;
     let hundredpses = (pspi / 100) % 10;
     let nspi = pspi / 1000;
     println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
@@ -291,21 +277,21 @@ macro_rules! with_all_allocators {
 
 #[macro_export]
 macro_rules! st_bench {
-    ($func:path, $iters:expr, $seed:expr) => {{
+    ($func:path, $iters_per_batch:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
         let name = format!("sm_st_{func_name}-1");
-        $crate::singlethread_bench(f, $iters, &name, &sm, $seed);
+        $crate::singlethread_bench(f, $iters_per_batch, &name, &sm, $seed);
     }};
 }
 
 #[macro_export]
 macro_rules! compare_st_bench_impl {
     (
-        $func:path, $iters:expr, $seed:expr ;
+        $func:path, $iters_per_batch:expr, $seed:expr ;
         @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
         @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
     ) => {{
@@ -314,7 +300,6 @@ macro_rules! compare_st_bench_impl {
         let func_name = stringify!($func);
 
         const NUM_BATCHES: u64 = $crate::NUM_BATCHES;
-        let iters_per_batch = $iters / NUM_BATCHES;
 
         // Create all allocator instances and run setup
         $(
@@ -337,18 +322,19 @@ macro_rules! compare_st_bench_impl {
                 let result_ref = &results[_idx].0;
                 let alloc_ref = &$short;
                 let short_str = stringify!($short);
-                let iters = $iters;
+                let iters_per_batch = $iters_per_batch;
                 let seed = $seed;
                 scope.spawn(move || {
-                    let mut s = devutils::TestState::new(iters, seed);
                     let mut best_ns = u64::MAX;
 
                     for _batch in 0..NUM_BATCHES {
+                        let mut s = devutils::TestState::new(iters_per_batch, seed);
                         let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
                         for _i in 0..iters_per_batch {
                             $func(alloc_ref, &mut s);
                         }
                         let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                        s.clean_up(alloc_ref);
                         let batch_ns = end - start;
                         if batch_ns < best_ns {
                             best_ns = batch_ns;
@@ -369,18 +355,19 @@ macro_rules! compare_st_bench_impl {
             let cand_result_ref = &candidate_result;
             let cand_ref = $cand_short;
             let cand_short_str = stringify!($cand_short);
-            let iters = $iters;
+            let iters_per_batch = $iters_per_batch;
             let seed = $seed;
             scope.spawn(move || {
-                let mut s = devutils::TestState::new(iters, seed);
                 let mut best_ns = u64::MAX;
 
                 for _batch in 0..NUM_BATCHES {
+                    let mut s = devutils::TestState::new(iters_per_batch, seed);
                     let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
                     for _i in 0..iters_per_batch {
                         $func(cand_ref, &mut s);
                     }
                     let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
+                    s.clean_up(cand_ref);
                     let batch_ns = end - start;
                     if batch_ns < best_ns {
                         best_ns = batch_ns;
@@ -409,8 +396,8 @@ macro_rules! compare_st_bench_impl {
 
 #[macro_export]
 macro_rules! compare_st_bench {
-    ($func:path, $iters:expr, $seed:expr) => {
-        $crate::with_all_allocators!($crate::compare_st_bench_impl!($func, $iters, $seed))
+    ($func:path, $iters_per_batch:expr, $seed:expr) => {
+        $crate::with_all_allocators!($crate::compare_st_bench_impl!($func, $iters_per_batch, $seed))
     };
 }
 
@@ -420,21 +407,21 @@ macro_rules! compare_st_bench {
 
 #[macro_export]
 macro_rules! mt_bench {
-    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {{
+    ($func:path, $threads:expr, $iters_per_batch:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
         devutils::dev_instance::setup();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
         let name = format!("sm_mt_{func_name}-{}", $threads);
-        $crate::multithread_bench(f, $threads, $iters, &name, &sm, $seed);
+        $crate::multithread_bench(f, $threads, $iters_per_batch, &name, &sm, $seed);
     }};
 }
 
 #[macro_export]
 macro_rules! compare_mt_bench_impl {
     (
-        $func:path, $threads:expr, $iters:expr, $seed:expr ;
+        $func:path, $threads:expr, $iters_per_batch:expr, $seed:expr ;
         @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
         @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
     ) => {{
@@ -453,14 +440,14 @@ macro_rules! compare_mt_bench_impl {
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_mt_{}-{}", stringify!($short), func_name, $threads);
-            let ns = $crate::multithread_bench(f, $threads, $iters, &name, &$short, $seed);
+            let ns = $crate::multithread_bench(f, $threads, $iters_per_batch, &name, &$short, $seed);
             results.push(($display, ns));
         )+
 
         // Candidate
         let f = |al: &_, s: &mut TestState| { $func(al, s) };
         let name = format!("{}_mt_{}-{}", stringify!($cand_short), func_name, $threads);
-        let candidate_ns = $crate::multithread_bench(f, $threads, $iters, &name, $cand_short, $seed);
+        let candidate_ns = $crate::multithread_bench(f, $threads, $iters_per_batch, &name, $cand_short, $seed);
 
         $crate::print_comparisons(candidate_ns, &results);
     }};
@@ -468,8 +455,8 @@ macro_rules! compare_mt_bench_impl {
 
 #[macro_export]
 macro_rules! compare_mt_bench {
-    ($func:path, $threads:expr, $iters:expr, $seed:expr) => {
-        $crate::with_all_allocators!($crate::compare_mt_bench_impl!($func, $threads, $iters, $seed))
+    ($func:path, $threads:expr, $iters_per_batch:expr, $seed:expr) => {
+        $crate::with_all_allocators!($crate::compare_mt_bench_impl!($func, $threads, $iters_per_batch, $seed))
     };
 }
 
@@ -480,7 +467,7 @@ macro_rules! compare_mt_bench {
 #[macro_export]
 macro_rules! compare_hs_bench_impl {
     (
-        $func:expr, $threads:expr, $iters:expr ;
+        $func:expr, $threads:expr, $iters_per_batch:expr ;
         @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
         @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
     ) => {{
@@ -500,14 +487,14 @@ macro_rules! compare_hs_bench_impl {
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_hs_{}-{}", stringify!($short), func_name, $threads);
-            let ns = $crate::multithread_hotspot(f, $threads, $iters, &name, &$short, l);
+            let ns = $crate::multithread_hotspot_inner(f, $threads, $iters_per_batch, &name, &$short, l);
             results.push(($display, ns));
         )+
 
         // Candidate
         let f = |al: &_, s: &mut TestState| { $func(al, s) };
         let name = format!("{}_hs_{}-{}", stringify!($cand_short), func_name, $threads);
-        let candidate_ns = $crate::multithread_hotspot(f, $threads, $iters, &name, $cand_short, l);
+        let candidate_ns = $crate::multithread_hotspot_inner(f, $threads, $iters_per_batch, &name, $cand_short, l);
 
         $crate::print_comparisons(candidate_ns, &results);
     }};
@@ -515,7 +502,7 @@ macro_rules! compare_hs_bench_impl {
 
 #[macro_export]
 macro_rules! compare_hs_bench {
-    ($func:expr, $threads:expr, $iters:expr) => {
-        $crate::with_all_allocators!($crate::compare_hs_bench_impl!($func, $threads, $iters))
+    ($func:expr, $threads:expr, $iters_per_batch:expr) => {
+        $crate::with_all_allocators!($crate::compare_hs_bench_impl!($func, $threads, $iters_per_batch))
     };
 }

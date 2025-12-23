@@ -333,7 +333,7 @@ pub fn one_ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     unsafe { al.dealloc(p, lt) };
 }
 
-pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters: u64, al: &T, tses: &mut [TestState])
+pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters_per_batch: u64, al: &T, tses: &mut [TestState])
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -346,7 +346,7 @@ where
         for t in 0..threads {
             scope.spawn(move || {
                 let s = unsafe { &mut *(tses_ptr as *mut TestState).add(t as usize) };
-                for _i in 0..iters {
+                for _i in 0..iters_per_batch {
                     f(al, s);
                 }
             });
@@ -435,12 +435,9 @@ use std::hint::likely;
 use wyrand::WyRand;
 impl TestState {
     pub fn new(iters: u64, seed: u64) -> Self {
-        // const SEED: u64 = 5; // on linux, 15 ns/i
-        // const SEED: u64 = 10; // 15 ns/i
-        // const SEED: u64 = 21; // 414 ns/i
-        // const SEED: u64 = 22; // 15 ns/i
+        let cap = iters as usize;
         let mut r = WyRand::new(seed);
-        let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(seed));
+        let m = HashSet::with_capacity_and_hasher(cap, WyHashBuilder(seed));
         let coins: [u32; NUMCOINS] = std::array::from_fn(|_| r.rand() as u32);
         let nextcoin = 0;
         let mut layouts = gen_layouts();
@@ -453,7 +450,7 @@ impl TestState {
             layouts,
             nextlayout,
             m,
-            ps: Vec::with_capacity(iters as usize),
+            ps: Vec::with_capacity(cap),
             nextp: 0,
             cached_8: 0,
             cached_512: 0,
