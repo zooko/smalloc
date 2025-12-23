@@ -106,46 +106,35 @@ use std::cell::Cell;
 
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
 
+const SLAB_NUM_SENTINEL: usize = usize::MAX;
+
 thread_local! {
-    static THREAD_NUM: Cell<Option<u8>> = const { Cell::new(None) };
-    static SLAB_NUM: Cell<Option<usize>> = const { Cell::new(None) };
-}
-// xxx try to get rid of this Option
-
-/// Get this thread's unique, incrementing number.
-// It is okay if more than 256 threads are spawned and this wraps, since the only things we use it
-// for are (a) & with SLABNUM_ALONE_MASK (in `get_slab_num`) or & with STEPS_MASK (in
-// `failover_slabnum`).
-#[inline(always)]
-fn get_thread_num() -> u8 {
-    THREAD_NUM.with(|cell| {
-        cell.get().map_or_else(
-            || {
-                let new_value = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed); // xxx reconsider whether we need stronger ordering constraints
-                THREAD_NUM.with(|cell| cell.set(Some(new_value)));
-                new_value
-            },
-            |value| value,
-        )
-    })
+    static SLABNUM_AND_THREADNUM: Cell<(usize, u8)> = const { Cell::new((SLAB_NUM_SENTINEL, 0)) };
 }
 
-/// Get the slab that this thread allocates from (as a usize, with the slabnum left-shifted to the
-/// right location in an flh address). If uninitialized, this is initialized to `get_thread_num() *
-/// SLABNUM_ALONE_MASK` (before left-shifting).
+/// Get the slab number and thread number for this thread. On first call, initializes both.
+/// Returns (slab_num, thread_num).
 #[inline(always)]
-fn get_slab_num() -> usize {
-    SLAB_NUM.with(|cell| {
-        cell.get().map_or_else(
-            || ((get_thread_num() & SLABNUM_ALONE_MASK) as usize) << (FLHDWORD_SIZE_BITS + NUM_SC_BITS),
-            |value| value,
-        )
+fn get_slabnum_and_threadnum() -> (usize, u8) {
+    SLABNUM_AND_THREADNUM.with(|cell| {
+        let (slabnum, threadnum) = cell.get();
+        if slabnum == SLAB_NUM_SENTINEL {
+            let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
+            let newslabnum = ((newthreadnum & SLABNUM_ALONE_MASK) as usize) << (FLHDWORD_SIZE_BITS + NUM_SC_BITS);
+            cell.set((newslabnum, newthreadnum));
+            (newslabnum, newthreadnum)
+        } else {
+            (slabnum, threadnum)
+        }
     })
 }
 
 #[inline(always)]
 fn set_slab_num(slabnum: usize) {
-    SLAB_NUM.set(Some(slabnum));
+    SLABNUM_AND_THREADNUM.with(|cell| {
+        let (_, thread_num) = cell.get();
+        cell.set((slabnum, thread_num));
+    });
 }
 
 use std::cell::UnsafeCell;
@@ -265,7 +254,7 @@ impl Smalloc {
 
         // `orig_slabnum_for_flhp` has the slabnum in the bit-position where it fits into an flh
         // address.
-        let orig_slabnum_for_flhp = get_slab_num();
+        let (orig_slabnum_for_flhp, threadnum) = get_slabnum_and_threadnum();
         debug_assert!(orig_slabnum_for_flhp.trailing_zeros() >= (FLHDWORD_SIZE_BITS + NUM_SC_BITS) as u32);
 
         // "slnsc" is the concatenation of the slabnum bits and sc bits in their positions for use
@@ -276,8 +265,6 @@ impl Smalloc {
         let mut sentinelslotnum = SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(orig_sc);
         let mut slotnum_unit = 1 << orig_sc;
 
-        let mut loaded_threadnum: bool = false;
-        let mut threadnum = 42; // the 42 will never get used
         let mut a_slab_was_full = false;
 
         let smbp = self.inner().smbp;
@@ -312,7 +299,7 @@ impl Smalloc {
 
                 // Write the new first entry slot num in place of the old in our local (in a
                 // register) copy of flhdword, leaving the push-counter bits unchanged.
-                let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
+                let newflhdword = (flhdword & FLHDWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum;
 
                 // Compare and exchange
                 if likely(flh.compare_exchange_weak(flhdword, newflhdword, Acquire, Relaxed).is_ok()) { 
@@ -327,7 +314,6 @@ impl Smalloc {
                 } else {
                     // Update collision on the flh. Fail over to a different slab in the same size
                     // class.
-                    if likely(!loaded_threadnum) { threadnum = get_thread_num(); loaded_threadnum = true; }
 
                     // Put the bits of the new slabnum into the slnsc.
                     slnsc = failover_slabnum(slnsc, threadnum);
@@ -336,7 +322,6 @@ impl Smalloc {
                 // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                 // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                 // different slab in the same size class.œ
-                if likely(!loaded_threadnum) { threadnum = get_thread_num(); loaded_threadnum = true; }
 
                 // Put the bits of the new slabnum into the slnsc.
                 slnsc = failover_slabnum(slnsc, threadnum);

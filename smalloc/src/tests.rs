@@ -14,7 +14,8 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
 
-    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     let numslots = help_numslots(sc);
     debug_assert!(numslots >= 3);
@@ -93,7 +94,8 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -143,7 +145,8 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -201,7 +204,8 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -285,7 +289,8 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-    let orig_slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+    let orig_slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     let p1 = unsafe { sm.alloc(l) };
     assert!(!p1.is_null(), "l: {l:?}");
@@ -512,7 +517,8 @@ nextest_unit_tests! {
         let highestslotnum = highest_slotnum(sc);
 
         // Step 0: reach into the current slab's `flh` and set it to the max slot number.
-        let slabnum = (get_slab_num() >> SLABNUM_FLH_SHIFT_BITS) as u8;
+        let (slabnum, _threadnum) = get_slabnum_and_threadnum();
+        let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
         sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot
