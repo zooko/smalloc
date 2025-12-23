@@ -530,60 +530,6 @@ fn req_to_sc(siz: usize, ali: usize) -> u8 {
 
 pub use smalloc_macros::smalloc_main;
 
-// xxx could we move this out to src/tests.rs using the ctor hack ? 
-// For testing and benchmarking only.
-#[cfg(test)]
-mod unit_test_instance {
-    use super::Smalloc;
-    use std::sync::OnceLock;
-
-    pub static mut SMAL: Smalloc = Smalloc::new();
-    static INIT: OnceLock<()> = OnceLock::new();
-
-    pub fn setup() {
-        INIT.get_or_init(|| {
-            unsafe {
-                (*std::ptr::addr_of_mut!(SMAL)).init();
-            }
-        });
-    }
-
-    #[macro_export]
-    #[cfg(debug_assertions)]
-    macro_rules! get_testsmalloc {
-        () => {
-            #[allow(unused_unsafe)]
-            unsafe { &*std::ptr::addr_of!($crate::unit_test_instance::SMAL) }
-        };
-    }
-}
-
-// xxx could we move this out to src/tests.rs and just have less clear output if the user runs `cargo test`?
-#[cfg(debug_assertions)]
-#[macro_export]
-macro_rules! nextest_unit_tests {
-    (
-        $(
-            $(#[$attr:meta])*
-            fn $name:ident() $body:block
-        )*
-    ) => {
-        $(
-            #[test]
-            $(#[$attr])*
-            fn $name() {
-                if std::env::var("NEXTEST").is_err() {
-                    panic!("This project requires cargo-nextest to run tests.");
-                }
-                    
-                unit_test_instance::setup();
-
-                $body
-            }
-        )*
-    };
-}
-
 #[cfg(test)]
 mod tests;
 
