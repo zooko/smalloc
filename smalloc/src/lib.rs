@@ -492,6 +492,7 @@ unsafe impl GlobalAlloc for Smalloc {
                 if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
                 if reqsc <= 12 { 12 } else // page size on Linux and Windows
                 if reqsc <= 14 { 14 } else // page size on Apple OS
+                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
                 if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
                 if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
             { reqsc };
