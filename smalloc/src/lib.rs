@@ -505,10 +505,7 @@ fn req_to_sc(siz: usize, ali: usize) -> u8 {
 
     const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS);
 
-    let res = ((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1;
-    debug_assert!(res < NUM_SCS as u32);
-
-    res as u8
+    (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
 
 pub use smalloc_macros::smalloc_main;
