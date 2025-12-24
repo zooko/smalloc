@@ -499,7 +499,6 @@ impl Smalloc {
 #[inline(always)]
 fn req_to_sc(siz: usize, ali: usize) -> u8 {
     debug_assert!(siz > 0);
-    debug_assert!(siz <= gen_mask!(NUM_SCS));
     debug_assert!(ali > 0);
     debug_assert!(ali < 1 << NUM_SCS);
     debug_assert!(ali.is_power_of_two());
