@@ -51,7 +51,7 @@ pub fn main() {
             // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
             // that many threads are trying to free slots in the same slab as each other.
             const TOT_ITERS: u64 = 10_000_000;
-            for numthreads in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+            for numthreads in [1u32, 10, 100, 1000, 10_000] {
                 let iters_per_thread = TOT_ITERS / numthreads as u64;
                 let l = Layout::from_size_align(8, 1).unwrap();
                 compare_fh_bench!(numthreads, iters_per_thread, l);
@@ -100,7 +100,7 @@ pub fn main() {
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, sm, l);
 
             const TOT_ITERS: u64 = 10_000_000;
-            for numthreads in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+            for numthreads in [1u32, 10, 100, 1000, 10_000] {
                 let iters_per_thread = TOT_ITERS / numthreads as u64;
                 let l = Layout::from_size_align(8, 1).unwrap();
                 multithread_free_hotspot!(numthreads, iters_per_thread, sm, l);
