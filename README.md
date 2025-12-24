@@ -278,11 +278,11 @@ This is also why not to use size classes 0 (for 1-byte slots), 1 (for 2-byte slo
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
 colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
 
-So to satisfy a `malloc()` or `realloc()` by popping the head slot from the free list, take the
-value from the `flh`, use that value as a pointer to a slot (which is the first entry in the free
-list), and then read the *contents* of that slot as the pointer to the next entry in the free
-list. Overwrite the value in `flh` with the pointer of that *next* entry and you're done popping the
-head of the free list.
+So to satisfy a `malloc()` by popping the head slot from the free list, take the value from the
+`flh`, use that value as a pointer to a slot (which is the first entry in the free list), and then
+read the *contents* of that slot as the pointer to the next entry in the free list. Overwrite the
+value in `flh` with the pointer of that *next* entry and you're done popping the head of the free
+list.
 
 To push an slot onto the free list (in order to implement `free()`), you are given the pointer of
 the memory allocation to be freed. Calculate from that pointer the size class, slab number, and slot
@@ -323,7 +323,7 @@ thread-safe updates to `flh`. Use a simple loop with atomic compare-and-exchange
 1. Load the value from `flh` into a local variable/register, `firstslotnum`. This is the slot number
    of the first entry in the free list.
 2. If it is the sentinel value, meaning that the free list is empty, return. (See below for how this
-   `malloc()`/`realloc()` request will be handled in this case.)
+   `malloc()` request will be handled in this case.)
 3. Load the value from first entry into a local variable/register, `nextslotnum`. This is the slot
    number of the next entry in the free list (i.e. the second free-list entry), or a sentinel value
    there is if none.
@@ -386,13 +386,12 @@ Whenever allocating, allocate from the slab indicated by your thread's `SLAB_NUM
 
 ## Handling Overflows and Update-Collisions
 
-Suppose the user calls `malloc()` or `realloc()` and the slab (determined by the size class of the
-request and your thread's `SLAB_NUM`) is exhausted, i.e. the free list is empty. This could happen
-only if there were that many allocations from that slab active simultaneously.
+Suppose the user calls `malloc()` and the slab (determined by the size class of the request and your
+thread's `SLAB_NUM`) is exhausted, i.e. the free list is empty. This could happen only if there were
+that many allocations from that slab active simultaneously.
 
-Or, suppose the user calls `malloc()` or `realloc()` and you encounter a free-list-head update
-collision, i.e. you reach step 5 of the thread-safe algorithm for popping an entry from the free
-list (shown above).
+Or, suppose the user calls `malloc()` and you encounter a free-list-head update collision, i.e. you
+reach step 5 of the thread-safe algorithm for popping an entry from the free list (shown above).
 
 In either of these cases, try allocating from a different slab in the same size class. If it
 succeeds, update your thread's `SLAB_NUM` to point to this new slab. If this attempt, too, fails,
