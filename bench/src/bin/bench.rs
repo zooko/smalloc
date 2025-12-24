@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 #![allow(unused_imports)]
 
-use simplebench::{st_bench, mt_bench, compare_st_bench, compare_mt_bench, multithread_hotspot, compare_hs_bench};
+use bench::{st_bench, mt_bench, compare_st_bench, compare_mt_bench, compare_fh_bench, multithread_hotspot, multithread_free_hotspot, compare_hs_bench};
 use std::alloc::Layout;
 
 use devutils::*;
@@ -36,25 +36,36 @@ pub fn main() {
     const ITERS_FEW: u64 = 2_000;
 
     if compare {
-        // This benchmark simulates a somewhat plausible scenario, which is a worst-case-scenario
-        // for smalloc before v7.2, when a bunch of threads are all trying to alloc/dealloc from the
-        // same slab. This benchmark is structured specifically to exerise smalloc's hotspot: every
-        // 64'th thread is active and the intervening 63 are quiescent, because every 64'th thread
-        // will get mapped to the same slab by smalloc. So it doesn't make a whole lot of sense to
-        // compare smalloc's performance on this particular benchmark to the performance of other
-        // allocators, which presumably have different hotspots/worst-case-scenarios.
-        compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many);
-        compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW);
-
         if thorough {
+            // hs_bench simulates a somewhat plausible scenario, which is a worst-case-scenario for
+            // smalloc before v7.2, when a bunch of threads are all trying to alloc/dealloc from the
+            // same slab. This benchmark is structured specifically to exerise smalloc's hotspot:
+            // every 64'th thread is active and the intervening 63 are quiescent, because every
+            // 64'th thread will get mapped to the same slab by smalloc. So it doesn't make a whole
+            // lot of sense to compare smalloc's performance on this particular benchmark to the
+            // performance of other allocators, which presumably have different
+            // hotspots/worst-case-scenarios.
+            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many);
+            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW);
+
+            // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
+            // that many threads are trying to free slots in the same slab as each other.
+            const TOT_ITERS: u64 = 10_000_000;
+            for numthreads in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+                let iters_per_thread = TOT_ITERS / numthreads as u64;
+                let l = Layout::from_size_align(8, 1).unwrap();
+                compare_fh_bench!(numthreads, iters_per_thread, l);
+            }
+
+            println!();
+
             // These benchmarks with 1024 threads are worst-case-scenarios. This is the case that there
             // are more threads than cores *and* every thread is hammering on the allocator as fast as
             // it can. This is not something to optimize for at the cost of performance in other cases,
             // because the user code shouldn't do that. However, we do want to benchmark it, partially
             // just in order to look for pathological behavior in smalloc, and also in order to optimize
             // it if we can do so without penalizing other cases. In particular smalloc v7.2 made it so
-            // on flh-collision, alloc fails over to another slab. This substantially xxxx hmm well
-            // actually why is it still slower in single-threaded tests... *thinky face*
+            // on flh-collision, alloc fails over to another slab.
             compare_mt_bench!(adrww, THREADS_WAY_TOO_MANY, iters_many, seed);
             compare_mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, seed);
             compare_mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, seed);
@@ -81,15 +92,22 @@ pub fn main() {
         compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, seed);
         compare_st_bench!(a, ITERS_FEW, seed);
     } else {
-        let l = Layout::from_size_align(32, 1).unwrap();
-        let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
-        multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, sm, l);
-        multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, sm, l);
-
-        println!();
-
         if thorough {
+            let l = Layout::from_size_align(32, 1).unwrap();
+            let sm = devutils::get_devsmalloc!();
+            devutils::dev_instance::setup();
+            multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, sm, l);
+            multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, sm, l);
+
+            const TOT_ITERS: u64 = 10_000_000;
+            for numthreads in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+                let iters_per_thread = TOT_ITERS / numthreads as u64;
+                let l = Layout::from_size_align(8, 1).unwrap();
+                multithread_free_hotspot!(numthreads, iters_per_thread, sm, l);
+            }
+
+            println!();
+
             mt_bench!(adrww, THREADS_WAY_TOO_MANY, iters_many, seed);
             mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, seed);
             mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, seed);

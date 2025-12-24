@@ -1,5 +1,5 @@
 [package]
-name = "simplebench"
+name = "bench"
 version.workspace = true
 edition.workspace = true
 
@@ -14,4 +14,4 @@ snmalloc-rs = "0.3"
 rpmalloc = "0.2"
 
 [[bin]]
-name = "simplebench"
+name = "bench"

@@ -73,7 +73,7 @@ where
 
     let nspi = best_ns / iters_per_batch;
     let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
-    println!("name: {name:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses_per_iter}", iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     best_ns
 }
@@ -102,7 +102,7 @@ where
 
     let nspi = best_ns / iters_per_batch;
     let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses_per_iter}", threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses_per_iter}", threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     // Dealloc all allocations so that we don't run out of space.
     for mut ts in tses {
@@ -116,11 +116,100 @@ use std::sync::Barrier;
 use std::thread;
 
 #[macro_export]
-macro_rules! multithread_hotspot {
+    macro_rules! multithread_hotspot {
     ($f:expr, $threads:expr, $iters:expr, $al:expr, $l:expr) => {{
         let name = concat!("mths-", stringify!($f));
         $crate::multithread_hotspot_inner($f, $threads, $iters, name, $al, $l)
     }};
+}
+
+#[macro_export]
+    macro_rules! multithread_free_hotspot {
+    ($threads:expr, $iters:expr, $al:expr, $l:expr) => {{
+        let name = format!("mths-{}", $threads);
+        $crate::multithread_free_hotspot_inner($threads, $iters, &name, $al, $l)
+    }};
+}
+
+/// Wrapper to mark raw pointers as Send for cross-thread deallocation
+#[derive(Clone, Copy)]
+struct SendPtr(*mut u8);
+
+unsafe impl Send for SendPtr {}
+
+/// This is to stress test the case that many threads are simultaneously free'ing slots in the same
+/// slab as each other.
+///
+/// Returns picoseconds per free. Not picoseconds per (free per thread). Picoseconds per free. The
+/// number of frees is equal to `numthreads` * `iters_per_thread`.
+///
+/// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
+pub fn multithread_free_hotspot_inner<A>(numthreads: u32, iters_per_thread: u64, name: &str, al: &A, l: Layout) -> u64
+where
+    A: GlobalAlloc + Send + Sync
+{
+    let iters_per_thread = iters_per_thread as usize;
+    let numthreads = numthreads as usize;
+    let tot_iters = iters_per_thread * numthreads;
+
+    let mut best_ps = u64::MAX;
+
+    for _batch in 0..NUM_BATCHES {
+        // Allocate all pointers upfront
+        let mut pointers: Vec<SendPtr> = Vec::with_capacity(tot_iters);
+        for _ in 0..tot_iters {
+            let p = unsafe { al.alloc(l) };
+            assert!(!p.is_null());
+            pointers.push(SendPtr(p));
+        }
+
+        // Split pointers among threads
+        let chunks: Vec<Vec<SendPtr>> = pointers
+            .chunks(iters_per_thread)
+            .map(|c| c.to_vec())
+            .collect();
+
+        let start_barrier = Barrier::new(numthreads + 1);
+        let end_barrier = Barrier::new(numthreads + 1);
+
+        let elap_ps = thread::scope(|s| {
+            for chunk in &chunks {
+                let chunk = chunk.clone();
+                s.spawn(|| {
+                    start_barrier.wait();
+
+                    for SendPtr(p) in chunk {
+                        unsafe { al.dealloc(p, l) };
+                    }
+
+                    end_barrier.wait();
+                });
+            }
+
+            start_barrier.wait();
+            // Start timing right before releasing threads
+            let start = clock(libc::CLOCK_MONOTONIC_RAW);
+
+            // Wait for all threads to finish
+            end_barrier.wait();
+            let end = clock(libc::CLOCK_MONOTONIC_RAW);
+
+            assert!(end > start);
+            (end - start) * 1000
+        });
+
+        if elap_ps < best_ps {
+            best_ps = elap_ps;
+        }
+    }
+
+    let pspi = best_ps / tot_iters as u64;
+    let hundredpses = (pspi / 100) % 10;
+    let nspi = pspi / 1000;
+    let best_ns = best_ps / 1000;
+    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses:1}", numthreads.separate_with_commas(), tot_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+
+    best_ps / tot_iters as u64
 }
 
 /// This is to stress test the case that one slab's flh is under heavy multi-threading contention
@@ -130,11 +219,13 @@ macro_rules! multithread_hotspot {
 /// ones that are the %64'th to first-allocate then get unblocked, and proceed to deallocate,
 /// allocate, deallocate, allocate etc. `iters` times.
 ///
-/// Returns picoseconds per iter (not picoseconds per (iter * hotspot_threads), nor yet picoseconds
-/// per (iter * total_threads)). picoseconds per iter
+/// Returns picoseconds per iters_pbpht. Not picoseconds per (iters * hotspot_threads), nor yet
+/// picoseconds per (iters * total_threads). Picoseconds per iter-per-batch-per-hot-thread.
+///
+/// iters_pbpht: iters per batch per hot thread
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_per_batch: u64, name: &str, al: &T, l: Layout) -> u64
+pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_pbpht: u64, name: &str, al: &T, l: Layout) -> u64
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -172,15 +263,15 @@ where
 
                 // Spawn hot thread
                 s.spawn(|| {
-                    let _ptr = unsafe { al.alloc(l) };
-                    let mut ts = TestState::new(iters_per_batch, 0);
+                    let _ptr = unsafe { al.alloc(l) }; // xxx this gets leaked oh well
+                    let mut ts = TestState::new(iters_pbpht, 0);
 
                     hot_barrier.wait();
 
                     setup_complete_barrier.wait();
                     hot_start_barrier.wait();
 
-                    for _ in 0..iters_per_batch {
+                    for _ in 0..iters_pbpht {
                         f(al, &mut ts);
                     }
 
@@ -194,7 +285,7 @@ where
                 // Spawn cool threads
                 for _ in 0..cool_threads_per_round {
                     s.spawn(|| {
-                        let _ptr = unsafe { al.alloc(l) };
+                        let _ptr = unsafe { al.alloc(l) }; // xxx this gets leaked oh well
                         cool_barrier.wait();
                         setup_complete_barrier.wait();
                         final_barrier.wait();
@@ -215,6 +306,7 @@ where
 
             final_barrier.wait();
 
+            assert!(end > start);
             end - start
         });
 
@@ -224,10 +316,10 @@ where
     }
 
     let elap_ps = best_ns * 1000;
-    let pspi = elap_ps / iters_per_batch;
+    let pspi = elap_ps / iters_pbpht;
     let hundredpses = (pspi / 100) % 10;
     let nspi = pspi / 1000;
-    println!("name: {name:>17}, threads: {:>8}, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters_pbpht.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
 
     pspi
 }
@@ -260,11 +352,11 @@ macro_rules! with_all_allocators {
         $($macro_path)::+! {
             $($args)* ;
             @allocators
-                bi, "builtin",  $crate::GlobalAllocWrap,       {}; // This causes a crash on Macos+M4Max
-                mm, "mimalloc", mimalloc::MiMalloc,            {};
-                jm, "jemalloc", tikv_jemallocator::Jemalloc,   {};
-                nm, "snmalloc", snmalloc_rs::SnMalloc,         {};
-                rp, "rpmalloc", rpmalloc::RpMalloc,            {};
+                de, "default",  $crate::GlobalAllocWrap,       {}; // This causes a crash on Macos+M4Max
+            mm, "mimalloc", mimalloc::MiMalloc,            {};
+            jm, "jemalloc", tikv_jemallocator::Jemalloc,   {};
+            nm, "snmalloc", snmalloc_rs::SnMalloc,         {};
+            rp, "rpmalloc", rpmalloc::RpMalloc,            {};
             @candidate
                 sm, "smalloc",  devutils::get_devsmalloc!(),   { devutils::dev_instance::setup(); };
         }
@@ -306,13 +398,13 @@ macro_rules! compare_st_bench_impl {
             let $short = $instance;
             $($setup)*
         )+
-        let $cand_short = $cand_instance;
+            let $cand_short = $cand_instance;
         $($cand_setup)*
 
         // Create atomic storage for results
-        let results: Vec<(AtomicU64, &str)> = vec![
-            $( (AtomicU64::new(0), $display), )+
-        ];
+            let results: Vec<(AtomicU64, &str)> = vec![
+                $( (AtomicU64::new(0), $display), )+
+            ];
         let candidate_result = AtomicU64::new(0);
 
         // Spawn threads for each allocator
@@ -344,7 +436,7 @@ macro_rules! compare_st_bench_impl {
                     let nspi = best_ns / iters_per_batch;
                     let frac = ((best_ns * 10) / iters_per_batch) % 10;
                     let name = format!("{}_st_{}-1", short_str, stringify!($func));
-                    println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                    println!("name: {:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
 
                     result_ref.store(best_ns, Ordering::Relaxed);
                 });
@@ -352,7 +444,7 @@ macro_rules! compare_st_bench_impl {
             )+
 
             // Candidate allocator
-            let cand_result_ref = &candidate_result;
+                let cand_result_ref = &candidate_result;
             let cand_ref = $cand_short;
             let cand_short_str = stringify!($cand_short);
             let iters_per_batch = $iters_per_batch;
@@ -377,7 +469,7 @@ macro_rules! compare_st_bench_impl {
                 let nspi = best_ns / iters_per_batch;
                 let frac = ((best_ns * 10) / iters_per_batch) % 10;
                 let name = format!("{}_st_{}-1", cand_short_str, stringify!($func));
-                println!("name: {:>17}, threads:        1, iters: {:>11}, ns: {:>15}, ns/i: {:>9}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                println!("name: {:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
 
                 cand_result_ref.store(best_ns, Ordering::Relaxed);
             });
@@ -432,11 +524,11 @@ macro_rules! compare_mt_bench_impl {
             let $short = $instance;
             $($setup)*
         )+
-        let $cand_short = $cand_instance;
+            let $cand_short = $cand_instance;
         $($cand_setup)*
 
         // Run benchmarks sequentially (mt_bench already uses multiple threads internally)
-        let mut results: Vec<(&str, u64)> = Vec::new();
+            let mut results: Vec<(&str, u64)> = Vec::new();
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_mt_{}-{}", stringify!($short), func_name, $threads);
@@ -445,12 +537,49 @@ macro_rules! compare_mt_bench_impl {
         )+
 
         // Candidate
-        let f = |al: &_, s: &mut TestState| { $func(al, s) };
+            let f = |al: &_, s: &mut TestState| { $func(al, s) };
         let name = format!("{}_mt_{}-{}", stringify!($cand_short), func_name, $threads);
         let candidate_ns = $crate::multithread_bench(f, $threads, $iters_per_batch, &name, $cand_short, $seed);
 
         $crate::print_comparisons(candidate_ns, &results);
     }};
+}
+
+#[macro_export]
+macro_rules! compare_fh_bench_impl {
+    (
+        $threads:expr, $iters:expr, $l:expr ;
+        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
+        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+    ) => {{
+        // Create all allocator instances and run setup
+        $(
+            let $short = $instance;
+            $($setup)*
+        )+
+            let $cand_short = $cand_instance;
+        $($cand_setup)*
+
+        // Run benchmarks sequentially
+            let mut results: Vec<(&str, u64)> = Vec::new();
+        $(
+            let name = format!("{}_fh-{}", stringify!($short), $threads);
+            let ns = $crate::multithread_free_hotspot_inner($threads, $iters, &name, &$short, $l);
+            results.push(($display, ns));
+        )+
+
+        // Candidate
+            let name = format!("{}_fh-{}", stringify!($cand_short), $threads);
+        let candidate_ns = $crate::multithread_free_hotspot_inner($threads, $iters, &name, $cand_short, $l);
+        $crate::print_comparisons(candidate_ns, &results);
+    }};
+}
+
+#[macro_export]
+macro_rules! compare_fh_bench {
+    ($threads:expr, $iters:expr, $l:expr) => {
+        $crate::with_all_allocators!($crate::compare_fh_bench_impl!($threads, $iters, $l))
+    };
 }
 
 #[macro_export]
@@ -479,11 +608,11 @@ macro_rules! compare_hs_bench_impl {
             let $short = $instance;
             $($setup)*
         )+
-        let $cand_short = $cand_instance;
+            let $cand_short = $cand_instance;
         $($cand_setup)*
 
         // Run benchmarks and collect results
-        let mut results: Vec<(&str, u64)> = Vec::new();
+            let mut results: Vec<(&str, u64)> = Vec::new();
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_hs_{}-{}", stringify!($short), func_name, $threads);
@@ -492,7 +621,7 @@ macro_rules! compare_hs_bench_impl {
         )+
 
         // Candidate
-        let f = |al: &_, s: &mut TestState| { $func(al, s) };
+            let f = |al: &_, s: &mut TestState| { $func(al, s) };
         let name = format!("{}_hs_{}-{}", stringify!($cand_short), func_name, $threads);
         let candidate_ns = $crate::multithread_hotspot_inner(f, $threads, $iters_per_batch, &name, $cand_short, l);
 
