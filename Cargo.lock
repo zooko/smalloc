@@ -227,6 +227,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "smalloc-ffi"
+version = "7.3.2"
+dependencies = [
+ "smalloc",
+]
+
+[[package]]
 name = "smalloc-macros"
 version = "0.1.0"
 dependencies = [

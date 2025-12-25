@@ -37,8 +37,8 @@ baseline-default`. `smalloc` improves the performance of `simd_json` substantial
 
 There are two limitations:
 
-1. You can't allocate more than 2 GiB in a single `malloc()`, and you can only allocate at most 480
-   allocations between 1 GiB and 2 GiB, and at most 960 allocations between 512 MiB and 1 GiB, and
+1. You can't allocate more than 2 GiB in a single `malloc()`, and you can only allocate at most 496
+   allocations between 1 GiB and 2 GiB, plus at most 1008 allocations between 512 MiB and 1 GiB, and
    so on. (See below for complete details.)
    
 2. You can't instantiate more than one instance of `smalloc` in a single process.
@@ -47,7 +47,7 @@ If you run into either of these limitations in practice, open an issue on the `s
 repository. It would be possible to lift these limitations, but I'd like to know if it is needed in
 practice before complicating the code to do so.
 
-# Usage
+# Usage in Rust Code
 
 Add `smalloc` and `ctor` to your Cargo.toml by executing `cargo add smalloc ctor`, then add this to
 your code:
@@ -71,6 +71,10 @@ which case open an issue on github).
 
 That's it! There are no other features you could consider using, no other changes you need to make,
 no configuration options, no tuning options, no nothing.
+
+# Usage in C/C++/native code
+
+See [./smalloc-ffi/README.md](./smalloc-ffi/README.md).
 
 # Tests
 
@@ -139,15 +143,15 @@ fixed-length "slots" of bytes. Every pointer returned by a call to `malloc()` or
 pointer to the beginning of one of those slots, and that slot is used exclusively for that memory
 allocation until it is `free()`'ed.
 
-Each slab holds slots of a specific fixed length, called a "size class". Size class 3 contains
-8-byte slots, size class 4 contains 16-byte slots, and so on which each size class having slots
-twice as long as the size class before.
+Each slab holds slots of a specific fixed length, called a "size class". Size class 4 contains
+16-byte slots, size class 5 contains 32-byte slots, and so on with each size class having slots
+twice as big as the size class before.
 
-Within each size class there are 32 separate slabs holding slots of that size. (See below for why.)
+Within each size class there are 16 separate slabs holding slots of that size. (See below for why.)
 
-Sizeclasses 0, 1 and 2 are unused and the space reserved for them is repurposed to hold "free list
-heads" (see below). Figure 1 shows the information encoded into memory addresses (shown in binary
-notation) of slots and of bytes of data within each slot:
+Sizeclasses 0, 1, 2, and 3 are unused and the space reserved for them is repurposed to hold "free
+list heads" (see below). Figure 1 shows the information encoded into memory addresses (shown in
+binary notation) of slots and of bytes of data within each slot:
 
 ```text
 Figure 1. Overview
@@ -157,60 +161,59 @@ slabs
    0   000000000000000000000000000000000000000000000       used for flh's
 
    1   unused
-   
+
    2   unused
-   
+
+   3   unused
+
         slab  sc   slotnum                      data
        [   ][   ][                           ][    ]
   sc   address in binary                             slotsize slots slabs
   --   --------------------------------------------- -------- ----- -----
-       [sla][sc ][slotnum                       ][d]
-   3   000000001100000000000000000000000000000000000     2^ 3  2^32   2^5
+       [sl][sc ][slotnum                       ][da]
+   4   000000100000000000000000000000000000000000000     2^ 4  2^32   2^4
 
-       [sla][sc ][slotnum                      ][da]
-   4   000000010000000000000000000000000000000000000     2^ 4  2^31   2^5
+       [sl][sc ][slotnum                      ][dat]
+   5   000000101000000000000000000000000000000000000     2^ 5  2^31   2^4
 
-       [sla][sc ][slotnum                     ][dat]
-   5   000000010100000000000000000000000000000000000     2^ 5  2^30   2^5
+       [sl][sc ][slotnum                     ][data]
+   6   000000110000000000000000000000000000000000000     2^ 6  2^30   2^4
 
-       [sla][sc ][slotnum                    ][data]
-   6   000000011000000000000000000000000000000000000     2^ 6  2^29   2^5
+       [sl][sc ][slotnum                    ][data ]
+   7   000000111000000000000000000000000000000000000     2^ 7  2^29   2^4
 
-       [sla][sc ][slotnum                   ][data ]
-   7   000000011100000000000000000000000000000000000     2^ 7  2^28   2^5
+       [sl][sc ][slotnum                   ][data  ]
+   8   000001000000000000000000000000000000000000000     2^ 8  2^28   2^4
 
-       [sla][sc ][slotnum                  ][data  ]
-   8   000000100000000000000000000000000000000000000     2^ 8  2^27   2^5
-
-   9                                                     2^ 9  2^26   2^5
-  10                                                     2^10  2^25   2^5
-  11                                                     2^11  2^24   2^5
-  12                                                     2^12  2^23   2^5
-  13                                                     2^13  2^22   2^5
-  14                                                     2^14  2^21   2^5
-  15                                                     2^15  2^20   2^5
-  16                                                     2^16  2^19   2^5
-  17                                                     2^17  2^18   2^5
-  18                                                     2^18  2^17   2^5
-  19                                                     2^19  2^16   2^5
-  20                                                     2^20  2^15   2^5
-  21                                                     2^21  2^14   2^5
-  22                                                     2^22  2^13   2^5
-  23                                                     2^23  2^12   2^5
-  24                                                     2^24  2^11   2^5
-  25                                                     2^25  2^10   2^5
-  26                                                     2^26  2^ 9   2^5
-  27                                                     2^27  2^ 8   2^5
-  28                                                     2^28  2^ 7   2^5
+   9                                                     2^ 9  2^27   2^4
+  10                                                     2^10  2^26   2^4
+  11                                                     2^11  2^25   2^4
+  12                                                     2^12  2^24   2^4
+  13                                                     2^13  2^23   2^4
+  14                                                     2^14  2^22   2^4
+  15                                                     2^15  2^21   2^4
+  16                                                     2^16  2^20   2^4
+  17                                                     2^17  2^19   2^4
+  18                                                     2^18  2^18   2^4
+  19                                                     2^19  2^17   2^4
+  20                                                     2^20  2^16   2^4
+  21                                                     2^21  2^15   2^4
+  22                                                     2^22  2^14   2^4
+  23                                                     2^23  2^13   2^4
+  24                                                     2^24  2^12   2^4
+  25                                                     2^25  2^11   2^4
+  26                                                     2^26  2^10   2^4
+  27                                                     2^27  2^ 9   2^4
+  28                                                     2^28  2^ 8   2^4
  
-       [sla][sc ][slot][data                       ]
-  29   000001110100000000000000000000000000000000000     2^29  2^ 6   2^5
+       [sl][sc ][slotn][data                       ]
+  29   000011101000000000000000000000000000000000000     2^29  2^ 7   2^5
 
-       [sla][sc ][slo][data                        ]
-  30   000001111000000000000000000000000000000000000     2^30  2^ 5   2^5
+       [sl][sc ][slot][data                        ]
+  30   000011110000000000000000000000000000000000000     2^30  2^ 6   2^5
 
-       [sla][sc ][sl][data                         ]
-  31   000001111100000000000000000000000000000000000     2^31  2^ 4   2^5
+       [sl][sc ][slo][data                         ]
+  31   000011111000000000000000000000000000000000000     2^31  2^ 5   2^4
 ```
 
 ### Free-Lists
@@ -272,8 +275,11 @@ same space where the data goes when the slot is in use! Each data slot is either
 meaning you can use its space to hold the pointer to the next free list entry, or currently
 allocated, meaning it is not in the free list and doesn't have a next-pointer.
 
-This is also why not to use size classes 0 (for 1-byte slots), 1 (for 2-byte slots), or 2 (for
-4-byte slots): because you need 8 bytes in each slot to store the next-entry link.
+(This is also why not to use size classes 0, 1, or 2: because you need 8 bytes in each slot to store
+the next-entry link. The reason not use size class 3 is different: because on Linux and Macos on
+x86-64 and arm64, the C standard requires allocations be aligned to 16-bytes. We could provide
+8-byte slots for Rust code, but not for C code while satisfying that standard. So, for simplicity,
+we just leave out the 8-byte slots entirely.)
 
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
 colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
@@ -380,7 +386,7 @@ To do this, define a global static variable named `GLOBAL_THREAD_NUM`, initializ
 Give each thread a thread-local variable named `THREAD_NUM`. The first time `alloc()` is called from
 within a given thread, use the atomic `fetch_add` operation to increment `GLOBAL_THREAD_NUM` and set
 this thread's `THREAD_NUM` to the previous value of `GLOBAL_THREAD_NUM`. Also give each thread
-another thread-local variable named `SLAB_NUM`, and set it to `THREAD_NUM` mod 32.
+another thread-local variable named `SLAB_NUM`, and set it to `THREAD_NUM` mod 16.
 
 Whenever allocating, allocate from the slab indicated by your thread's `SLAB_NUM`.
 
@@ -432,9 +438,9 @@ If you accept the Big Idea that "avoiding reserving too much virtual address spa
 important goal for a memory manager, what *are* good goals? `smalloc` was designed with the
 following goals, written here in roughly descending order of importance:
 
-1. Be simple, in both design and implementation. This helps greatly to ensure correctness -- always
-   a critical issue in modern computing. "Simplicity is the inevitable price that we must pay for
-   correctness."--Tony Hoare (paraphrased)
+1. Be simple. This helps greatly to ensure correctness -- always a critical issue in modern
+   computing. "Simplicity is the inevitable price that we must pay for correctness."--Tony Hoare
+   (paraphrased)
 
    Simplicity also eases making improvements to the codebase and learning from the codebase.
 
@@ -509,7 +515,7 @@ following goals, written here in roughly descending order of importance:
    pay the cost of a potential-cache-miss to write into the memory that `malloc()` returned.
 
    To execute `smalloc`'s `malloc()` and then write into the resulting memory takes, in the common
-   case, only three potential cache misses.
+   case, at most three cache misses.
 
    The main reason `smalloc` incurs so few potential-cache-misses in these code paths is the
    sparseness of the data layout. `smalloc` has pre-reserved a vast swathe of address space and
@@ -568,13 +574,13 @@ following goals, written here in roughly descending order of importance:
    because the base pointer is fixed and shared -- every call (by any thread) to `malloc()`,
    `free()`, or `realloc()` accesses the base pointer, so it is more likely to be in cache.
    
-   A similar property holds for the potential cache-miss of accessing the `SLAB_NUM` -- if this
-   thread has recently called `malloc()` then this thread's `SLAB_NUM` will likely already be in
-   cache, but if this thread has not made such a call recently then it would likely cache-miss.
+   Similarly, for accessing the `SLAB_NUM`, if this thread has recently called `malloc()` then this
+   thread's `SLAB_NUM` will likely already be in cache, but if this thread has not made such a call
+   recently then it would likely cache-miss.
    
-   And of course a similar property holds for the potential cache-miss of accessing the `flh` -- if
-   this thread has recently called `malloc()`, `free()`, or `realloc()` for an allocation of this
-   size class, then the `flh` for this slab will already be in cache.
+   And similarly for the potential cache-miss of accessing the `flh` -- if any thread using this
+   slab has recently called `malloc()`, `free()`, or `realloc()` for an allocation of this size
+   class, then the `flh` for this slab will already be in cache.
 
 4. Be *consistently* efficient.
 
@@ -666,13 +672,11 @@ a very useful tool!
   that works only platforms with larger (than 48-bit) virtual memory addresses and offers these
   advantages. TODO: make an even simpler smalloc ("ssmalloc"??) for 5-level-page-table systems.
 
-* Crib from parking_lot and/or static_locks or something for how to ask the OS to put a thread to
-  sleep when it has encountered an flh collision, and then wake it again the next time a different
-  thread successfully updates the flh
-
 * Rewrite it in Zig. :-)
 
-* Get an AI to review the code. :-)
+* make it so you can use the 8-byte slots (size class 3) when you're using only Rust code (not using
+  `smalloc-ffi`) or when you're on a platform that allows 8-byte alignment of the results of
+  `malloc`?
 
 * make it work with valgrind
   * per the valgrind manual:

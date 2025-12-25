@@ -1,59 +1,401 @@
 #![doc = include_str!("../../README.md")]
-#![feature(stmt_expr_attributes)]
 #![feature(likely_unlikely)]
-#![feature(pointer_is_aligned_to)]
-#![feature(unchecked_shifts)]
 
 // Table of contents of this file:
 //
-// * Fixed constants chosen for the design
-// * Constants determined by the constants above
-//   + Constants having to do with the use of slot (and free list) pointers
-//   + Constants having to do with the use of flh pointers
-//   + Constants having to do with the use of flh words
-//   + Constants for calculating the total virtual address space to reserve
-// * Implementation
+// * Public structs and methods
+// * Private implementation code 
+//   + Fixed constants chosen for the design
+//   + Constants determined by the constants above
+//     - Constants having to do with the use of slot (and free list) pointers
+//     - Constants having to do with the use of flh pointers
+//     - Constants having to do with the use of flh words
+//     - Constants for calculating the total virtual address space to reserve
+//xxx update ToC
 
+
+// --- Public structs and methods ---
+
+pub struct Smalloc {
+    inner: UnsafeCell<SmallocInner>,
+}
+
+impl Smalloc {
+    pub const fn new() -> Self { Self { inner: UnsafeCell::new(SmallocInner { smbp: 0, }), } }
+
+    /// Initializes the allocator.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure:
+    /// - This method is called exactly once
+    /// - This is called before any dynamic allocation occurs
+    /// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
+    pub unsafe fn init(&self) {
+        let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+        assert!(sysbp != 0);
+        let inner = unsafe { &mut *self.inner.get() };
+        inner.smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
+    }
+}
+
+unsafe impl GlobalAlloc for Smalloc {
+    #[inline(always)]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        debug_assert!(self.inner().smbp != 0);
+        let reqsiz = layout.size();
+        let reqalign = layout.align();
+        debug_assert!(reqsiz > 0);
+        debug_assert!(reqalign > 0);
+        debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
+
+        let sc = reqali_to_sc(reqsiz, reqalign);
+
+        if unlikely(sc >= NUM_SCS) {
+            // This request exceeds the size of our largest sizeclass, so return null pointer.
+            null_mut()
+        } else {
+            self.inner_alloc(sc)
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        debug_assert!(layout.align().is_power_of_two()); // alignment must be a power of two
+
+        self.inner_dealloc(ptr.addr());
+    }
+
+    #[inline(always)]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, reqsize: usize) -> *mut u8 {
+        debug_assert!(!ptr.is_null());
+
+        let p_addr = ptr.addr();
+        let smbp = self.inner().smbp;
+
+        // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
+        // less than or equal to the highest slot pointer.
+
+        assert!(p_addr >= smbp);
+        assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
+
+        // Okay now we know that it is a pointer into smalloc's region.
+
+        let oldsize = layout.size();
+        debug_assert!(oldsize > 0);
+        let oldalignment = layout.align();
+        debug_assert!(oldalignment > 0);
+        debug_assert!(oldalignment.is_power_of_two()); // alignment must be a power of two
+        debug_assert!(reqsize > 0);
+
+        debug_assert!(reqali_to_sc(oldsize, oldalignment) >= NUM_UNUSED_SCS);
+        debug_assert!(reqali_to_sc(oldsize, oldalignment) < NUM_SCS);
+
+        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
+        debug_assert!(oldsc >= NUM_UNUSED_SCS);
+        debug_assert!(oldsc < NUM_SCS);
+        debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
+
+        // It's possible that the slot `ptr` is currently in is larger than the slot size necessary
+        // to hold the size that the user requested when originally allocating (or re-allocating)
+        // `ptr`.
+        debug_assert!(oldsc >= reqali_to_sc(oldsize, oldalignment));
+
+        let reqsc = reqali_to_sc(reqsize, oldalignment);
+        debug_assert!(reqsc >= NUM_UNUSED_SCS);
+
+        // If the requested slot is <= the original slot, just return the pointer and we're done.
+        if unlikely(reqsc <= oldsc) {
+            return ptr;
+        }
+
+        if unlikely(reqsc >= NUM_SCS) {
+            // This request exceeds the size of our largest sizeclass, so return null pointer.
+            null_mut()
+        } else {
+            // The "Growers" strategy. Promote the new sizeclass to the next one up in this
+            // schedule:
+            let reqsc =
+                if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
+                if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
+                if reqsc <= 12 { 12 } else // page size on Linux and Windows
+                if reqsc <= 14 { 14 } else // page size on Apple OS
+                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
+                if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
+                if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
+            { reqsc };
+
+            let newp = self.inner_alloc(reqsc);
+            debug_assert!(!newp.is_null());
+
+            // Copy the contents from the old location.
+            unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
+
+            // Free the old slot.
+            self.inner_dealloc(p_addr);
+
+            newp
+        }
+    }
+}
+
+
+// --- Private implementation code ---
 
 // gen_mask macro for readability
 macro_rules! gen_mask { ($bits:expr) => { ((1 << $bits) - 1) }; }
 
+#[doc(hidden)]
+pub mod i {
+    // Everything in this `i` ("internal") module is for the use of the smalloc core lib (this file)
+    // and for the use of the smalloc-ffi package.
 
-// --- Fixed constants chosen for the design ---
+    // --- Fixed constants chosen for the design ---
 
-// NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
-// because that means there are 32 size classes, and the first one (that is used -- see below) has
-// 2^32 slots. This is the largest number of slots that we can encode their slot numbers into a
-// 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more allocations
-// of 1, 2, 3, or 4 bytes into each cache line.
-const NUM_SC_BITS: u8 = 5;
+    // NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
+    // because that results in a total of 32 sizeclasses, the largest one of which can hold 2 GiB
+    // slots, and the smallest one of which can hold 2^32 slots. Combined with 2^4 slabs (see
+    // below), this fits into our total virtual memory space constraints (around 93 trillion
+    // addresses on Linux).
+    pub const NUM_SC_BITS: u8 = 5;
 
-// NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
-pub(crate) const NUM_SLABS_BITS: u8 = 5;
+    // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
+    pub const NUM_SLABS_BITS: u8 = 4;
 
-// The first three size classes (which would hold 1-byte, 2-byte, and 4-byte slots) are not used. In
-// fact, we re-use the unused space in size class 0 to hold flh's.
-const NUM_UNUSED_SCS: u8 = 3;
+    // The first four size classes (which would hold 1-byte, 2-byte, 4-byte, and 8-byte slots) are
+    // not used.
+    pub const NUM_UNUSED_SCS: u8 = 4;
 
 
-// --- Constants determined by the constants above ---
+    // --- Constants determined by the constants above ---
 
-// See the ASCII-art map in `README.md` for where these bits fit into addresses.
+    // See the ASCII-art map in `README.md` for where these bits fit into addresses.
 
-const NUM_SCS: u8 = 1 << NUM_SC_BITS; // 32
+    pub const NUM_SCS: u8 = 1 << NUM_SC_BITS; // 32
+
+    pub const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS); // 0b1111
+
+    // This is how many bits hold the data and the slotnum:
+    pub const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 36
+
+    // This is how many bits to shift a sizeclass to fit the sizeclass into a slot address:
+    pub const SC_ADDR_SHIFT_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS; // 36
+
+    // The smalloc address of the slot with the lowest address is:
+    pub const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << SC_ADDR_SHIFT_BITS; // 0b100000000000000000000000000000000000000
+
+    pub const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS); // 0b1111
+
+    // Mask of the bits of the slabnum in a slot's address:
+    pub const SLABNUM_ADDR_MASK: usize = (SLABNUM_ALONE_MASK as usize) << (NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS); // 0b111100000000000000000000000000000000000000000
+
+    // Mask of the bits of the sizeclass in a slot's address:
+    pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS) << SC_ADDR_SHIFT_BITS; // 0b11111000000000000000000000000000000000000
+
+    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << (NUM_UNUSED_SCS + 1); // 32
+    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 30; The -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
+
+    pub const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
+
+    // The smalloc address of the slot with the highest address is:
+    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111111111100000000000000000000000000000000
+
+    pub struct SmallocInner { pub smbp: usize, }
+
+    impl Smalloc {
+        #[inline(always)]
+        pub fn inner_dealloc(&self, p_addr: usize) {
+            // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
+            // less than or equal to the highest slot pointer.
+            let smbp = self.inner().smbp;
+            assert!(p_addr >= smbp);
+            assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
+
+            // Okay now we know that it is a pointer into smalloc's region.
+
+            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
+            debug_assert!(sc >= NUM_UNUSED_SCS);
+            debug_assert!(sc < NUM_SCS);
+            debug_assert!(sc == ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8);
+
+            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> SLNSC_SHIFT_FLH_ADDR_TO_SLOT_ADDR;
+            let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+            let newslotnum = p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK;
+            debug_assert!(newslotnum.trailing_zeros() >= sc as u32);
+            debug_assert!(newslotnum < SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(sc));
+
+            loop {
+                // Load the value (current first entry slot num) from the flh
+                let flhword = flh.load(Relaxed);
+                let curfirstentryslotnum = flhword & SLOTNUM_AND_DATA_ADDR_MASK;
+                debug_assert!(curfirstentryslotnum.trailing_zeros() >= sc as u32);
+                debug_assert!(newslotnum != curfirstentryslotnum);
+                // The curfirstentryslotnum can be the sentinel slotnum.
+                debug_assert!(curfirstentryslotnum <= SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(sc));
+
+                // Encode the curfirstentryslotnum as the next-entry link for the new entry
+                let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, 1 << sc);
+                debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, 1 << sc));
+
+                // Write it into the new slot's link
+                unsafe { *(p_addr as *mut u64) = next_entry_link };
+
+                // Increment the push counter
+                let counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
+                debug_assert!(counter.trailing_zeros() >= NUM_SLOTNUM_AND_DATA_BITS as u32);
+
+                // The new flhword is made up of the push counter and the newslotnum:
+                let newflhword = counter | newslotnum;
+
+                // Compare and exchange
+                if flh.compare_exchange_weak(flhword, newflhword, Release, Relaxed).is_ok() {
+                    break;
+                }
+            }
+        }
+
+        #[inline(always)]
+        pub fn inner_alloc(&self, orig_sc: u8) -> *mut u8 {
+            debug_assert!(orig_sc >= NUM_UNUSED_SCS);
+            debug_assert!(orig_sc < NUM_SCS);
+
+            // If the slab is full, or if there is a collision when updating the flh, we'll switch to
+            // another slab in this same sizeclass.
+
+            // `orig_slabnum_for_flhp` has the slabnum in the bit-position where it fits into an flh
+            // address.
+            let (orig_slabnum_for_flhp, threadnum) = get_slabnum_and_threadnum();
+
+            debug_assert!(orig_slabnum_for_flhp.trailing_zeros() >= (FLHWORD_SIZE_BITS + NUM_SC_BITS) as u32);
+
+            // "slnsc" is the concatenation of the slabnum bits and sc bits in their positions for use
+            // in an flh address (i.e. left-shifted FLHWORD_SIZE_BITS).
+            let mut slnsc = orig_slabnum_for_flhp | (orig_sc as usize) << FLHWORD_SIZE_BITS;
+
+            // In this size class, the sentinel slotnum and the unit value of the sc are:
+            let mut sentinelslotnum = SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(orig_sc);
+            let mut slotnum_unit = 1 << orig_sc;
+
+            let mut a_slab_was_full = false;
+
+            let smbp = self.inner().smbp;
+
+            loop {
+                // Load the value from the flh
+                let flhptr = smbp | slnsc;
+                let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+                let flhword = flh.load(Acquire);
+                let curfirstentryslotnum = flhword & SLOTNUM_AND_DATA_ADDR_MASK;
+
+                debug_assert!(curfirstentryslotnum.trailing_zeros() >= ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS) as u32);
+
+                // curfirstentryslotnum can be the sentinel value.
+                debug_assert!(curfirstentryslotnum <= sentinelslotnum);
+
+                if likely(curfirstentryslotnum < sentinelslotnum) {
+                    // There is a slot available in the free list.
+                    
+                    // Read the bits from the first entry's link (to the second entry) and decode them
+                    // into a slot number. These bits might be invalid, if the flh has changed since we
+                    // read it above and another thread has started using these bits for something else
+                    // (e.g. user data or another linked list update). That's okay because in that case
+                    // our attempt to update the flh below will fail so the invalid bits will not get
+                    // stored.
+                    let curfirstentry_p = (smbp | (slnsc << SLNSC_SHIFT_FLH_ADDR_TO_SLOT_ADDR) | curfirstentryslotnum as usize) as *mut u64;
+
+                    debug_assert!((curfirstentry_p as usize).trailing_zeros() >= ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS) as u32);
+                    debug_assert!(((curfirstentry_p as usize & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) == ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS));
+                    debug_assert!((curfirstentry_p as usize - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p as usize - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
+
+                    let curfirstentrylink_v = unsafe { *curfirstentry_p };
+                    let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, slotnum_unit);
+
+                    // Write the new first entry slot num in place of the old in our local (in a
+                    // register) copy of flhword, leaving the push-counter bits unchanged.
+                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum;
+
+                    // Compare and exchange
+                    if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
+                        debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
+                        debug_assert!(newfirstentryslotnum.trailing_zeros() as usize >= (slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS);
+
+                        if unlikely(orig_slabnum_for_flhp != (slnsc & SLABNUM_FLH_ADDR_MASK)) {
+                            // The slabnum changed. Save the new slabnum for next time.
+                            set_slab_num(slnsc & SLABNUM_FLH_ADDR_MASK);
+                        }
+
+                        break curfirstentry_p as *mut u8;
+                    } else {
+                        // Update collision on the flh. Fail over to a different slab in the same size
+                        // class.
+
+                        // Put the bits of the new slabnum into the slnsc.
+                        slnsc = failover_slabnum(slnsc, threadnum);
+                    }
+                } else {
+                    // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
+                    // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
+                    // different slab in the same size class.œ
+
+                    // Put the bits of the new slabnum into the slnsc.
+                    slnsc = failover_slabnum(slnsc, threadnum);
+
+                    if likely((slnsc & SLABNUM_FLH_ADDR_MASK) != orig_slabnum_for_flhp) {
+                        // We have not necessarily cycled through all slabs in this sizeclass yet, so
+                        // keep trying, but make a note that at least one of the slabs in this sizeclass
+                        // was full.
+                        a_slab_was_full = true;
+                    } else {
+                        // ... meaning we've tried each slab in this size class and each one was either
+                        // full or had an flh update collision. If at least one slab in this size class
+                        // was full, then overflow to the next larger size class. (Else, keep trying
+                        // different slabs in this size class.)
+                        if unlikely(a_slab_was_full) {
+                            if unlikely((slnsc & SC_FLH_ADDR_MASK) == SC_FLH_ADDR_MASK) {
+                                // This is the largest size class and we've exhausted at least one slab
+                                // in it, plus we've tried all other slabs at least once, and each one
+                                // was either full or we encountered an flh collision while trying to
+                                // pop from it.
+                                eprintln!("smalloc exhausted");
+                                break null_mut();
+                            };
+
+                            // Increment the sc
+                            slnsc += SC_FLH_ADDR_UNIT;
+
+                            // The sentinel slot num and the sc unit are different in this new size class.
+                            sentinelslotnum = (sentinelslotnum << 1) & SLOTNUM_AND_DATA_ADDR_MASK;
+                            slotnum_unit <<= 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        #[inline(always)]
+        pub fn inner(&self) -> &SmallocInner {
+            unsafe { &*self.inner.get() }
+        }
+
+        #[inline(always)]
+        pub fn encode_next_entry_link(baseslotnum: u64, targslotnum: u64, slotnum_unit: u64) -> u64 {
+            targslotnum.wrapping_sub(baseslotnum).wrapping_sub(slotnum_unit) & SLOTNUM_AND_DATA_ADDR_MASK
+        }
+
+        #[inline(always)]
+        pub fn decode_next_entry_link(baseslotnum: u64, codeword: u64, slotnum_unit: u64) -> u64 {
+            baseslotnum.wrapping_add(codeword).wrapping_add(slotnum_unit) & SLOTNUM_AND_DATA_ADDR_MASK
+        }
+    }
+
+    use crate::*;
+}
+
+
+pub use i::*;
+
 
 // ---- Constants having to do with the use of slot (and free list) pointers ----
-
-// This is how many bits hold the data and the slotnum:
-const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 35
-
-// This is how many bits to shift a sizeclass to fit the sizeclass into a slot address:
-const SC_ADDR_SHIFT_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS; // 35
-
-const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS); // 0b11111
-const SLABNUM_ADDR_MASK: usize = (SLABNUM_ALONE_MASK as usize) << (NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS); // 0b111110000000000000000000000000000000000000000
-
-const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS) << SC_ADDR_SHIFT_BITS; // 0b1111100000000000000000000000000000000000
 
 const SLABNUM_AND_SC_ADDR_MASK: usize = gen_mask!(NUM_SLABS_BITS + NUM_SC_BITS) << SC_ADDR_SHIFT_BITS; // 0b111111111100000000000000000000000000000000000
 
@@ -81,15 +423,6 @@ const SLNSC_SHIFT_FLH_ADDR_TO_SLOT_ADDR: u8 = SC_ADDR_SHIFT_BITS - FLHWORD_SIZE_
 
 // ---- Constants for calculating the total virtual address space to reserve ----
 
-// The smalloc address of the slot with the lowest address is:
-const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << SC_ADDR_SHIFT_BITS; // 0b1100000000000000000000000000000000000
-
-// The smalloc address of the slot with the highest address is:
-const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << (NUM_UNUSED_SCS + 1); // 16
-const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 14; The -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
-const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
-const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111111111100000000000000000000000000000000
-
 // The smalloc address of the highest-addressed byte of a smalloc slot is:
 const HIGHEST_SMALLOC_SLOT_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC); // 0b111111111111101111111111111111111111111111111
 
@@ -101,123 +434,6 @@ const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_BYTE_ADDR + BASEPTR_ALI
 
 
 // --- Implementation ---
-
-unsafe impl GlobalAlloc for Smalloc {
-    #[inline(always)]
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        debug_assert!(self.inner().smbp != 0);
-        let reqsiz = layout.size();
-        let reqalign = layout.align();
-        debug_assert!(reqsiz > 0);
-        debug_assert!(reqalign > 0);
-        debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
-
-        let sc = req_to_sc(reqsiz, reqalign);
-
-        if unlikely(sc >= NUM_SCS) {
-            // This request exceeds the size of our largest sizeclass, so return null pointer.
-            null_mut()
-        } else {
-            self.inner_alloc(sc)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        debug_assert!(!ptr.is_null());
-        debug_assert!(layout.align().is_power_of_two()); // alignment must be a power of two
-
-        let p_addr = ptr.addr();
-
-        // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
-        // less than or equal to the highest slot pointer.
-        let smbp = self.inner().smbp;
-        assert!(p_addr >= smbp);
-        assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
-
-        // Okay now we know that it is a pointer into smalloc's region.
-
-        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
-        debug_assert!(sc >= NUM_UNUSED_SCS);
-        debug_assert!(sc < NUM_SCS);
-        debug_assert!(p_addr.trailing_zeros() >= sc as u32);
-
-        self.inner_dealloc(p_addr, sc);
-    }
-
-    #[inline(always)]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, reqsize: usize) -> *mut u8 {
-        debug_assert!(!ptr.is_null());
-
-        let p_addr = ptr.addr();
-        let smbp = self.inner().smbp;
-
-        // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
-        // less than or equal to the highest slot pointer.
-
-        assert!(p_addr >= smbp);
-        assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
-
-        // Okay now we know that it is a pointer into smalloc's region.
-
-        let oldsize = layout.size();
-        debug_assert!(oldsize > 0);
-        let oldalignment = layout.align();
-        debug_assert!(oldalignment > 0);
-        debug_assert!(oldalignment.is_power_of_two()); // alignment must be a power of two
-        debug_assert!(reqsize > 0);
-
-        debug_assert!(req_to_sc(oldsize, oldalignment) >= NUM_UNUSED_SCS);
-        debug_assert!(req_to_sc(oldsize, oldalignment) < NUM_SCS);
-
-        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
-        debug_assert!(oldsc >= NUM_UNUSED_SCS);
-        debug_assert!(oldsc < NUM_SCS);
-        debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
-
-        // It's possible that the slot `ptr` is currently in is larger than the slot size necessary
-        // to hold the size that the user requested when originally allocating (or re-allocating)
-        // `ptr`.
-        debug_assert!(oldsc >= req_to_sc(oldsize, oldalignment));
-
-        let reqsc = req_to_sc(reqsize, oldalignment);
-        debug_assert!(reqsc >= NUM_UNUSED_SCS);
-
-        // If the requested slot is <= the original slot, just return the pointer and we're done.
-        if unlikely(reqsc <= oldsc) {
-            return ptr;
-        }
-
-        if unlikely(reqsc >= NUM_SCS) {
-            // This request exceeds the size of our largest sizeclass, so return null pointer.
-            null_mut()
-        } else {
-            // The "Growers" strategy. Promote the new sizeclass to the next one up in this
-            // schedule:
-            let reqsc =
-                if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
-                if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
-                if reqsc <= 12 { 12 } else // page size on Linux and Windows
-                if reqsc <= 14 { 14 } else // page size on Apple OS
-                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
-            { reqsc };
-
-            let newp = self.inner_alloc(reqsc);
-            debug_assert!(!newp.is_null());
-            debug_assert!(newp.is_aligned_to(oldalignment));
-
-            // Copy the contents from the old location.
-            unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
-
-            // Free the old slot.
-            self.inner_dealloc(p_addr, oldsc);
-
-            newp
-        }
-    }
-}
 
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
 const SLAB_NUM_SENTINEL: usize = usize::MAX;
@@ -250,14 +466,6 @@ fn set_slab_num(slabnum: usize) {
     });
 }
 
-pub struct Smalloc {
-    inner: UnsafeCell<SmallocInner>,
-}
-
-struct SmallocInner {
-    smbp: usize,
-}
-
 /// Pick a new slab to fail over to. This is used in two cases in `inner_alloc()`: a. when a slab is
 /// full, and b. when there is a multithreading collision on the flh.
 ///
@@ -284,7 +492,7 @@ fn failover_slabnum(slnsc: usize, threadnum: u8) -> usize {
         };
     }
 
-    const STEPS: [usize; 16] = shifted_steps!(SLABNUM_FLH_SHIFT_BITS; 31, 29, 23, 19, 17, 13, 11, 7, 5, 3, 1, 31, 29, 23, 19, 17);
+    const STEPS: [usize; 16] = shifted_steps!(SLABNUM_FLH_SHIFT_BITS; 13, 11, 7, 5, 3, 1, 13, 11, 7, 5, 3, 1, 13, 11, 7, 5);
     const STEPS_MASK: u8 = gen_mask!(4);
 
     let ix: usize = ((threadnum >> 4) & STEPS_MASK) as usize;
@@ -299,211 +507,13 @@ impl Default for Smalloc {
     }
 }
 
-impl Smalloc {
-    pub const fn new() -> Self { Self { inner: UnsafeCell::new(SmallocInner { smbp: 0, }), } }
-
-    #[inline(always)]
-    fn inner_dealloc(&self, p_addr: usize, sc: u8) {
-        debug_assert!(p_addr != 0);
-        debug_assert!(sc >= NUM_UNUSED_SCS);
-        debug_assert!(sc < NUM_SCS);
-        debug_assert!(sc == ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8);
-
-        let smbp = self.inner().smbp;
-        let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> SLNSC_SHIFT_FLH_ADDR_TO_SLOT_ADDR;
-        let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-        let newslotnum = p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK;
-        debug_assert!(newslotnum.trailing_zeros() >= sc as u32);
-        debug_assert!(newslotnum < SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(sc));
-
-        loop {
-            // Load the value (current first entry slot num) from the flh
-            let flhword = flh.load(Relaxed);
-            let curfirstentryslotnum = flhword & SLOTNUM_AND_DATA_ADDR_MASK;
-            debug_assert!(curfirstentryslotnum.trailing_zeros() >= sc as u32);
-            debug_assert!(newslotnum != curfirstentryslotnum);
-            // The curfirstentryslotnum can be the sentinel slotnum.
-            debug_assert!(curfirstentryslotnum <= SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(sc));
-
-            // Encode the curfirstentryslotnum as the next-entry link for the new entry
-            let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, 1 << sc);
-            debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, 1 << sc));
-
-            // Write it into the new slot's link
-            unsafe { *(p_addr as *mut u64) = next_entry_link };
-
-            // Increment the push counter
-            let counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
-            debug_assert!(counter.trailing_zeros() >= NUM_SLOTNUM_AND_DATA_BITS as u32);
-
-            // The new flhword is made up of the push counter and the newslotnum:
-            let newflhword = counter | newslotnum;
-
-            // Compare and exchange
-            if flh.compare_exchange_weak(flhword, newflhword, Release, Relaxed).is_ok() {
-                break;
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn inner_alloc(&self, orig_sc: u8) -> *mut u8 {
-        debug_assert!(orig_sc >= NUM_UNUSED_SCS);
-        debug_assert!(orig_sc < NUM_SCS);
-
-        // If the slab is full, or if there is a collision when updating the flh, we'll switch to
-        // another slab in this same sizeclass.
-
-        // `orig_slabnum_for_flhp` has the slabnum in the bit-position where it fits into an flh
-        // address.
-        let (orig_slabnum_for_flhp, threadnum) = get_slabnum_and_threadnum();
-
-        debug_assert!(orig_slabnum_for_flhp.trailing_zeros() >= (FLHWORD_SIZE_BITS + NUM_SC_BITS) as u32);
-
-        // "slnsc" is the concatenation of the slabnum bits and sc bits in their positions for use
-        // in an flh address (i.e. left-shifted FLHWORD_SIZE_BITS).
-        let mut slnsc = orig_slabnum_for_flhp | (orig_sc as usize) << FLHWORD_SIZE_BITS;
-
-        // In this size class, the sentinel slotnum and the unit value of the sc are:
-        let mut sentinelslotnum = SLOTNUM_AND_DATA_ADDR_MASK & !gen_mask!(orig_sc);
-        let mut slotnum_unit = 1 << orig_sc;
-
-        let mut a_slab_was_full = false;
-
-        let smbp = self.inner().smbp;
-
-        loop {
-            // Load the value from the flh
-            let flhptr = smbp | slnsc;
-            let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-            let flhword = flh.load(Acquire);
-            let curfirstentryslotnum = flhword & SLOTNUM_AND_DATA_ADDR_MASK;
-
-            debug_assert!(curfirstentryslotnum.trailing_zeros() >= ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS) as u32);
-
-            // curfirstentryslotnum can be the sentinel value.
-            debug_assert!(curfirstentryslotnum <= sentinelslotnum);
-
-            if likely(curfirstentryslotnum < sentinelslotnum) {
-                // There is a slot available in the free list.
-                
-                // Read the bits from the first entry's link (to the second entry) and decode them
-                // into a slot number. These bits might be invalid, if the flh has changed since we
-                // read it above and another thread has started using these bits for something else
-                // (e.g. user data or another linked list update). That's okay because in that case
-                // our attempt to update the flh below will fail so the invalid bits will not get
-                // stored.
-                let curfirstentry_p = (smbp | (slnsc << SLNSC_SHIFT_FLH_ADDR_TO_SLOT_ADDR) | curfirstentryslotnum as usize) as *mut u64;
-
-                debug_assert!((curfirstentry_p as usize).trailing_zeros() >= ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS) as u32);
-                debug_assert!(((curfirstentry_p as usize & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) == ((slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS));
-                debug_assert!((curfirstentry_p as usize - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p as usize - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
-
-                let curfirstentrylink_v = unsafe { *curfirstentry_p };
-                let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, slotnum_unit);
-
-                // Write the new first entry slot num in place of the old in our local (in a
-                // register) copy of flhword, leaving the push-counter bits unchanged.
-                let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum;
-
-                // Compare and exchange
-                if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
-                    debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
-                    debug_assert!(newfirstentryslotnum.trailing_zeros() as usize >= (slnsc & SC_FLH_ADDR_MASK) >> FLHWORD_SIZE_BITS);
-
-                    if unlikely(orig_slabnum_for_flhp != (slnsc & SLABNUM_FLH_ADDR_MASK)) {
-                        // The slabnum changed. Save the new slabnum for next time.
-                        set_slab_num(slnsc & SLABNUM_FLH_ADDR_MASK);
-                    }
-
-                    break curfirstentry_p as *mut u8;
-                } else {
-                    // Update collision on the flh. Fail over to a different slab in the same size
-                    // class.
-
-                    // Put the bits of the new slabnum into the slnsc.
-                    slnsc = failover_slabnum(slnsc, threadnum);
-                }
-            } else {
-                // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
-                // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
-                // different slab in the same size class.œ
-
-                // Put the bits of the new slabnum into the slnsc.
-                slnsc = failover_slabnum(slnsc, threadnum);
-
-                if likely((slnsc & SLABNUM_FLH_ADDR_MASK) != orig_slabnum_for_flhp) {
-                    // We have not necessarily cycled through all slabs in this sizeclass yet, so
-                    // keep trying, but make a note that at least one of the slabs in this sizeclass
-                    // was full.
-                    a_slab_was_full = true;
-                } else {
-                    // ... meaning we've tried each slab in this size class and each one was either
-                    // full or had an flh update collision. If at least one slab in this size class
-                    // was full, then overflow to the next larger size class. (Else, keep trying
-                    // different slabs in this size class.)
-                    if unlikely(a_slab_was_full) {
-                        if unlikely((slnsc & SC_FLH_ADDR_MASK) == SC_FLH_ADDR_MASK) {
-                            // This is the largest size class and we've exhausted at least one slab
-                            // in it, plus we've tried all other slabs at least once, and each one
-                            // was either full or we encountered an flh collision while trying to
-                            // pop from it.
-                            eprintln!("smalloc exhausted");
-                            break null_mut();
-                        };
-
-                        // Increment the sc
-                        slnsc += SC_FLH_ADDR_UNIT;
-
-                        // The sentinel slot num and the sc unit are different in this new size class.
-                        sentinelslotnum = unsafe { sentinelslotnum.unchecked_shl(1) } & SLOTNUM_AND_DATA_ADDR_MASK;
-                        slotnum_unit <<= 1;
-                    }
-                }
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn inner(&self) -> &SmallocInner {
-        unsafe { &*self.inner.get() }
-    }
-
-    /// Initializes the allocator.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure:
-    /// - This method is called exactly once
-    /// - This is called before any dynamic allocation occurs
-    /// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
-    pub unsafe fn init(&self) {
-        let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
-        assert!(sysbp != 0);
-        let inner = unsafe { &mut *self.inner.get() };
-        inner.smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
-    }
-
-    #[inline(always)]
-    fn encode_next_entry_link(baseslotnum: u64, targslotnum: u64, slotnum_unit: u64) -> u64 {
-        targslotnum.wrapping_sub(baseslotnum).wrapping_sub(slotnum_unit) & SLOTNUM_AND_DATA_ADDR_MASK
-    }
-
-    #[inline(always)]
-    fn decode_next_entry_link(baseslotnum: u64, codeword: u64, slotnum_unit: u64) -> u64 {
-        baseslotnum.wrapping_add(codeword).wrapping_add(slotnum_unit) & SLOTNUM_AND_DATA_ADDR_MASK
-    }
-}
-
 /// Return the size class for the aligned size.
 #[inline(always)]
-fn req_to_sc(siz: usize, ali: usize) -> u8 {
+fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     debug_assert!(siz > 0);
     debug_assert!(ali > 0);
     debug_assert!(ali < 1 << NUM_SCS);
     debug_assert!(ali.is_power_of_two());
-
-    const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS);
 
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
@@ -513,12 +523,10 @@ pub use smalloc_macros::smalloc_main;
 #[cfg(test)]
 mod tests;
 
-use std::hint::unlikely;
+use std::hint::{likely, unlikely};
 use std::sync::atomic::{AtomicU8, AtomicU64};
-use std::cell::Cell;
-use std::cell::UnsafeCell;
-use std::hint::likely;
-use core::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use plat::p::sys_alloc;
+use std::cell::{Cell, UnsafeCell};
+use core::alloc::{GlobalAlloc, Layout};
 use std::ptr::{copy_nonoverlapping, null_mut};
+use plat::p::sys_alloc;

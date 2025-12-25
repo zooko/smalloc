@@ -344,40 +344,40 @@ fn highest_slotnum(sc: u8) -> u32 {
 nextest_unit_tests! {
     fn test_req_to_sc() {
         let test_cases = [
-            (1, 1, 3),
-            (2, 1, 3),
-            (3, 1, 3),
-            (4, 1, 3),
-            (5, 1, 3),
-            (7, 1, 3),
-            (8, 1, 3),
+            (1, 1, 4),
+            (2, 1, 4),
+            (3, 1, 4),
+            (4, 1, 4),
+            (5, 1, 4),
+            (7, 1, 4),
+            (8, 1, 4),
             (9, 1, 4),
 
-            (1, 2, 3),
-            (2, 2, 3),
-            (3, 2, 3),
-            (4, 2, 3),
-            (5, 2, 3),
-            (7, 2, 3),
-            (8, 2, 3),
+            (1, 2, 4),
+            (2, 2, 4),
+            (3, 2, 4),
+            (4, 2, 4),
+            (5, 2, 4),
+            (7, 2, 4),
+            (8, 2, 4),
             (9, 2, 4),
 
-            (1, 4, 3),
-            (2, 4, 3),
-            (3, 4, 3),
-            (4, 4, 3),
-            (5, 4, 3),
-            (7, 4, 3),
-            (8, 4, 3),
+            (1, 4, 4),
+            (2, 4, 4),
+            (3, 4, 4),
+            (4, 4, 4),
+            (5, 4, 4),
+            (7, 4, 4),
+            (8, 4, 4),
             (9, 4, 4),
 
-            (1, 8, 3),
-            (2, 8, 3),
-            (3, 8, 3),
-            (4, 8, 3),
-            (5, 8, 3),
-            (7, 8, 3),
-            (8, 8, 3),
+            (1, 8, 4),
+            (2, 8, 4),
+            (3, 8, 4),
+            (4, 8, 4),
+            (5, 8, 4),
+            (7, 8, 4),
+            (8, 8, 4),
             (9, 8, 4),
 
             (1, 16, 4),
@@ -392,12 +392,31 @@ nextest_unit_tests! {
             (16, 16, 4),
             (17, 16, 5),
 
+            (1, 32, 5),
+            (2, 32, 5),
+            (3, 32, 5),
+            (4, 32, 5),
+            (5, 32, 5),
+            (7, 32, 5),
+            (8, 32, 5),
+            (9, 32, 5),
+            (15, 32, 5),
+            (16, 32, 5),
+            (17, 32, 5),
+            (30, 32, 5),
+            (31, 32, 5),
+            (32, 32, 5),
+
+            (33, 32, 6),
+            (32, 64, 6),
+            (33, 64, 6),
+
             (2usize.pow(31), 4, 31),
             (4, 2usize.pow(31), 31),
         ];
 
         for (reqsiz, reqali, sc) in test_cases {
-            assert_eq!(req_to_sc(reqsiz, reqali), sc, "req_to_sc({reqsiz}, {reqali}) should equal {sc}");
+            assert_eq!(reqali_to_sc(reqsiz, reqali), sc, "req_to_sc({reqsiz}, {reqali}) should equal {sc}");
         }
     }
 
@@ -470,7 +489,7 @@ nextest_unit_tests! {
     /// allocations come from a bigger sizeclass, and then if we do that again it will work again.
     fn overflow_to_other_sizeclass_twice_in_a_row() {
        // Have to skip every other sc since it was used up by the previous iteration of the tests...
-        for sc in [3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29] {
+        for sc in (NUM_UNUSED_SCS..NUM_SCS - 2).step_by(2) {
             help_test_overflow_to_other_sizeclass_twice_in_a_row(sc);
         }
     }
@@ -479,7 +498,7 @@ nextest_unit_tests! {
     /// the subsequent allocations come from *next* next sizeclass
     fn overflow_to_other_sizeclass_twice_at_once() {
        // Have to skip every other sc since it was used up by the previous iteration of the tests...
-        for sc in [3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29] {
+        for sc in (NUM_UNUSED_SCS..NUM_SCS - 3).step_by(2) {
             help_test_overflow_to_other_sizeclass_twice_at_once(sc);
         }
     }
@@ -529,7 +548,7 @@ nextest_unit_tests! {
     }
 
     fn slotnum_encode_and_decode_roundtrip() {
-        for sc in [ 31, 30, 25, 12, 9, 3 ] {
+        for sc in [ 31, 30, 25, 12, 9, 5, 4 ] {
             let numslots = help_numslots(sc);
             assert!(numslots > 0, "sc: {sc}");
             assert!(numslots <= 2usize.pow(32), "sc: {sc}");

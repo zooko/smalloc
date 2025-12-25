@@ -1,0 +1,10 @@
+[package]
+name = "smalloc-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+smalloc = { path = "../smalloc" }
