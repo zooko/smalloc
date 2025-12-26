@@ -1,15 +1,36 @@
 // Thanks to Claude Opus 4.5 for refactoring this entire file with me.
 
-mod platform;
-use platform::ClockType;
-use std::mem::MaybeUninit;
-
-use std::alloc::GlobalAlloc;
-pub struct GlobalAllocWrap;
-
-pub use thousands::Separable;
-
 pub const NUM_BATCHES: u64 = 20;
+
+// ============================================================================
+// ALLOCATOR REGISTRY - Add new allocators here!
+// ============================================================================
+//
+// Each allocator entry is: (short_name, display_name, constructor, setup_block)
+//
+// - short_name: Used for benchmark output prefixes (e.g., "mi" -> "mi_st_funcname-1")  
+// - display_name: Used in comparison output (e.g., "smalloc diff from mimalloc: +5%")
+// - constructor: Expression that creates the allocator instance
+// - setup_block: Code to run after construction (use {} for none)
+//
+// The LAST entry is treated as the "candidate" (the one being compared against others).
+
+#[macro_export]
+macro_rules! with_all_allocators {
+    ($($macro_path:tt)::+ ! ( $($args:tt)* )) => {
+        $($macro_path)::+! {
+            $($args)* ;
+            @allocators
+                de, "default",  $crate::GlobalAllocWrap,       {}; // This causes crashes on Macos+M4Max with --thorough
+            mi, "mimalloc", mimalloc::MiMalloc,            {};
+            je, "jemalloc", tikv_jemallocator::Jemalloc,   {};
+            sn, "snmalloc", snmalloc_rs::SnMalloc,         {};
+            rp, "rpmalloc", rpmalloc::RpMalloc,            {};
+            @candidate
+                s, "smalloc",  devutils::get_devsmalloc!(),   {};
+        }
+    };
+}
 
 pub fn clock(clocktype: ClockType) -> u64 {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
@@ -21,8 +42,6 @@ pub fn clock(clocktype: ClockType) -> u64 {
     debug_assert!(instnsec >= 0);
     instsec as u64 * 1_000_000_000 + instnsec as u64
 }
-
-use std::alloc::{System, Layout};
 
 unsafe impl GlobalAlloc for GlobalAllocWrap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -37,16 +56,6 @@ unsafe impl GlobalAlloc for GlobalAllocWrap {
         unsafe { System.realloc(ptr, layout, reqsize) }
     }
 }
-
-use std::sync::Arc;
-pub fn alloc_and_free(al: &Arc<impl GlobalAlloc>) {
-    let l = unsafe { Layout::from_size_align_unchecked(32, 1) };
-    let p = unsafe { al.alloc(l) };
-    unsafe { *p = 0 };
-    unsafe { al.dealloc(p, l) };
-}
-
-use devutils::*;
 
 /// Returns elapsed nanoseconds (best of NUM_BATCHES batches)
 pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, name: &str, al: &T, seed: u64) -> u64
@@ -111,9 +120,6 @@ where
 
     best_ns
 }
-
-use std::sync::Barrier;
-use std::thread;
 
 #[macro_export]
     macro_rules! multithread_hotspot {
@@ -331,36 +337,6 @@ pub fn print_comparisons(candidate_ns: u64, baselines: &[(&str, u64)]) {
         println!("smalloc diff from {:>8}: {:+4.0}%", name, diff_perc);
     }
     println!();
-}
-
-// ============================================================================
-// ALLOCATOR REGISTRY - Add new allocators here!
-// ============================================================================
-//
-// Each allocator entry is: (short_name, display_name, constructor, setup_block)
-//
-// - short_name: Used for benchmark output prefixes (e.g., "mm" -> "mm_st_funcname-1")  
-// - display_name: Used in comparison output (e.g., "smalloc diff from mimalloc: +5%")
-// - constructor: Expression that creates the allocator instance
-// - setup_block: Code to run after construction (use {} for none)
-//
-// The LAST entry is treated as the "candidate" (the one being compared against others).
-
-#[macro_export]
-macro_rules! with_all_allocators {
-    ($($macro_path:tt)::+ ! ( $($args:tt)* )) => {
-        $($macro_path)::+! {
-            $($args)* ;
-            @allocators
-                de, "default",  $crate::GlobalAllocWrap,       {}; // This causes a crash on Macos+M4Max
-            mm, "mimalloc", mimalloc::MiMalloc,            {};
-            jm, "jemalloc", tikv_jemallocator::Jemalloc,   {};
-            nm, "snmalloc", snmalloc_rs::SnMalloc,         {};
-            rp, "rpmalloc", rpmalloc::RpMalloc,            {};
-            @candidate
-                sm, "smalloc",  devutils::get_devsmalloc!(),   {};
-        }
-    };
 }
 
 // ============================================================================
@@ -635,3 +611,17 @@ macro_rules! compare_hs_bench {
         $crate::with_all_allocators!($crate::compare_hs_bench_impl!($func, $threads, $iters_per_batch))
     };
 }
+
+pub struct GlobalAllocWrap;
+
+mod platform;
+use platform::ClockType;
+
+use devutils::*;
+
+pub use thousands::Separable;
+
+use std::mem::MaybeUninit;
+use std::sync::Barrier;
+use std::thread;
+use std::alloc::{GlobalAlloc, System, Layout};
