@@ -340,7 +340,6 @@ fn highest_slotnum(sc: u8) -> u32 {
     (1 << (NUM_SLOTNUM_AND_DATA_BITS - sc)) - 1
 }
 
-
 nextest_unit_tests! {
     fn test_req_to_sc() {
         let test_cases = [
@@ -671,7 +670,6 @@ fn get_testsmalloc() -> &'static Smalloc {
     res
 }
 
-#[cfg(debug_assertions)]
 #[macro_export]
 macro_rules! nextest_unit_tests {
     (
@@ -693,3 +691,4 @@ macro_rules! nextest_unit_tests {
         )*
     };
 }
+
