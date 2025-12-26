@@ -24,8 +24,12 @@
 // 2025-12-16: The current smalloc (v7.2.0) requires 70,366,596,694,014 bytes.
 
 
+
 #[cfg(any(target_os = "linux", doc))]
 pub fn sys_dealloc(p: *mut u8, size: usize) {
+    use rustix::mm::munmap;
+    use core::ffi::c_void;
+
     unsafe {
         munmap(p as *mut c_void, size).ok();
     }
