@@ -18,23 +18,13 @@ use std::alloc::Layout;
 
 // For testing and benchmarking only.
 pub mod dev_instance {
-    use std::sync::OnceLock;
     use smalloc::*;
-    pub static mut SMAL: Smalloc = Smalloc::new();
-    static INIT: OnceLock<()> = OnceLock::new();
-
-    pub fn setup() {
-        INIT.get_or_init(|| {
-            unsafe {
-                (*std::ptr::addr_of_mut!(SMAL)).init();
-            }
-        });
-    }
+    pub static mut DEV_SMALLOC: Smalloc = Smalloc::new();
 
     #[macro_export]
     macro_rules! get_devsmalloc {
         () => {
-            unsafe { &*std::ptr::addr_of!($crate::dev_instance::SMAL) }
+            unsafe { &*std::ptr::addr_of!($crate::dev_instance::DEV_SMALLOC) }
         };
     }
 }
@@ -546,8 +536,6 @@ macro_rules! nextest_integration_tests {
                     panic!("This project requires cargo-nextest to run tests.");
                 }
                 
-                dev_instance::setup();
-
                 $body
             }
         )*

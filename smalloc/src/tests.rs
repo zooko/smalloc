@@ -590,8 +590,10 @@ impl Smalloc {
 
         let inner = self.inner();
 
+        let smbp = inner.smbp.load(Acquire);
+        
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = inner.smbp | (flhi as usize) << 3;
+        let flhptr = smbp | (flhi as usize) << 3;
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         // single threaded so don't bother with the counter
@@ -602,9 +604,11 @@ impl Smalloc {
     fn help_ptr_to_loc(&self, ptr: *const u8) -> (u8, u8, u32) {
         let inner = self.inner();
 
+        let smbp = inner.smbp.load(Acquire);
+        
         let p_addr = ptr.addr();
 
-        assert!((p_addr >= inner.smbp) && (p_addr <= inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR));
+        assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
         let sc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
         let slabnum = ((p_addr & SLABNUM_ADDR_MASK) >>  (NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS)) as u8;
@@ -658,26 +662,13 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
 }
 
 use crate::Smalloc;
-use std::sync::OnceLock;
 
 static mut UNIT_TEST_ALLOC: Smalloc = Smalloc::new();
-static INIT: OnceLock<()> = OnceLock::new();
 
 fn get_testsmalloc() -> &'static Smalloc {
-    INIT.get_or_init(|| {
-        unsafe {
-            (*std::ptr::addr_of_mut!(UNIT_TEST_ALLOC)).init();
-        }
-    });
-    unsafe { &*std::ptr::addr_of!(UNIT_TEST_ALLOC) }
-}
-
-pub fn setup() {
-    INIT.get_or_init(|| {
-        unsafe {
-            (*std::ptr::addr_of_mut!(UNIT_TEST_ALLOC)).init();
-        }
-    });
+    let res = unsafe { &*std::ptr::addr_of!(UNIT_TEST_ALLOC) };
+    res.idempotent_init();
+    res
 }
 
 #[cfg(debug_assertions)]
@@ -697,8 +688,6 @@ macro_rules! nextest_unit_tests {
                     panic!("This project requires cargo-nextest to run tests.");
                 }
                     
-                setup();
-
                 $body
             }
         )*

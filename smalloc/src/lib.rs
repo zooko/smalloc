@@ -21,33 +21,50 @@ pub struct Smalloc {
 }
 
 impl Smalloc {
-    pub const fn new() -> Self { Self { inner: UnsafeCell::new(SmallocInner { smbp: 0, }), } }
+    pub const fn new() -> Self { Self {
+        inner: UnsafeCell::new(SmallocInner {
+            smbp: AtomicUsize::new(0),
+            initlock: AtomicBool::new(false),
+        }),
+    } }
 
-    /// Initializes the allocator.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure:
-    /// - This method is called exactly once
-    /// - This is called before any dynamic allocation occurs
-    /// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
-    pub unsafe fn init(&self) {
-        let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
-        assert!(sysbp != 0);
-        let inner = unsafe { &mut *self.inner.get() };
-        inner.smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
+    pub fn idempotent_init(&self) {
+        let inner = self.inner();
+
+        let smbpval = inner.smbp.load(Relaxed);
+
+        if smbpval == 0 {
+            // acquire the spin lock
+            loop {
+                if inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
+                    break;
+                }
+            }
+
+            let smbpval = inner.smbp.load(Relaxed);
+
+            if smbpval == 0 {
+                let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+                assert!(sysbp != 0);
+                inner.smbp.store(sysbp.next_multiple_of(BASEPTR_ALIGN), Release);
+            }
+
+            // release the spin lock
+            inner.initlock.store(false, Release);
+        }
     }
 }
 
 unsafe impl GlobalAlloc for Smalloc {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        debug_assert!(self.inner().smbp != 0);
         let reqsiz = layout.size();
         let reqalign = layout.align();
         debug_assert!(reqsiz > 0);
         debug_assert!(reqalign > 0);
         debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
+
+        self.idempotent_init();
 
         let sc = reqali_to_sc(reqsiz, reqalign);
 
@@ -71,7 +88,7 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(!ptr.is_null());
 
         let p_addr = ptr.addr();
-        let smbp = self.inner().smbp;
+        let smbp = self.inner().smbp.load(Relaxed);
 
         // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
         // less than or equal to the highest slot pointer.
@@ -200,14 +217,17 @@ pub mod i {
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111111111100000000000000000000000000000000
 
-    pub struct SmallocInner { pub smbp: usize, }
+    pub struct SmallocInner {
+        pub smbp: AtomicUsize,
+        pub initlock: AtomicBool
+    }
 
     impl Smalloc {
         #[inline(always)]
         pub fn inner_dealloc(&self, p_addr: usize) {
             // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
             // less than or equal to the highest slot pointer.
-            let smbp = self.inner().smbp;
+            let smbp = self.inner().smbp.load(Relaxed);
             assert!(p_addr >= smbp);
             assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
 
@@ -278,7 +298,7 @@ pub mod i {
 
             let mut a_slab_was_full = false;
 
-            let smbp = self.inner().smbp;
+            let smbp = self.inner().smbp.load(Acquire);
 
             loop {
                 // Load the value from the flh
@@ -518,13 +538,11 @@ fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
 
-pub use smalloc_macros::smalloc_main;
-
 #[cfg(test)]
 mod tests;
 
 use std::hint::{likely, unlikely};
-use std::sync::atomic::{AtomicU8, AtomicU64};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, AtomicBool};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::cell::{Cell, UnsafeCell};
 use core::alloc::{GlobalAlloc, Layout};

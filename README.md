@@ -49,25 +49,13 @@ practice before complicating the code to do so.
 
 # Usage in Rust Code
 
-Add `smalloc` and `ctor` to your Cargo.toml by executing `cargo add smalloc ctor`, then add this to
-your code:
+Add `smalloc` to your Cargo.toml by executing `cargo add smalloc`, then add this to your code:
 
 ```
 use smalloc::Smalloc;
 #[global_allocator]
 static ALLOC: Smalloc = Smalloc::new();
-
-#[ctor::ctor]
-unsafe fn init_smalloc() {
-    unsafe { ALLOC.init() };
-}
 ```
-
-See [./src/bin/hellosmalloc_ctor.rs](./src/bin/hellosmalloc_ctor.rs) for a sample program that
-demonstrates how to do
-this. [./src/bin/hellosmalloc_procmacro.rs](./src/bin/hellosmalloc_procmacro.rs) contains a sample
-program that demonstrates an alternate way to do it if the `ctor` approach doesn't work for you (in
-which case open an issue on github).
 
 That's it! There are no other features you could consider using, no other changes you need to make,
 no configuration options, no tuning options, no nothing.
@@ -103,13 +91,9 @@ This workspace contains seven packages:
 
 These are usually the only two you need to use smalloc.
 
- * _smalloc-macros_: a proc macro to generate a `main()` function that initializes smalloc before the
-   Rust runtime's initialization; You need this only if the `ctor`-based initialization doesn't work
-   in your system.
  * _bench_: micro-benchmarking tool to measure latency of operations and compare to other memory
    allocators
- * _hellomalloc_: a pair of sample apps that show the two ways to initialize smalloc as the global
-   allocator in Rust code
+ * _hellomalloc_: a sample app that shows how to make smalloc be the global allocator in Rust code
  * _find_max_vm_addresses_reservable_: a tool used in the development of smalloc to determine how much
    virtual address is allocatable on the current system
  * _devutils_: code used in both tests and benchmarks

@@ -1,7 +1,6 @@
 #![feature(likely_unlikely)]
 
-// Thanks to Claude (Opus 4.5) for help with how to do dynamic linking and construction
-// (initialization) on various OSes.
+// Thanks to Claude (Opus 4.5) for help with define an FFI.
 
 use core::ffi::c_void;
 use std::hint::unlikely;
@@ -12,33 +11,6 @@ use smalloc::i::*;
 use smalloc::Smalloc;
 
 static SMALLOC: Smalloc = Smalloc::new();
-
-/// Initialize the allocator. Must be called before first malloc.
-///
-/// # Safety
-///
-/// You must ensure:
-/// - This method is called exactly once
-/// - This is called before any dynamic allocation occurs
-/// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn smallocffi_init() {
-    unsafe { SMALLOC.init() };
-}
-
-// Auto-init for dynamic linking (LD_PRELOAD / DYLD_INSERT_LIBRARIES / DLL injection) and static
-// linking
-#[used]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
-#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
-#[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
-static INIT: extern "C" fn() = {
-    extern "C" fn init() {
-        unsafe { smallocffi_init(); }
-    }
-    init
-};
-
 
 /// Return the size class for the aligned size.
 #[inline(always)]
@@ -62,6 +34,8 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // This request is too big.
         return null_mut();
     }
+
+    SMALLOC.idempotent_init();
 
     SMALLOC.inner_alloc(sc) as *mut c_void
 }
@@ -102,7 +76,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
     }
 
     let p_addr = ptr.addr();
-    let smbp = SMALLOC.inner().smbp;
+    let smbp = SMALLOC.inner().smbp.load(Acquire);
 
     // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
     // less than or equal to the highest slot pointer.
@@ -140,3 +114,5 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
         newp
     }
 }
+
+use std::sync::atomic::Ordering::Acquire;

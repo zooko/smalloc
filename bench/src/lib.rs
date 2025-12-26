@@ -118,7 +118,7 @@ use std::thread;
 #[macro_export]
     macro_rules! multithread_hotspot {
     ($f:expr, $threads:expr, $iters:expr, $al:expr, $l:expr) => {{
-        let name = concat!("mths-", stringify!($f));
+        let name = concat!("hs-", stringify!($f));
         $crate::multithread_hotspot_inner($f, $threads, $iters, name, $al, $l)
     }};
 }
@@ -126,7 +126,7 @@ use std::thread;
 #[macro_export]
     macro_rules! multithread_free_hotspot {
     ($threads:expr, $iters:expr, $al:expr, $l:expr) => {{
-        let name = format!("mths-{}", $threads);
+        let name = format!("fh-{}", $threads);
         $crate::multithread_free_hotspot_inner($threads, $iters, &name, $al, $l)
     }};
 }
@@ -358,7 +358,7 @@ macro_rules! with_all_allocators {
             nm, "snmalloc", snmalloc_rs::SnMalloc,         {};
             rp, "rpmalloc", rpmalloc::RpMalloc,            {};
             @candidate
-                sm, "smalloc",  devutils::get_devsmalloc!(),   { devutils::dev_instance::setup(); };
+                sm, "smalloc",  devutils::get_devsmalloc!(),   {};
         }
     };
 }
@@ -371,7 +371,7 @@ macro_rules! with_all_allocators {
 macro_rules! st_bench {
     ($func:path, $iters_per_batch:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
+        sm.idempotent_init();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
@@ -501,7 +501,7 @@ macro_rules! compare_st_bench {
 macro_rules! mt_bench {
     ($func:path, $threads:expr, $iters_per_batch:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
-        devutils::dev_instance::setup();
+        sm.idempotent_init();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
