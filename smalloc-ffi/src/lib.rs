@@ -1,132 +1,197 @@
 #![feature(likely_unlikely)]
 
-// Thanks to Claude (Opus 4.5) for help with define an FFI and diagnose and fix handling of foreign pointers.
-
-use core::ffi::c_void;
-use std::hint::unlikely;
-use std::ptr::copy_nonoverlapping;
-use std::ptr::null_mut;
-
-use smalloc::i::*;
-use smalloc::Smalloc;
+// Thanks to Claude (Opus 4.5) for help with defining an FFI and diagnosing and fixing handling of
+// foreign pointers, and interposition of symbols on macOS.
 
 static SMALLOC: Smalloc = Smalloc::new();
-
-/// Return the size class for the aligned size.
-#[inline(always)]
-fn req_to_sc(siz: usize) -> u8 {
-    debug_assert!(siz > 0);
-
-    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
-}
-
-unsafe extern "C" {
-    // Get the libc free and realloc
-    fn __libc_free(ptr: *mut c_void);
-    fn __libc_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void;
-}
 
 /// # Safety
 ///
 /// This has the same safety requirements as any implementation of `malloc`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
     if size == 0 {
         return null_mut();
     }
 
     let sc = req_to_sc(size);
     if sc >= NUM_SCS {
-        // This request is too big.
         return null_mut();
     }
 
     SMALLOC.idempotent_init();
-
     SMALLOC.inner_alloc(sc) as *mut c_void
 }
 
 /// # Safety
 ///
-/// This has the same safety requirements as any implementation of `free`, and in particular you
-/// must ensure that this `ptr` was returned from Smalloc's `malloc` or `realloc` -- not any other
-/// implementation -- and that it has not already been passed to any implementation of `free` or
-/// `realloc`.
+/// This has the same safety requirements as any implementation of `free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn free(ptr: *mut c_void) {
+pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
     }
 
-    let p_addr = ptr.addr();
     let smbp = SMALLOC.inner().smbp.load(Acquire);
+    if smbp != 0 {
+        let p_addr = ptr.addr();
 
-    // To be a valid smalloc pointer, the pointer has to be greater than or equal to the smalloc base pointer and less than or equal to the highest slot pointer.
-    if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
-        SMALLOC.inner_dealloc(ptr as usize)
-    } else {
-        // This must be a "foreign pointer" that was allocated by the libc malloc before smalloc's malloc was interposed during process startup.
-        unsafe { __libc_free(ptr) }
+        if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
+            SMALLOC.inner_dealloc(ptr as usize);
+            return;
+        }
     }
+
+    // Foreign pointer - allocated before smalloc was loaded
+    unsafe { platform::call_prev_free(ptr) }
 }
 
 /// # Safety
 ///
-/// This has the same safety requirements as any implementation of `realloc`, and in particular you
-/// must ensure that this `ptr` was returned from Smalloc's `malloc` or `realloc` -- not any other
-/// implementation -- and that it has not already been passed to any implementation of `free` or
-/// `realloc`.
+/// This has the same safety requirements as any implementation of `realloc`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-    debug_assert!(new_size > 0);
-
+pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     let reqsc = req_to_sc(new_size);
 
     if ptr.is_null() {
         if reqsc >= NUM_SCS {
-            // This request is too big.
             return null_mut();
         }
-        
-        SMALLOC.inner_alloc(reqsc);
+        return SMALLOC.inner_alloc(reqsc) as *mut c_void;
     }
 
     let p_addr = ptr.addr();
     let smbp = SMALLOC.inner().smbp.load(Acquire);
 
-    // To be a valid smalloc pointer, the pointer has to be greater than or equal to the smalloc base pointer and less than or equal to the highest slot pointer.
     if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
         let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
         debug_assert!(oldsc >= NUM_UNUSED_SCS);
         debug_assert!(oldsc < NUM_SCS);
         debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
 
-        // If the requested slot is <= the original slot, just return the pointer and we're done.
         if unlikely(reqsc <= oldsc) {
             return ptr;
         }
 
         if unlikely(reqsc >= NUM_SCS) {
-            // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
             let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
 
             if !newp.is_null() {
-                // Copy the contents from the old location.
                 let oldsize = 1 << oldsc;
                 unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
-
-                // Free the old slot.
                 SMALLOC.inner_dealloc(p_addr);
             }
 
             newp
         }
     } else {
-        // This must be a "foreign pointer" that was allocated by the libc malloc before smalloc's malloc was interposed during process startup.
-        unsafe { __libc_realloc(ptr, new_size) }
+        // Foreign pointer
+        unsafe { platform::call_prev_realloc(ptr, new_size) }
+    }
+}
+
+#[inline(always)]
+fn req_to_sc(siz: usize) -> u8 {
+    debug_assert!(siz > 0);
+    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+}
+
+// Linux: use dlsym(RTLD_NEXT, ...) and export malloc/free/realloc directly
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::*;
+
+    const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
+
+    extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+
+    type FreeFn = unsafe extern "C" fn(*mut c_void);
+    type ReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
+
+    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
+
+    static PREV_FREE: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
+    static PREV_REALLOC: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
+
+    pub unsafe fn call_prev_free(ptr: *mut c_void) {
+        let mut f = PREV_FREE.load(Acquire);
+
+        if f == NOT_LOOKED_UP {
+            f = unsafe { dlsym(RTLD_NEXT, c"free".as_ptr()) };
+            PREV_FREE.store(f, Release);
+        }
+
+        if !f.is_null() {
+            let f: FreeFn = unsafe { std::mem::transmute(f) };
+            unsafe { f(ptr) };
+        }
+    }
+
+    pub unsafe fn call_prev_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+        let mut f = PREV_REALLOC.load(Acquire);
+
+        if f == NOT_LOOKED_UP {
+            f = unsafe { dlsym(RTLD_NEXT, c"realloc".as_ptr()) };
+            PREV_REALLOC.store(f, Release);
+        }
+
+        if f.is_null() {
+            panic!("dlsym failed to find realloc");
+        }
+
+        let f: ReallocFn = unsafe { std::mem::transmute(f) };
+        unsafe { f(ptr, new_size) }
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+        super::smalloc_malloc(size)
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn free(ptr: *mut c_void) {
+        super::smalloc_free(ptr)
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+        super::smalloc_realloc(ptr, new_size)
+    }
+
+    use std::sync::atomic::AtomicPtr;
+    use std::sync::atomic::Ordering::Release;
+    use core::ffi::c_char;
+}
+
+// macOS: use malloc_zone_* APIs directly (DYLD_INTERPOSE makes dlsym unusable)
+#[cfg(target_os = "macos")]
+mod platform {
+    use super::*;
+
+    unsafe extern "C" {
+        fn malloc_default_zone() -> *mut c_void;
+        fn malloc_zone_free(zone: *mut c_void, ptr: *mut c_void);
+        fn malloc_zone_realloc(zone: *mut c_void, ptr: *mut c_void, size: usize) -> *mut c_void;
+    }
+
+    pub unsafe fn call_prev_free(ptr: *mut c_void) {
+        let zone = unsafe { malloc_default_zone() };
+        unsafe { malloc_zone_free(zone, ptr) };
+    }
+
+    pub unsafe fn call_prev_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+        let zone = unsafe { malloc_default_zone() };
+        unsafe { malloc_zone_realloc(zone, ptr, size) }
     }
 }
 
 use std::sync::atomic::Ordering::Acquire;
+use core::ffi::c_void;
+use std::hint::unlikely;
+use std::ptr::{null_mut, copy_nonoverlapping};
+use smalloc::i::*;
+use smalloc::Smalloc;
