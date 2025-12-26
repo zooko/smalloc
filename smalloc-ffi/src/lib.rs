@@ -105,7 +105,7 @@ mod platform {
 
     const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
 
-    extern "C" {
+    unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
 
@@ -149,17 +149,17 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-        super::smalloc_malloc(size)
+        unsafe { super::smalloc_malloc(size) }
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn free(ptr: *mut c_void) {
-        super::smalloc_free(ptr)
+        unsafe { super::smalloc_free(ptr) }
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-        super::smalloc_realloc(ptr, new_size)
+        unsafe { super::smalloc_realloc(ptr, new_size) }
     }
 
     use std::sync::atomic::AtomicPtr;
