@@ -324,7 +324,16 @@ pub fn a<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     s.ps.push((p as usize, lt));
 }
 
-pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters: u64, al: &T, tses: &mut [TestState])
+#[inline(always)]
+pub fn one_ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
+    // Malloc
+    let lt = s.next_layout();
+    let p = unsafe { al.alloc(lt) };
+    debug_assert!(!p.is_null(), "lt: {lt:?}");
+    unsafe { al.dealloc(p, lt) };
+}
+
+pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters_per_batch: u64, al: &T, tses: &mut [TestState])
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -337,7 +346,7 @@ where
         for t in 0..threads {
             scope.spawn(move || {
                 let s = unsafe { &mut *(tses_ptr as *mut TestState).add(t as usize) };
-                for _i in 0..iters {
+                for _i in 0..iters_per_batch {
                     f(al, s);
                 }
             });
@@ -348,7 +357,8 @@ where
 use std::cmp::max;
 fn gen_layouts() -> [Layout; NUMLAYOUTS] {
     let mut ls = Vec::new();
-    for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000] {
+    //for siz in [4, 4, 4, 8, 8, 32, 32, 32, 32, 35, 64, 128, 2000, 8_000] {
+    for siz in [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 32, 32, 35, 64, 8_000] {
         ls.push(Layout::from_size_align(siz, 1).unwrap());
 
         ls.push(Layout::from_size_align(siz + 10, 1).unwrap());
@@ -392,7 +402,7 @@ impl<T> VecUncheckedExt<T> for Vec<T> {
 
 
 const NUMCOINS: usize = 1024;
-const NUMLAYOUTS: usize = 57;
+const NUMLAYOUTS: usize = 101;
 use std::collections::HashSet;
 pub struct TestState {
     coins: [u32; NUMCOINS],
@@ -425,12 +435,9 @@ use std::hint::likely;
 use wyrand::WyRand;
 impl TestState {
     pub fn new(iters: u64, seed: u64) -> Self {
-        // const SEED: u64 = 5; // on linux, 15 ns/i
-        // const SEED: u64 = 10; // 15 ns/i
-        // const SEED: u64 = 21; // 414 ns/i
-        // const SEED: u64 = 22; // 15 ns/i
+        let cap = iters as usize;
         let mut r = WyRand::new(seed);
-        let m = HashSet::with_capacity_and_hasher(iters as usize, WyHashBuilder(seed));
+        let m = HashSet::with_capacity_and_hasher(cap, WyHashBuilder(seed));
         let coins: [u32; NUMCOINS] = std::array::from_fn(|_| r.rand() as u32);
         let nextcoin = 0;
         let mut layouts = gen_layouts();
@@ -443,7 +450,7 @@ impl TestState {
             layouts,
             nextlayout,
             m,
-            ps: Vec::with_capacity(iters as usize),
+            ps: Vec::with_capacity(cap),
             nextp: 0,
             cached_8: 0,
             cached_512: 0,
@@ -472,7 +479,6 @@ impl TestState {
         debug_assert!(self.nextp < self.ps.len());
         debug_assert!(!self.ps.is_empty());
         let (u, l) = unsafe { self.ps.swap_remove_unchecked(self.nextp) };
-        // xxx prefetch
         if likely(!self.ps.is_empty()) {
             if self.nextp.is_multiple_of(1000) {
                 self.nextp = self.next_coin() as usize % self.ps.len();

@@ -1,5 +1,5 @@
 [package]
-name = "simplebench"
+name = "bench"
 version.workspace = true
 edition.workspace = true
 
@@ -11,6 +11,7 @@ thousands = "0.2"
 mimalloc = { version = "*", features = ["v3"] }
 tikv-jemallocator = "0.6"
 snmalloc-rs = "0.3"
+rpmalloc = "0.2"
 
 [[bin]]
-name = "simplebench"
+name = "bench"
