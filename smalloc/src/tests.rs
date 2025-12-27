@@ -582,10 +582,10 @@ impl Smalloc {
         debug_assert!(sc >= NUM_UNUSED_SCS, "{sc}");
         debug_assert!(sc < NUM_SCS);
 
-        let inner = self.inner();
+        let smbp = self.inner().smbp.load(Relaxed);
 
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = inner.smbp | const_shl_u16_usize(flhi, 3);
+        let flhptr = smbp | (flhi as usize) << 3;
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         // single threaded so don't bother with the counter
@@ -593,14 +593,12 @@ impl Smalloc {
     }
 
     /// Return the sizeclass, slabnum, and slotnum
-    fn help_ptr_to_loc(&self, ptr: *const u8, layout: Layout) -> (u8, u8, u32) {
-        assert!(layout.align().is_power_of_two()); // alignment must be a power of two
-        
-        let inner = self.inner();
+    fn help_ptr_to_loc(&self, ptr: *const u8) -> (u8, u8, u32) {
+        let smbp = self.inner().smbp.load(Relaxed);
 
         let p_addr = ptr.addr();
 
-        assert!((p_addr >= inner.smbp) && (p_addr <= inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR));
+        assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
         let sc = const_shr_usize_u8(p_addr & SC_BITS_MASK, NUM_SLABNUM_AND_SLOTNUM_AND_DATA_BITS);
         let slabnum = const_shr_usize_u8(p_addr & SLABNUM_ADDR_MASK, NUM_SLOTNUM_AND_DATA_BITS);
@@ -653,3 +651,35 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
     }
 }
 
+use crate::Smalloc;
+
+static mut UNIT_TEST_ALLOC: Smalloc = Smalloc::new();
+
+fn get_testsmalloc() -> &'static Smalloc {
+    unsafe { &*std::ptr::addr_of!(UNIT_TEST_ALLOC) }
+}
+
+#[cfg(debug_assertions)]
+#[macro_export]
+macro_rules! nextest_unit_tests {
+    (
+        $(
+            $(#[$attr:meta])*
+            fn $name:ident() $body:block
+        )*
+    ) => {
+        $(
+            #[test]
+            $(#[$attr])*
+            fn $name() {
+                if std::env::var("NEXTEST").is_err() {
+                    panic!("This project requires cargo-nextest to run tests.");
+                }
+                    
+                get_testsmalloc().idempotent_init();
+
+                $body
+            }
+        )*
+    };
+}

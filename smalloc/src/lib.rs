@@ -81,7 +81,7 @@ const FLHDWORD_PUSH_COUNTER_INCR: u64 = 1u64 << 32;
 
 // --- Implementation ---
 
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicUsize, AtomicBool, AtomicU32, AtomicU64};
 use std::cell::Cell;
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -133,8 +133,8 @@ pub struct Smalloc {
 }
 
 struct SmallocInner {
-    sysbp: usize,
-    smbp: usize,
+    smbp: AtomicUsize,
+    initlock: AtomicBool
 }
 
 /// Pick a new slab to fail over to. This is used in two cases: from `inner_alloc()` when a slab is
@@ -176,18 +176,43 @@ impl Smalloc {
     pub const fn new() -> Self {
         Self {
             inner: UnsafeCell::new(SmallocInner {
-                sysbp: 0,
-                smbp: 0,
+                smbp: AtomicUsize::new(0),
+                initlock: AtomicBool::new(false),
             }),
         }
     }
 
+    pub fn idempotent_init(&self) {
+        let inner = self.inner();
+
+        let smbpval = inner.smbp.load(Relaxed);
+
+        if smbpval == 0 {
+            // acquire the spin lock
+            loop {
+                if inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
+                    break;
+                }
+            }
+
+            let smbpval = inner.smbp.load(Relaxed);
+
+            if smbpval == 0 {
+                let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+                assert!(sysbp != 0);
+                inner.smbp.store(sysbp.next_multiple_of(BASEPTR_ALIGN), Release);
+            }
+
+            // release the spin lock
+            inner.initlock.store(false, Release);
+        }
+    }
     #[inline(always)]
     fn inner_alloc(&self, orig_sc: u8) -> *mut u8 {
         debug_assert!(orig_sc >= NUM_UNUSED_SCS, "{orig_sc}");
         debug_assert!(orig_sc < NUM_SCS);
 
-        let smbp = self.inner().smbp;
+        let smbp = self.inner().smbp.load(Relaxed);
 
         // If the slab is full, or if there is a collision when updating the flh, we'll switch to
         // another slab in this same sizeclass.
@@ -288,12 +313,6 @@ impl Smalloc {
         unsafe { &*self.inner.get() }
     }
 
-    #[allow(clippy::mut_from_ref)]
-    #[inline(always)]
-    fn inner_mut(&self) -> &mut SmallocInner {
-        unsafe { &mut *self.inner.get() }
-    }
-
     /// For testing only. Do not use in production code.
     pub fn get_total_virtual_memory(&self) -> usize {
         TOTAL_VIRTUAL_MEMORY
@@ -301,7 +320,7 @@ impl Smalloc {
 
     /// For testing only. Do not use in production code.
     fn dump_map_of_slabs(&self) {
-        let inner = self.inner();
+        let smbp = self.inner().smbp.load(Relaxed);
 
         // Dump a map of the slabs
         let mut fullslots = 0;
@@ -319,7 +338,7 @@ impl Smalloc {
             for slabnum in 0..NUM_SLABS {
 //                print!(" {slabnum}");
                 
-                let headelement = help_get_flh(inner.smbp, sc, slabnum);
+                let headelement = help_get_flh(smbp, sc, slabnum);
                 if headelement == highestslotnum {
                     // full
                     print!("X");
@@ -334,22 +353,6 @@ impl Smalloc {
             fulltotsize += scfulltotsize;
         }
         println!(" totslots: {fullslots}, totsize: {fulltotsize}");
-    }
-
-    /// Initializes the allocator.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure:
-    /// - This method is called exactly once
-    /// - This is called before any dynamic allocation occurs
-    /// - No other thread simultaneously accesses this `Smalloc` instance during this call to `init`.
-    pub unsafe fn init(&self) {
-        let inner = self.inner_mut();
-        assert!(inner.sysbp == 0);
-        inner.sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
-        assert!(inner.sysbp != 0);
-        inner.smbp = inner.sysbp.next_multiple_of(BASEPTR_ALIGN);
     }
 
     /// `highestslotnum` is for using `& highestslotnum` instead of `% numslots` to compute a number
@@ -458,7 +461,9 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(reqalign > 0);
         debug_assert!(reqalign.is_power_of_two()); // alignment must be a power of two
 
-        let sc = req_to_sc(reqsiz, reqalign);
+        let sc = reqali_to_sc(reqsiz, reqalign);
+
+        self.idempotent_init();
 
         self.inner_alloc(sc)
     }
@@ -470,13 +475,13 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let p_addr = ptr.addr();
 
-        let inner = self.inner();
+        let smbp = self.inner().smbp.load(Relaxed);
 
         // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
         // less than or equal to the highest slot pointer.
-        let highest_addr = inner.smbp + HIGHEST_SMALLOC_SLOT_ADDR;
+        let highest_addr = smbp + HIGHEST_SMALLOC_SLOT_ADDR;
 
-        assert!((p_addr >= inner.smbp) && (p_addr <= highest_addr));
+        assert!((p_addr >= smbp) && (p_addr <= highest_addr));
 
         // Okay now we know that it is a pointer into smalloc's region.
 
@@ -487,7 +492,7 @@ unsafe impl GlobalAlloc for Smalloc {
         let highestslotnum = const_gen_mask_u32(NUM_SLOTNUM_AND_DATA_BITS - sc);
 
         let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = inner.smbp | const_shl_u16_usize(flhi, 3);
+        let flhptr = smbp | const_shl_u16_usize(flhi, 3);
         let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         debug_assert!(p_addr.trailing_zeros() >= sc as u32);
@@ -534,7 +539,7 @@ unsafe impl GlobalAlloc for Smalloc {
 // utility functions
 
 use core::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::Ordering::{AcqRel, Acquire};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
 use plat::p::sys_alloc;
 use std::ptr::{copy_nonoverlapping, null_mut};
 //xxx16use thousands::Separable;
@@ -702,64 +707,6 @@ const fn help_leading_zeros_u64(x: u64) -> u8 {
 const fn help_trailing_zeros_usize(x: usize) -> u8 {
     x.trailing_zeros() as u8
 }
-
-pub use smalloc_macros::smalloc_main;
-
-// xxx could we move this out to src/tests.rs using the ctor hack ? 
-// For testing and benchmarking only.
-#[cfg(test)]
-mod unit_test_instance {
-    use super::Smalloc;
-    use std::sync::OnceLock;
-
-    pub static mut SMAL: Smalloc = Smalloc::new();
-    static INIT: OnceLock<()> = OnceLock::new();
-
-    pub fn setup() {
-        INIT.get_or_init(|| {
-            unsafe {
-                (*std::ptr::addr_of_mut!(SMAL)).init();
-            }
-        });
-    }
-
-    #[macro_export]
-    #[cfg(debug_assertions)]
-    macro_rules! get_testsmalloc {
-        () => {
-            #[allow(unused_unsafe)]
-            unsafe { &*std::ptr::addr_of!($crate::unit_test_instance::SMAL) }
-        };
-    }
-}
-
-// xxx could we move this out to src/tests.rs and just have less clear output if the user runs `cargo test`?
-#[cfg(debug_assertions)]
-#[macro_export]
-macro_rules! nextest_unit_tests {
-    (
-        $(
-            $(#[$attr:meta])*
-            fn $name:ident() $body:block
-        )*
-    ) => {
-        $(
-            #[test]
-            $(#[$attr])*
-            fn $name() {
-                if std::env::var("NEXTEST").is_err() {
-                    panic!("This project requires cargo-nextest to run tests.");
-                }
-                    
-                unit_test_instance::setup();
-
-                $body
-            }
-        )*
-    };
-}
-
-
 
 #[cfg(test)]
 mod tests;
