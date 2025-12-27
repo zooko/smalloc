@@ -452,7 +452,6 @@ use std::hint::unlikely;
 unsafe impl GlobalAlloc for Smalloc {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        debug_assert!(self.inner().smbp != 0);
         let reqsiz = layout.size();
         let reqalign = layout.align();
         debug_assert!(reqsiz > 0);
@@ -506,10 +505,10 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(oldalignment.is_power_of_two()); // alignment must be a power of two
         debug_assert!(reqsize > 0);
 
-        let oldsc = req_to_sc(oldsize, oldalignment);
+        let oldsc = reqali_to_sc(oldsize, oldalignment);
         debug_assert!(oldsc >= NUM_UNUSED_SCS);
         debug_assert!(oldsc < NUM_SCS);
-        let reqsc = req_to_sc(reqsize, oldalignment);
+        let reqsc = reqali_to_sc(reqsize, oldalignment);
         debug_assert!(reqsc >= NUM_UNUSED_SCS);
         debug_assert!(reqsc < NUM_SCS);
 
@@ -665,7 +664,7 @@ const fn const_gen_mask_u8(numbits: u8) -> u8 {
 
 /// Return the size class for the aligned size.
 #[inline(always)]
-fn req_to_sc(siz: usize, ali: usize) -> u8 {
+fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     debug_assert!(siz > 0);
     debug_assert!(siz <= const_one_shl_usize(NUM_SCS - 1));
     debug_assert!(ali > 0);
