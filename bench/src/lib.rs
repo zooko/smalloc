@@ -351,7 +351,7 @@ macro_rules! st_bench {
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
-        let name = format!("sm_st_{func_name}-1");
+        let name = format!("s_st_{func_name}-1");
         $crate::singlethread_bench(f, $iters_per_batch, &name, &sm, $seed);
     }};
 }
@@ -481,7 +481,7 @@ macro_rules! mt_bench {
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
-        let name = format!("sm_mt_{func_name}-{}", $threads);
+        let name = format!("s_mt_{func_name}-{}", $threads);
         $crate::multithread_bench(f, $threads, $iters_per_batch, &name, &sm, $seed);
     }};
 }

@@ -1,7 +1,3 @@
-use crate::*;
-use std::alloc::Layout;
-use std::alloc::GlobalAlloc;
-
 /// If we've allocated all the slots from a slab, the next allocation of that sizeclass comes
 /// from a different slab of the same sizeclass. This test doesn't work for the largest
 /// sizeclass simply because the test assumes you can allocate 2 slots...
@@ -343,72 +339,72 @@ fn highest_slotnum(sc: u8) -> u32 {
 nextest_unit_tests! {
     fn test_req_to_sc() {
         let test_cases = [
-            (1, 1, 4),
-            (2, 1, 4),
-            (3, 1, 4),
-            (4, 1, 4),
-            (5, 1, 4),
-            (7, 1, 4),
-            (8, 1, 4),
-            (9, 1, 4),
+            (1, 1, max(0, NUM_UNUSED_SCS)),
+            (2, 1, max(1, NUM_UNUSED_SCS)),
+            (3, 1, max(2, NUM_UNUSED_SCS)),
+            (4, 1, max(2, NUM_UNUSED_SCS)),
+            (5, 1, max(3, NUM_UNUSED_SCS)),
+            (7, 1, max(3, NUM_UNUSED_SCS)),
+            (8, 1, max(3, NUM_UNUSED_SCS)),
+            (9, 1, max(4, NUM_UNUSED_SCS)),
 
-            (1, 2, 4),
-            (2, 2, 4),
-            (3, 2, 4),
-            (4, 2, 4),
-            (5, 2, 4),
-            (7, 2, 4),
-            (8, 2, 4),
-            (9, 2, 4),
+            (1, 2, max(1, NUM_UNUSED_SCS)),
+            (2, 2, max(1, NUM_UNUSED_SCS)),
+            (3, 2, max(2, NUM_UNUSED_SCS)),
+            (4, 2, max(2, NUM_UNUSED_SCS)),
+            (5, 2, max(3, NUM_UNUSED_SCS)),
+            (7, 2, max(3, NUM_UNUSED_SCS)),
+            (8, 2, max(3, NUM_UNUSED_SCS)),
+            (9, 2, max(4, NUM_UNUSED_SCS)),
 
-            (1, 4, 4),
-            (2, 4, 4),
-            (3, 4, 4),
-            (4, 4, 4),
-            (5, 4, 4),
-            (7, 4, 4),
-            (8, 4, 4),
-            (9, 4, 4),
+            (1, 4, max(2, NUM_UNUSED_SCS)),
+            (2, 4, max(2, NUM_UNUSED_SCS)),
+            (3, 4, max(2, NUM_UNUSED_SCS)),
+            (4, 4, max(2, NUM_UNUSED_SCS)),
+            (5, 4, max(3, NUM_UNUSED_SCS)),
+            (7, 4, max(3, NUM_UNUSED_SCS)),
+            (8, 4, max(3, NUM_UNUSED_SCS)),
+            (9, 4, max(4, NUM_UNUSED_SCS)),
 
-            (1, 8, 4),
-            (2, 8, 4),
-            (3, 8, 4),
-            (4, 8, 4),
-            (5, 8, 4),
-            (7, 8, 4),
-            (8, 8, 4),
-            (9, 8, 4),
+            (1, 8, max(3, NUM_UNUSED_SCS)),
+            (2, 8, max(3, NUM_UNUSED_SCS)),
+            (3, 8, max(3, NUM_UNUSED_SCS)),
+            (4, 8, max(3, NUM_UNUSED_SCS)),
+            (5, 8, max(3, NUM_UNUSED_SCS)),
+            (7, 8, max(3, NUM_UNUSED_SCS)),
+            (8, 8, max(3, NUM_UNUSED_SCS)),
+            (9, 8, max(4, NUM_UNUSED_SCS)),
 
-            (1, 16, 4),
-            (2, 16, 4),
-            (3, 16, 4),
-            (4, 16, 4),
-            (5, 16, 4),
-            (7, 16, 4),
-            (8, 16, 4),
-            (9, 16, 4),
-            (15, 16, 4),
-            (16, 16, 4),
-            (17, 16, 5),
+            (1, 16, max(4, NUM_UNUSED_SCS)),
+            (2, 16, max(4, NUM_UNUSED_SCS)),
+            (3, 16, max(4, NUM_UNUSED_SCS)),
+            (4, 16, max(4, NUM_UNUSED_SCS)),
+            (5, 16, max(4, NUM_UNUSED_SCS)),
+            (7, 16, max(4, NUM_UNUSED_SCS)),
+            (8, 16, max(4, NUM_UNUSED_SCS)),
+            (9, 16, max(4, NUM_UNUSED_SCS)),
+            (15, 16, max(4, NUM_UNUSED_SCS)),
+            (16, 16, max(4, NUM_UNUSED_SCS)),
+            (17, 16, max(5, NUM_UNUSED_SCS)),
 
-            (1, 32, 5),
-            (2, 32, 5),
-            (3, 32, 5),
-            (4, 32, 5),
-            (5, 32, 5),
-            (7, 32, 5),
-            (8, 32, 5),
-            (9, 32, 5),
-            (15, 32, 5),
-            (16, 32, 5),
-            (17, 32, 5),
-            (30, 32, 5),
-            (31, 32, 5),
-            (32, 32, 5),
+            (1, 32, max(5, NUM_UNUSED_SCS)),
+            (2, 32, max(5, NUM_UNUSED_SCS)),
+            (3, 32, max(5, NUM_UNUSED_SCS)),
+            (4, 32, max(5, NUM_UNUSED_SCS)),
+            (5, 32, max(5, NUM_UNUSED_SCS)),
+            (7, 32, max(5, NUM_UNUSED_SCS)),
+            (8, 32, max(5, NUM_UNUSED_SCS)),
+            (9, 32, max(5, NUM_UNUSED_SCS)),
+            (15, 32, max(5, NUM_UNUSED_SCS)),
+            (16, 32, max(5, NUM_UNUSED_SCS)),
+            (17, 32, max(5, NUM_UNUSED_SCS)),
+            (30, 32, max(5, NUM_UNUSED_SCS)),
+            (31, 32, max(5, NUM_UNUSED_SCS)),
+            (32, 32, max(5, NUM_UNUSED_SCS)),
 
-            (33, 32, 6),
-            (32, 64, 6),
-            (33, 64, 6),
+            (33, 32, max(6, NUM_UNUSED_SCS)),
+            (32, 64, max(6, NUM_UNUSED_SCS)),
+            (33, 64, max(6, NUM_UNUSED_SCS)),
 
             (2usize.pow(31), 4, 31),
             (4, 2usize.pow(31), 31),
@@ -581,7 +577,6 @@ nextest_unit_tests! {
     }
 }
 
-use std::sync::atomic::Ordering::Relaxed;
 impl Smalloc {
     fn help_set_flh_singlethreaded(&self, sc: u8, slotnum: u32, slabnum: u8) {
         debug_assert!(sc >= NUM_UNUSED_SCS, "{sc}");
@@ -660,8 +655,6 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
     }
 }
 
-use crate::Smalloc;
-
 static mut UNIT_TEST_ALLOC: Smalloc = Smalloc::new();
 
 fn get_testsmalloc() -> &'static Smalloc {
@@ -691,4 +684,10 @@ macro_rules! nextest_unit_tests {
         )*
     };
 }
+
+use crate::Smalloc;
+use std::sync::atomic::Ordering::Relaxed;
+use crate::*;
+use std::alloc::{Layout, GlobalAlloc};
+use std::cmp::max;
 
