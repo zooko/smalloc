@@ -594,6 +594,7 @@ impl Smalloc {
 
     /// Return the sizeclass, slabnum, and slotnum
     fn help_ptr_to_loc(&self, ptr: *const u8) -> (u8, u8, u32) {
+
         let smbp = self.inner().smbp.load(Relaxed);
 
         let p_addr = ptr.addr();
