@@ -45,15 +45,15 @@ pub fn main() {
             // lot of sense to compare smalloc's performance on this particular benchmark to the
             // performance of other allocators, which presumably have different
             // hotspots/worst-case-scenarios.
-            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many);
-            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many);
-            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW);
-            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW);
+           compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many);
+           compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many);
+           compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW);
+           compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW);
 
             // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
             // that many threads are trying to free slots in the same slab as each other.
-            const TOT_ITERS: u64 = 10_000_000;
-            for numthreads in [1u32, 10, 100, 1000, 10_000] {
+            const TOT_ITERS: u64 = 100_000;
+            for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
                 let iters_per_thread = TOT_ITERS / numthreads as u64;
                 let l = Layout::from_size_align(8, 1).unwrap();
                 compare_fh_bench!(numthreads, iters_per_thread, l);
@@ -110,8 +110,8 @@ pub fn main() {
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, sm, l);
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, sm, l);
 
-            const TOT_ITERS: u64 = 10_000_000;
-            for numthreads in [1u32, 10, 100, 1000, 10_000] {
+            const TOT_ITERS: u64 = 100_000;
+            for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
                 let iters_per_thread = TOT_ITERS / numthreads as u64;
                 let l = Layout::from_size_align(8, 1).unwrap();
                 multithread_free_hotspot!(numthreads, iters_per_thread, sm, l);

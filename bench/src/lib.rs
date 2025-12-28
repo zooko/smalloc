@@ -1,6 +1,6 @@
 // Thanks to Claude Opus 4.5 for refactoring this entire file with me.
 
-pub const NUM_BATCHES: u64 = 20;
+pub const NUM_BATCHES: u64 = 400;
 
 // ============================================================================
 // ALLOCATOR REGISTRY - Add new allocators here!
@@ -94,12 +94,12 @@ where
 {
     let mut best_ns = u64::MAX;
 
-    let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
-    for _i in 0..threads {
-        tses.push(TestState::new(iters_per_batch, seed));
-    }
-
     for _batch in 0..NUM_BATCHES {
+        let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
+        for _i in 0..threads {
+            tses.push(TestState::new(iters_per_batch, seed));
+        }
+
         let start = clock(libc::CLOCK_MONOTONIC_RAW);
         help_test_multithreaded_with_allocator(bf, threads, iters_per_batch, al, &mut tses);
         let end = clock(libc::CLOCK_MONOTONIC_RAW);
@@ -107,16 +107,16 @@ where
         if batch_ns < best_ns {
             best_ns = batch_ns;
         }
+
+        // Dealloc all allocations so that we don't run out of space.
+        for mut ts in tses {
+            ts.clean_up(al);
+        }
     }
 
     let nspi = best_ns / iters_per_batch;
     let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
     println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses_per_iter}", threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
-
-    // Dealloc all allocations so that we don't run out of space.
-    for mut ts in tses {
-        ts.clean_up(al);
-    }
 
     best_ns
 }
