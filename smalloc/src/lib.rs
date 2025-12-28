@@ -292,7 +292,7 @@ pub mod i {
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
 
-            let orig_slabnum = get_slabnum();
+            let (orig_threadnum, orig_slabnum) = get_thread_and_slab_num();
 
             // If the slab is full or we hit multithreading contention, we'll switch to another
             // slab.
@@ -348,21 +348,21 @@ pub mod i {
 
                         if unlikely(slabnum != orig_slabnum) {
                             // The slabnum changed. Save the new slabnum for next time.
-                            set_slab_num(slabnum);
+                            set_thread_and_slab_num(orig_slabnum, slabnum);
                         }
 
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
                         // slab in the same size class.
-                        slabnum = failover_slabnum(slabnum);
+                        slabnum = failover_slabnum(orig_threadnum, slabnum);
                     }
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                     // different slab in the same size class.
 
-                    slabnum = failover_slabnum(slabnum);
+                    slabnum = failover_slabnum(orig_threadnum, slabnum);
 
                     if likely(slabnum != orig_slabnum) {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
@@ -456,33 +456,35 @@ const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_BYTE_ADDR + BASEPTR_ALI
 // --- Implementation ---
 
 static GLOBAL_THREAD_NUM: AtomicU16 = AtomicU16::new(0);
-const SLAB_NUM_SENTINEL: u16 = u16::MAX;
+const SLAB_NUM_SENTINEL: u8 = u8::MAX;
 thread_local! {
-    static SLABNUM: Cell<u16> = const { Cell::new(SLAB_NUM_SENTINEL) };
+    static TAS_NUMS: Cell<(u8, u8)> = const { Cell::new((0, SLAB_NUM_SENTINEL)) };
 }
 
-/// Get the slab number for this thread. On first call, initializes it from GLOBAL_THREAD_NUM.
-//xxx look at asm of using Option instead of the sentinel value
+const TAS_THREAD_NUM_BITS: u8 = 5;
+
+/// Get the thread-and-slab number for this thread. On first call, initializes it from
+/// GLOBAL_THREAD_NUM.
 #[inline(always)]
-fn get_slabnum() -> u8 {
-    SLABNUM.with(|cell| {
-        let slabnum = cell.get();
-        if slabnum == SLAB_NUM_SENTINEL {
-            let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
-            let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK as u16;
-            cell.set(newslabnum);
-            newslabnum as u8
-        } else {
-            slabnum as u8
-        }
-    })
+fn get_thread_and_slab_num() -> (u8, u8) {
+    let (tn, sn) = TAS_NUMS.get();
+    if likely(sn != SLAB_NUM_SENTINEL) {
+        (tn, sn)
+    } else {
+        let newtn = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
+        let newsn = newtn as u8 & SLABNUM_BITS_ALONE_MASK;
+        let newtnshifted = ((newtn >> NUM_SLABS_BITS) & gen_mask!(TAS_THREAD_NUM_BITS, u16)) as u8;
+        TAS_NUMS.set((newtnshifted, newsn));
+        (newtnshifted, newsn)
+    }
 }
 
 #[inline(always)]
-fn set_slab_num(slabnum: u8) {
-    SLABNUM.with(|cell| {
-        cell.set(slabnum as u16);
-    });
+fn set_thread_and_slab_num(tn: u8, sn: u8) {
+    debug_assert!(tn < 1 << TAS_THREAD_NUM_BITS);
+    debug_assert!(sn < 1 << NUM_SLABS_BITS);
+
+    TAS_NUMS.set((tn, sn));
 }
 
 /// Pick a new slab to fail over to. This is used in two cases in `inner_alloc()`: a. when a slab is
@@ -490,10 +492,16 @@ fn set_slab_num(slabnum: u8) {
 ///
 /// Which new slab to fail over to? Not one of the very next ones, because threads that subsequently
 /// first-allocated will be using those. And, make sure it is co-prime to NUM_SLABS so that we'll
-/// visit all slabs before returning to our original one.
+/// visit all slabs before returning to our original one. xxx update docs
 #[inline(always)]
-fn failover_slabnum(slabnum: u8) -> u8 {
-    (slabnum + 7) & SLABNUM_BITS_ALONE_MASK
+fn failover_slabnum(threadnumshifted: u8, slabnum: u8) -> u8 {
+    const NUM_STEPS: usize = 1 << TAS_THREAD_NUM_BITS;
+    let threadnumshifted = threadnumshifted as usize;
+    debug_assert!(threadnumshifted < NUM_STEPS);
+    debug_assert!(slabnum < 1 << NUM_SLABS_BITS);
+
+    const STEPS: [u8; NUM_STEPS] = [19, 17, 23, 13, 29, 11, 31, 7, 5, 3, 1, 19, 17, 23, 13, 29, 11, 31, 7, 5, 3, 1, 19, 17, 23, 13, 29, 11, 31, 7, 5, 3,];
+    (slabnum + STEPS[threadnumshifted]) & SLABNUM_BITS_ALONE_MASK
 }
 
 unsafe impl Sync for Smalloc {}
