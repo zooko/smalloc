@@ -124,8 +124,8 @@ where
 #[macro_export]
     macro_rules! multithread_hotspot {
     ($f:expr, $threads:expr, $iters:expr, $al:expr, $l:expr) => {{
-        let name = concat!("hs-", stringify!($f));
-        $crate::multithread_hotspot_inner($f, $threads, $iters, name, $al, $l)
+        let name = format!("hs-{}-{}", stringify!($f), $threads);
+        $crate::multithread_hotspot_inner($f, $threads, $iters, &name, $al, $l)
     }};
 }
 
