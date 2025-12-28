@@ -5,7 +5,7 @@
 etc.
 
 `smalloc` performs comparably or even better than those other high-quality memory managers, while
-being much simpler. The current implementation is only 288 lines of Rust code! The other
+being much simpler. The current implementation is only XXX lines of Rust code! The other
 high-quality memory allocators range from 2553 lines of code (`rpmalloc`) to 27,256 lines of code
 (`jemalloc`) [^1].
 
@@ -141,63 +141,65 @@ binary notation) of slots and of bytes of data within each slot:
 Figure 1. Overview
 
 slabs
-                                       [sla][sc ][f]
-   0   000000000000000000000000000000000000000000000       used for flh's
+                                      slab sc   flh
+                                      [sla][sc ][f]
+   0   00000000000000000000000000000000000000000000       used for flh's
 
    1   unused
 
-   2   unused
+       slab sc   slotnum                     data
+       [   ][   ][                          ][    ]
+  sc   address in binary                            slotsize slots slabs
+  --   -------------------------------------------- -------- ----- -----
+       [sla][sc ][slotnum                       ][]
+   2   00000000100000000000000000000000000000000000     2^ 2  2^32   2^5
 
-   3   unused
+       [sla][sc ][slotnum                      ][d]
+   3   00000000110000000000000000000000000000000000     2^ 3  2^31   2^5
 
-        slab  sc   slotnum                      data
-       [   ][   ][                           ][    ]
-  sc   address in binary                             slotsize slots slabs
-  --   --------------------------------------------- -------- ----- -----
-       [sl][sc ][slotnum                       ][da]
-   4   000000100000000000000000000000000000000000000     2^ 4  2^32   2^4
+       [sla][sc ][slotnum                     ][da]
+   4   00000001000000000000000000000000000000000000     2^ 4  2^30   2^5
 
-       [sl][sc ][slotnum                      ][dat]
-   5   000000101000000000000000000000000000000000000     2^ 5  2^31   2^4
+       [sla][sc ][slotnum                    ][dat]
+   5   00000001010000000000000000000000000000000000     2^ 5  2^29   2^5
 
-       [sl][sc ][slotnum                     ][data]
-   6   000000110000000000000000000000000000000000000     2^ 6  2^30   2^4
+       [sla][sc ][slotn                     ][data]
+   6   00000001100000000000000000000000000000000000     2^ 6  2^28   2^5
 
-       [sl][sc ][slotnum                    ][data ]
-   7   000000111000000000000000000000000000000000000     2^ 7  2^29   2^4
+       [sla][sc ][slotnum                  ][data ]
+   7   00000001110000000000000000000000000000000000     2^ 7  2^27   2^5
 
-       [sl][sc ][slotnum                   ][data  ]
-   8   000001000000000000000000000000000000000000000     2^ 8  2^28   2^4
-
-   9                                                     2^ 9  2^27   2^4
-  10                                                     2^10  2^26   2^4
-  11                                                     2^11  2^25   2^4
-  12                                                     2^12  2^24   2^4
-  13                                                     2^13  2^23   2^4
-  14                                                     2^14  2^22   2^4
-  15                                                     2^15  2^21   2^4
-  16                                                     2^16  2^20   2^4
-  17                                                     2^17  2^19   2^4
-  18                                                     2^18  2^18   2^4
-  19                                                     2^19  2^17   2^4
-  20                                                     2^20  2^16   2^4
-  21                                                     2^21  2^15   2^4
-  22                                                     2^22  2^14   2^4
-  23                                                     2^23  2^13   2^4
-  24                                                     2^24  2^12   2^4
-  25                                                     2^25  2^11   2^4
-  26                                                     2^26  2^10   2^4
-  27                                                     2^27  2^ 9   2^4
-  28                                                     2^28  2^ 8   2^4
+       [sla][sc ][slotnum                 ][data  ]
+   8   00000010000000000000000000000000000000000000     2^ 8  2^26   2^5
+   9                                                    2^ 9  2^25   2^5
+  10                                                    2^10  2^24   2^5
+  11                                                    2^11  2^23   2^5
+  12                                                    2^12  2^22   2^5
+  13                                                    2^13  2^21   2^5
+  14                                                    2^14  2^20   2^5
+  15                                                    2^15  2^19   2^5
+  16                                                    2^16  2^18   2^5
+  17                                                    2^17  2^17   2^5
+  18                                                    2^18  2^16   2^5
+  19                                                    2^19  2^15   2^5
+  20                                                    2^20  2^14   2^5
+  21                                                    2^21  2^13   2^5
+  22                                                    2^22  2^12   2^5
+  23                                                    2^23  2^11   2^5
+  24                                                    2^24  2^10   2^5
+  25                                                    2^25  2^ 9   2^5
+  26                                                    2^26  2^ 8   2^5
+  27                                                    2^27  2^ 7   2^5
+  28                                                    2^28  2^ 6   2^5
  
-       [sl][sc ][slotn][data                       ]
-  29   000011101000000000000000000000000000000000000     2^29  2^ 7   2^5
+       [sla][sc ][slo][data                       ]
+  29   00000111010000000000000000000000000000000000    2^29  2^ 5   2^5
 
-       [sl][sc ][slot][data                        ]
-  30   000011110000000000000000000000000000000000000     2^30  2^ 6   2^5
+       [sla][sc ][sl][data                        ]
+  30   00000111100000000000000000000000000000000000    2^30  2^ 4   2^5
 
-       [sl][sc ][slo][data                         ]
-  31   000011111000000000000000000000000000000000000     2^31  2^ 5   2^4
+       [sla][sc ][s][data                         ]
+  31   00000111110000000000000000000000000000000000    2^31  2^ 3   2^5
 ```
 
 ### Free-Lists
@@ -656,6 +658,8 @@ a very useful tool!
   that works only platforms with larger (than 48-bit) virtual memory addresses and offers these
   advantages. TODO: make an even simpler smalloc ("ssmalloc"??) for 5-level-page-table systems.
 
+* try again to get the cpu number, at least on non macOS, instead of the thread-local "threadnum" variable :-) Also try again with Rust threadid
+
 * Rewrite it in Zig. :-)
 
 * make it so you can use the 8-byte slots (size class 3) when you're using only Rust code (not using
@@ -697,13 +701,15 @@ a very useful tool!
 
 * make it run benchmarks when you do `cargo run -p bench`, like iroh quinn does?
 
+* fall back to previous/system allocator on exhaustion
+
 # Acknowledgments
 
-* Thanks to Andrew Reece and Sam Smith for some specific suggestions that I implemented (see notes
-  in documentation above). Thanks also to Andrew Reece for suggesting (at the Shielded Labs team
-  meeting in San Diego) that we use multiple slabs for all size classes in order to reduce
-  multithreading write conflicts. This suggestion forms a big part of smalloc v6 vs smalloc v5,
-  which used multiple slabs for small size classes but not for larger ones.
+* Thanks to Andrew Reece and Sam Smith from Shielded Labs for some specific suggestions that I
+  implemented (see notes in documentation above). Thanks also to Andrew Reece for suggesting (at the
+  Shielded Labs team meeting in San Diego) that we use multiple slabs for all size classes in order
+  to reduce multithreading write conflicts. This suggestion forms a big part of smalloc v6 vs
+  smalloc v5, which used multiple slabs for small size classes but not for larger ones.
 
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner for advice and
   encouragement. Thanks to Nate Wilcox and Jack O'Connor for hands-on debugging help!
