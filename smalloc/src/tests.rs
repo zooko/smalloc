@@ -11,7 +11,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let l = Layout::from_size_align(siz, 1).unwrap();
 
     let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    debug_assert!(slabnum < NUM_SLABS, "slabnum: {slabnum}, NUM_SLABS: {NUM_SLABS}");
 
     let numslots = help_numslots(sc);
     debug_assert!(numslots >= 3);
@@ -28,8 +28,8 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert!(!p1.is_null());
 
     let (sc1, slabnum1, slotnum1) = sm.help_ptr_to_loc(p1);
-    assert_eq!(sc1, sc);
-    assert_eq!(slotnum1 as usize, i);
+    assert_eq!(sc1, sc, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}, SLABNUM_ALONE_MASK: {SLABNUM_ALONE_MASK:b}");
+    assert_eq!(slotnum1 as usize, i, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}");
 
     i += 1;
 
@@ -91,7 +91,6 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
     let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -142,7 +141,6 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
     let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -201,7 +199,6 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
     let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-    let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -286,7 +283,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
     let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-    let orig_slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
+    let orig_slabnum = slabnum;
 
     let p1 = unsafe { sm.alloc(l) };
     assert!(!p1.is_null(), "l: {l:?}");
@@ -337,7 +334,7 @@ fn highest_slotnum(sc: u8) -> u32 {
 }
 
 nextest_unit_tests! {
-    fn test_req_to_sc() {
+    fn test_reqali_to_sc() {
         let test_cases = [
             (1, 1, max(0, NUM_UNUSED_SCS)),
             (2, 1, max(1, NUM_UNUSED_SCS)),
@@ -411,7 +408,7 @@ nextest_unit_tests! {
         ];
 
         for (reqsiz, reqali, sc) in test_cases {
-            assert_eq!(reqali_to_sc(reqsiz, reqali), sc, "req_to_sc({reqsiz}, {reqali}) should equal {sc}");
+            assert_eq!(reqali_to_sc(reqsiz, reqali), sc, "reqali_to_sc({reqsiz}, {reqali}) should equal {sc}");
         }
     }
 
@@ -532,7 +529,6 @@ nextest_unit_tests! {
 
         // Step 0: reach into the current slab's `flh` and set it to the max slot number.
         let (slabnum, _threadnum) = get_slabnum_and_threadnum();
-        let slabnum = (slabnum >> SLABNUM_FLH_SHIFT_BITS) as u8;
         sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot
@@ -543,10 +539,12 @@ nextest_unit_tests! {
     }
 
     fn slotnum_encode_and_decode_roundtrip() {
-        for sc in [ 31, 30, 25, 12, 9, 5, 4 ] {
+        for sc in NUM_UNUSED_SCS..NUM_SCS {
             let numslots = help_numslots(sc);
             assert!(numslots > 0, "sc: {sc}");
             assert!(numslots <= 2usize.pow(32), "sc: {sc}");
+
+            let sentinel_slotnum = (numslots - 1) as u32;
 
             let slotnums = [ 0, 1, 2, 3, 4, numslots.wrapping_sub(4), numslots.wrapping_sub(3), numslots.wrapping_sub(2), numslots.wrapping_sub(1) ];
             for slotnum1 in slotnums {
@@ -554,13 +552,11 @@ nextest_unit_tests! {
                 let slotnum1 = slotnum1 as u32;
                 for slotnum2 in slotnums {
                     assert!(slotnum2 < 2usize.pow(32));
-                    let sslotnum1 = (slotnum1 as u64) << sc;
                     let slotnum2 = slotnum2 as u32;
-                    let sslotnum2 = (slotnum2 as u64) << sc;
-                    if slotnum1 < (numslots - 1) as u32 && (slotnum2 as usize) < numslots && slotnum1 != slotnum2 {
-                        let ence = Smalloc::encode_next_entry_link(sslotnum1, sslotnum2, 1 << sc);
-                        let dece = Smalloc::decode_next_entry_link(sslotnum1, ence, 1 << sc);
-                        assert_eq!(sslotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, sc: {sc}");
+                    if slotnum1 < sentinel_slotnum as u32 && slotnum2 <= sentinel_slotnum && slotnum1 != slotnum2 {
+                        let ence = Smalloc::encode_next_entry_link(slotnum1, slotnum2, sentinel_slotnum);
+                        let dece = Smalloc::decode_next_entry_link(slotnum1, ence, sentinel_slotnum);
+                        assert_eq!(slotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, sc: {sc}");
                     }
                 }
             }
@@ -586,29 +582,28 @@ impl Smalloc {
 
         let smbp = inner.smbp.load(Acquire);
         
-        let flhi = NUM_SCS as u16 * slabnum as u16 + sc as u16;
-        let flhptr = smbp | (flhi as usize) << 3;
+        let flhi = NUM_SLABS as usize * sc as usize + slabnum as usize;
+        let flhptr = smbp | flhi << 3;
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         // single threaded so don't bother with the counter
-        flha.store((slotnum as u64) << sc, Relaxed);
+        flha.store(slotnum as u64, Relaxed);
     }
 
     /// Return the sizeclass, slabnum, and slotnum
     fn help_ptr_to_loc(&self, ptr: *const u8) -> (u8, u8, u32) {
-        let inner = self.inner();
+        let smbp = self.inner().smbp.load(Relaxed);
 
-        let smbp = inner.smbp.load(Acquire);
-        
         let p_addr = ptr.addr();
 
         assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
-        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> SC_ADDR_SHIFT_BITS) as u8;
-        let slabnum = ((p_addr & SLABNUM_ADDR_MASK) >>  (NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS)) as u8;
-        let slotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
+        let sc = (p_addr & SC_BITS_ADDR_MASK) >> (NUM_SLOTNUM_AND_DATA_BITS + NUM_SLABS_BITS);
+        let slabnum = (p_addr & SLABNUM_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS;
+        let slotnum = (p_addr & SLOTNUM_AND_DATA_ADDR_MASK as usize) >> sc;
+        debug_assert!(slabnum < NUM_SLABS as usize);
 
-        (sc, slabnum, slotnum)
+        (sc as u8, slabnum as u8, slotnum as u32)
     }
 
 }
@@ -690,4 +685,3 @@ use std::sync::atomic::Ordering::Relaxed;
 use crate::*;
 use std::alloc::{Layout, GlobalAlloc};
 use std::cmp::max;
-
