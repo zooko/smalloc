@@ -50,11 +50,9 @@ pub fn main() {
            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches);
            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches);
            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, iters_many, num_batches);
-           compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 8, iters_many, num_batches);
            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches);
            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches);
            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, ITERS_FEW, num_batches);
-           compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 8, ITERS_FEW, num_batches);
 
             // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
             // that many threads are trying to free slots in the same slab as each other.
@@ -114,11 +112,9 @@ pub fn main() {
             multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, sm, l);
             multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, sm, l);
             multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, iters_many, num_batches, sm, l);
-            multithread_hotspot!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 8, iters_many, num_batches, sm, l);
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, sm, l);
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, sm, l);
             multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, ITERS_FEW, num_batches, sm, l);
-            multithread_hotspot!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 8, ITERS_FEW, num_batches, sm, l);
 
             const TOT_ITERS: u64 = 100_000;
             for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
