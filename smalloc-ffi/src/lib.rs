@@ -1,9 +1,43 @@
 #![feature(likely_unlikely)]
 
 // Thanks to Claude (Opus 4.5) for help with defining an FFI and diagnosing and fixing handling of
-// foreign pointers, and interposition of symbols on macOS.
+// foreign pointers, and interposition of symbols on macOS, and debugging the crash due to not
+// having a malloc_usable_size function, and refactoring the file to use macros to reduce
+// boilerplate per additional function.
 
 static SMALLOC: Smalloc = Smalloc::new();
+
+// =============================================================================
+// Helper: Check if pointer belongs to smalloc
+// =============================================================================
+
+/// Returns Some(sc) if this is a smalloc pointer, None if foreign
+#[inline(always)]
+fn classify_ptr(ptr: *mut c_void) -> Option<u8> {
+    let p_addr = ptr.addr();
+    let smbp = SMALLOC.inner().smbp.load(Acquire);
+    debug_assert!(smbp != 0);
+
+    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
+        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+        debug_assert!(sc >= NUM_UNUSED_SCS);
+        debug_assert!(sc < NUM_SCS);
+        debug_assert!(p_addr.trailing_zeros() >= sc as u32);
+        Some(sc)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+fn req_to_sc(siz: usize) -> u8 {
+    debug_assert!(siz > 0);
+    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+}
+
+// =============================================================================
+// Core smalloc implementations
+// =============================================================================
 
 /// # Safety
 ///
@@ -15,6 +49,7 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
     }
 
     let sc = req_to_sc(size);
+    // xxx fall back to prev alloc in this case
     if unlikely(sc >= NUM_SCS) {
         return null_mut();
     }
@@ -32,17 +67,11 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
         return;
     }
 
-    let smbp = SMALLOC.inner().smbp.load(Acquire);
-    debug_assert!(smbp != 0);
-    let p_addr = ptr.addr();
-
-    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
-        SMALLOC.inner_dealloc(ptr as usize);
-        return;
+    if likely(classify_ptr(ptr).is_some()) {
+        SMALLOC.inner_dealloc(ptr.addr());
+    } else {
+        platform::call_prev_free(ptr);
     }
-
-    // Foreign pointer - allocated before smalloc was loaded
-    unsafe { platform::call_prev_free(ptr) }
 }
 
 /// # Safety
@@ -59,128 +88,126 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
         return SMALLOC.inner_alloc(reqsc) as *mut c_void;
     }
 
-    let p_addr = ptr.addr();
-    let smbp = SMALLOC.inner().smbp.load(Acquire);
-    debug_assert!(smbp != 0);
-
-    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
-        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
-        debug_assert!(oldsc >= NUM_UNUSED_SCS);
-        debug_assert!(oldsc < NUM_SCS);
-        debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
-
+    if let Some(oldsc) = classify_ptr(ptr) {
         if unlikely(reqsc <= oldsc) {
             return ptr;
         }
 
         if unlikely(reqsc >= NUM_SCS) {
-            null_mut()
-        } else {
-            // The "Growers" strategy. Promote the new sizeclass to the next one up in this
-            // schedule:
-            #[cfg(feature = "growers")]
-            let reqsc =
-                if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
-                if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
-                if reqsc <= 12 { 12 } else // page size on Linux and Windows
-                if reqsc <= 14 { 14 } else // page size on Apple OS
-                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
-            { reqsc };
-
-            let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
-
-            if likely(!newp.is_null()) {
-                let oldsize = 1 << oldsc;
-                unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
-                SMALLOC.inner_dealloc(p_addr);
-            }
-
-            newp
+            // xxx fall back to prev alloc
+            return null_mut();
         }
+
+        // The "Growers" strategy. Promote the new sizeclass to the next one up in this schedule:
+        #[allow(clippy::suspicious_else_formatting)]
+        #[cfg(feature = "growers")]
+        let reqsc =
+            if reqsc <= 6 { 6 } else
+            if reqsc <= 7 { 7 } else
+            if reqsc <= 12 { 12 } else
+            if reqsc <= 14 { 14 } else
+            if reqsc <= 16 { 16 } else
+            if reqsc <= 18 { 18 } else
+            if reqsc <= 21 { 21 }
+        else { reqsc };
+
+        let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
+        // if this is NULL then we're just going to return NULL
+        // xxx fall back to prev alloc
+
+        if likely(!newp.is_null()) {
+            let oldsize = 1 << oldsc;
+            unsafe { copy_nonoverlapping(ptr, newp, oldsize) };
+            SMALLOC.inner_dealloc(ptr.addr());
+        }
+
+        newp
     } else {
-        // Foreign pointer
-        unsafe { platform::call_prev_realloc(ptr, new_size) }
+        platform::call_prev_realloc(ptr, new_size)
     }
 }
 
-#[inline(always)]
-fn req_to_sc(siz: usize) -> u8 {
-    debug_assert!(siz > 0);
-    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `malloc_usable_size`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_malloc_usable_size(ptr: *mut c_void) -> usize {
+    if unlikely(ptr.is_null()) {
+        return 0;
+    }
+
+    if let Some(sc) = classify_ptr(ptr) {
+        1 << sc
+    } else {
+        platform::call_prev_malloc_usable_size(ptr)
+    }
 }
 
-// Linux: use dlsym(RTLD_NEXT, ...) and export malloc/free/realloc directly
+// =============================================================================
+// Linux platform module
+// =============================================================================
+
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
+    use core::ffi::c_char;
+    use std::sync::atomic::{AtomicPtr, Ordering::Release};
 
     const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
+    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
 
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
 
-    type FreeFn = unsafe extern "C" fn(*mut c_void);
-    type ReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
+    // Macro to define a lazily-resolved dlsym wrapper
+    macro_rules! define_prev_fn {
+        ($static_name:ident, $pub_name:ident, $symbol:literal, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
+            static $static_name: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
 
-    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
+            pub fn $pub_name($($arg: $arg_ty),*) $(-> $ret)? {
+                let mut f = $static_name.load(Acquire);
 
-    static PREV_FREE: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
-    static PREV_REALLOC: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
+                if f == NOT_LOOKED_UP {
+                    f = unsafe { dlsym(RTLD_NEXT, concat!($symbol, "\0").as_ptr() as *const c_char) };
+                    $static_name.store(f, Release);
+                }
 
-    pub unsafe fn call_prev_free(ptr: *mut c_void) {
-        let mut f = PREV_FREE.load(Acquire);
+                if f.is_null() {
+                    panic!(concat!("dlsym failed to find ", $symbol));
+                }
 
-        if f == NOT_LOOKED_UP {
-            f = unsafe { dlsym(RTLD_NEXT, c"free".as_ptr()) };
-            PREV_FREE.store(f, Release);
-        }
-
-        if !f.is_null() {
-            let f: FreeFn = unsafe { std::mem::transmute(f) };
-            unsafe { f(ptr) };
-        }
+                type Fn = unsafe extern "C" fn($($arg_ty),*) $(-> $ret)?;
+                let f: Fn = unsafe { std::mem::transmute(f) };
+                unsafe { f($($arg),*) }
+            }
+        };
     }
 
-    pub unsafe fn call_prev_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-        let mut f = PREV_REALLOC.load(Acquire);
+    define_prev_fn!(PREV_FREE, call_prev_free, "free", fn(ptr: *mut c_void));
+    define_prev_fn!(PREV_REALLOC, call_prev_realloc, "realloc", fn(ptr: *mut c_void, size: usize) -> *mut c_void);
+    define_prev_fn!(PREV_MALLOC_USABLE_SIZE, call_prev_malloc_usable_size, "malloc_usable_size", fn(ptr: *mut c_void) -> usize);
 
-        if f == NOT_LOOKED_UP {
-            f = unsafe { dlsym(RTLD_NEXT, c"realloc".as_ptr()) };
-            PREV_REALLOC.store(f, Release);
-        }
-
-        if f.is_null() {
-            panic!("dlsym failed to find realloc");
-        }
-
-        let f: ReallocFn = unsafe { std::mem::transmute(f) };
-        unsafe { f(ptr, new_size) }
+    // Macro to export interposed symbols
+    macro_rules! export_interpose {
+        ($name:ident => $impl:path, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+                unsafe { $impl($($arg),*) }
+            }
+        };
     }
 
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-        unsafe { super::smalloc_malloc(size) }
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn free(ptr: *mut c_void) {
-        unsafe { super::smalloc_free(ptr) }
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-        unsafe { super::smalloc_realloc(ptr, new_size) }
-    }
-
-    use std::sync::atomic::AtomicPtr;
-    use std::sync::atomic::Ordering::Release;
-    use core::ffi::c_char;
+    export_interpose!(malloc => super::smalloc_malloc, fn(size: usize) -> *mut c_void);
+    export_interpose!(free => super::smalloc_free, fn(ptr: *mut c_void));
+    export_interpose!(realloc => super::smalloc_realloc, fn(ptr: *mut c_void, new_size: usize) -> *mut c_void);
+    export_interpose!(malloc_usable_size => super::smalloc_malloc_usable_size, fn(ptr: *mut c_void) -> usize);
 }
 
-// macOS: use malloc_zone_* APIs directly (DYLD_INTERPOSE makes dlsym unusable)
+// =============================================================================
+// macOS platform module
+// =============================================================================
+
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
@@ -189,16 +216,24 @@ mod platform {
         fn malloc_default_zone() -> *mut c_void;
         fn malloc_zone_free(zone: *mut c_void, ptr: *mut c_void);
         fn malloc_zone_realloc(zone: *mut c_void, ptr: *mut c_void, size: usize) -> *mut c_void;
+        fn malloc_size(ptr: *const c_void) -> usize;
     }
 
-    pub unsafe fn call_prev_free(ptr: *mut c_void) {
-        let zone = unsafe { malloc_default_zone() };
-        unsafe { malloc_zone_free(zone, ptr) };
+    macro_rules! define_zone_fn {
+        ($pub_name:ident => $zone_fn:ident, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
+            pub fn $pub_name($($arg: $arg_ty),*) $(-> $ret)? {
+                let zone = unsafe { malloc_default_zone() };
+                unsafe { $zone_fn(zone, $($arg),*) }
+            }
+        };
     }
 
-    pub unsafe fn call_prev_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-        let zone = unsafe { malloc_default_zone() };
-        unsafe { malloc_zone_realloc(zone, ptr, size) }
+    define_zone_fn!(call_prev_free => malloc_zone_free, fn(ptr: *mut c_void));
+    define_zone_fn!(call_prev_realloc => malloc_zone_realloc, fn(ptr: *mut c_void, size: usize) -> *mut c_void);
+
+    // malloc_size doesn't use zones, so define it directly
+    pub fn call_prev_malloc_usable_size(ptr: *mut c_void) -> usize {
+        unsafe { malloc_size(ptr) }
     }
 }
 
