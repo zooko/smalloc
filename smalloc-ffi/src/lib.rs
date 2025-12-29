@@ -78,16 +78,16 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
         } else {
             // The "Growers" strategy. Promote the new sizeclass to the next one up in this
             // schedule:
-            // xxx test this again against the simd_json benchmark
-            // let reqsc =
-            //     if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
-            //     if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
-            //     if reqsc <= 12 { 12 } else // page size on Linux and Windows
-            //     if reqsc <= 14 { 14 } else // page size on Apple OS
-            //     if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
-            //     if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
-            //     if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
-            // { reqsc };
+            #[cfg(feature = "growers")]
+            let reqsc =
+                if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
+                if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
+                if reqsc <= 12 { 12 } else // page size on Linux and Windows
+                if reqsc <= 14 { 14 } else // page size on Apple OS
+                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
+                if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
+                if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
+            { reqsc };
 
             let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
 

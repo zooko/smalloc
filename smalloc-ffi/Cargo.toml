@@ -8,3 +8,6 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 smalloc = { path = "../smalloc" }
+
+[features]
+growers = []
