@@ -10,12 +10,12 @@ static SMALLOC: Smalloc = Smalloc::new();
 /// This has the same safety requirements as any implementation of `malloc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
-    if size == 0 {
+    if unlikely(size == 0) {
         return null_mut();
     }
 
     let sc = req_to_sc(size);
-    if sc >= NUM_SCS {
+    if unlikely(sc >= NUM_SCS) {
         return null_mut();
     }
 
@@ -28,18 +28,17 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
 /// This has the same safety requirements as any implementation of `free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
-    if ptr.is_null() {
+    if unlikely(ptr.is_null()) {
         return;
     }
 
     let smbp = SMALLOC.inner().smbp.load(Acquire);
-    if smbp != 0 {
-        let p_addr = ptr.addr();
+    debug_assert!(smbp != 0);
+    let p_addr = ptr.addr();
 
-        if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
-            SMALLOC.inner_dealloc(ptr as usize);
-            return;
-        }
+    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
+        SMALLOC.inner_dealloc(ptr as usize);
+        return;
     }
 
     // Foreign pointer - allocated before smalloc was loaded
@@ -53,8 +52,8 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
 pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     let reqsc = req_to_sc(new_size);
 
-    if ptr.is_null() {
-        if reqsc >= NUM_SCS {
+    if unlikely(ptr.is_null()) {
+        if unlikely(reqsc >= NUM_SCS) {
             return null_mut();
         }
         return SMALLOC.inner_alloc(reqsc) as *mut c_void;
@@ -62,8 +61,9 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
 
     let p_addr = ptr.addr();
     let smbp = SMALLOC.inner().smbp.load(Acquire);
+    debug_assert!(smbp != 0);
 
-    if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
+    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
         let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
         debug_assert!(oldsc >= NUM_UNUSED_SCS);
         debug_assert!(oldsc < NUM_SCS);
@@ -76,9 +76,22 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
         if unlikely(reqsc >= NUM_SCS) {
             null_mut()
         } else {
+            // The "Growers" strategy. Promote the new sizeclass to the next one up in this
+            // schedule:
+            // xxx test this again against the simd_json benchmark
+            // let reqsc =
+            //     if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
+            //     if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
+            //     if reqsc <= 12 { 12 } else // page size on Linux and Windows
+            //     if reqsc <= 14 { 14 } else // page size on Apple OS
+            //     if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
+            //     if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
+            //     if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
+            // { reqsc };
+
             let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
 
-            if !newp.is_null() {
+            if likely(!newp.is_null()) {
                 let oldsize = 1 << oldsc;
                 unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
                 SMALLOC.inner_dealloc(p_addr);
@@ -191,7 +204,7 @@ mod platform {
 
 use std::sync::atomic::Ordering::Acquire;
 use core::ffi::c_void;
-use std::hint::unlikely;
+use std::hint::{likely, unlikely};
 use std::ptr::{null_mut, copy_nonoverlapping};
 use smalloc::i::*;
 use smalloc::Smalloc;
