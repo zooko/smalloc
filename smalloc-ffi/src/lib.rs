@@ -137,9 +137,13 @@ pub unsafe extern "C" fn smalloc_malloc_usable_size(ptr: *mut c_void) -> usize {
     }
 
     if let Some(sc) = classify_ptr(ptr) {
+        debug_assert!(sc >= NUM_UNUSED_SCS);
+        debug_assert!(sc < NUM_SCS);
         1 << sc
     } else {
-        platform::call_prev_malloc_usable_size(ptr)
+        let res = platform::call_prev_malloc_usable_size(ptr);
+        debug_assert!(res < 1 << 33);
+        res
     }
 }
 
@@ -233,7 +237,9 @@ mod platform {
 
     // malloc_size doesn't use zones, so define it directly
     pub fn call_prev_malloc_usable_size(ptr: *mut c_void) -> usize {
-        unsafe { malloc_size(ptr) }
+        let res = unsafe { malloc_size(ptr) };
+        debug_assert!(res < 1 << 33);
+        res
     }
 }
 
