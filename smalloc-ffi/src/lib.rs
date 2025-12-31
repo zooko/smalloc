@@ -11,28 +11,54 @@ static SMALLOC: Smalloc = Smalloc::new();
 // Helper: Check if pointer belongs to smalloc
 // =============================================================================
 
-/// Returns Some(sc) if this is a smalloc pointer, None if foreign
+// It looks like this proposed new update to C standards (https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3621.txt) requires this behavior. Programs that expect glibc behavior already depend on this being returned from malloc(0).
+
+enum PtrClass {
+    NullOrSentinel,
+    Smalloc,
+    Foreign,
+}
+
 #[inline(always)]
-fn classify_ptr(ptr: *mut c_void) -> Option<u8> {
+fn classify_ptr(ptr: *mut c_void) -> PtrClass {
+    if unlikely(ptr.is_null() || ptr == SIZE_0_ALLOC_SENTINEL) {
+        return PtrClass::NullOrSentinel;
+    }
+
     let p_addr = ptr.addr();
     let smbp = SMALLOC.inner().smbp.load(Acquire);
     debug_assert!(smbp != 0);
 
     if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
         let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+
         debug_assert!(sc >= NUM_UNUSED_SCS);
         debug_assert!(sc < NUM_SCS);
         debug_assert!(p_addr.trailing_zeros() >= sc as u32);
-        Some(sc)
+
+        PtrClass::Smalloc
     } else {
-        None
+        PtrClass::Foreign
     }
 }
 
+/// ptr is required to be a smalloc pointer -- not Null, Sentinel, or Foreign.
 #[inline(always)]
-fn req_to_sc(siz: usize) -> u8 {
-    debug_assert!(siz > 0);
-    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+fn ptr_to_sc(ptr: *mut c_void) -> u8 {
+    debug_assert!(ptr.addr() >= SMALLOC.inner().smbp.load(Acquire) + LOWEST_SMALLOC_SLOT_ADDR && ptr.addr() <= SMALLOC.inner().smbp.load(Acquire) + HIGHEST_SMALLOC_SLOT_ADDR);
+
+    let sc = ((ptr.addr() & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+
+    debug_assert!(sc >= NUM_UNUSED_SCS);
+    debug_assert!(sc < NUM_SCS);
+    debug_assert!(ptr.addr().trailing_zeros() >= sc as u32);
+
+    sc
+}
+
+fn smalloc_inner_alloc(sc: u8) -> *mut c_void {
+    SMALLOC.idempotent_init();
+    SMALLOC.inner_alloc(sc) as *mut c_void
 }
 
 // =============================================================================
@@ -45,17 +71,21 @@ fn req_to_sc(siz: usize) -> u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
     if unlikely(size == 0) {
-        return null_mut();
+        return SIZE_0_ALLOC_SENTINEL;
     }
 
     let sc = req_to_sc(size);
-    // xxx fall back to prev alloc in this case
     if unlikely(sc >= NUM_SCS) {
+        platform::set_errno(ENOMEM);
         return null_mut();
     }
 
-    SMALLOC.idempotent_init();
-    SMALLOC.inner_alloc(sc) as *mut c_void
+    let ptr = smalloc_inner_alloc(sc);
+    if unlikely(ptr.is_null()) {
+        platform::set_errno(ENOMEM);
+    }
+
+    ptr
 }
 
 /// # Safety
@@ -63,14 +93,16 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
 /// This has the same safety requirements as any implementation of `free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
-    if unlikely(ptr.is_null()) {
-        return;
-    }
-
-    if likely(classify_ptr(ptr).is_some()) {
-        SMALLOC.inner_dealloc(ptr.addr());
-    } else {
-        platform::call_prev_free(ptr);
+    match classify_ptr(ptr) {
+        PtrClass::Smalloc => {
+            SMALLOC.inner_dealloc(ptr.addr());
+        }
+        PtrClass::Foreign => {
+            platform::call_prev_free(ptr);
+        }
+        PtrClass::NullOrSentinel => {
+            return;
+        }
     }
 }
 
@@ -79,51 +111,114 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
 /// This has the same safety requirements as any implementation of `realloc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-    let reqsc = req_to_sc(new_size);
+    match classify_ptr(ptr) {
+        PtrClass::Smalloc => {
+            if unlikely(new_size == 0) {
+                unsafe { smalloc_free(ptr) };
+                return SIZE_0_ALLOC_SENTINEL;
+            }
 
-    if unlikely(ptr.is_null()) {
-        if unlikely(reqsc >= NUM_SCS) {
-            return null_mut();
+            let reqsc = req_to_sc(new_size);
+            if unlikely(reqsc >= NUM_SCS) {
+                platform::set_errno(ENOMEM);
+                return null_mut();
+            }
+
+            let oldsc = ptr_to_sc(ptr);
+            if unlikely(reqsc <= oldsc) {
+                return ptr;
+            }
+
+            // The "Growers" strategy. Promote the new sizeclass to the next one up in this schedule:
+            #[allow(clippy::suspicious_else_formatting)]
+            #[cfg(feature = "growers")]
+            let reqsc =
+                if reqsc <= 6 { 6 } else
+                if reqsc <= 7 { 7 } else
+                if reqsc <= 12 { 12 } else
+                if reqsc <= 14 { 14 } else
+                if reqsc <= 16 { 16 } else
+                if reqsc <= 18 { 18 } else
+                if reqsc <= 21 { 21 }
+            else { reqsc };
+
+            let newp = smalloc_inner_alloc(reqsc);
+
+            if likely(!newp.is_null()) {
+                let oldsize = 1 << oldsc;
+                unsafe { copy_nonoverlapping(ptr, newp, oldsize) };
+                SMALLOC.inner_dealloc(ptr.addr());
+            } else {
+                // if this is NULL then we're just going to return NULL
+                platform::set_errno(ENOMEM);
+            }
+
+            newp
         }
-        return SMALLOC.inner_alloc(reqsc) as *mut c_void;
+        PtrClass::Foreign => {
+            return platform::call_prev_realloc(ptr, new_size);
+        }
+        PtrClass::NullOrSentinel => {
+            return unsafe { smalloc_malloc(new_size) };
+        }
+    }
+}
+
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `calloc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_calloc(count: usize, size: usize) -> *mut c_void {
+    if count >= 1 << (1 << NUM_SC_BITS) {
+        // smalloc can't allocate enough memory for that many things of any size.
+        platform::set_errno(ENOMEM);
+        return null_mut();
+    }
+    if size > 1 << DATA_ADDR_BITS_IN_HIGHEST_SC {
+        // smalloc can't allocate enough memory for even one thing of that size.
+        platform::set_errno(ENOMEM);
+        return null_mut();
     }
 
-    if let Some(oldsc) = classify_ptr(ptr) {
-        if unlikely(reqsc <= oldsc) {
-            return ptr;
+    let total = ((count as u32 as u64) * (size as u32 as u64)) as usize;
+
+    let ptr = unsafe { smalloc_malloc(total) };
+
+    if likely(!ptr.is_null() && ptr != SIZE_0_ALLOC_SENTINEL) {
+        unsafe { std::ptr::write_bytes(ptr, 0, total) };
+    }
+
+    // If this is NULL or Sentinel then we just return it. smalloc_malloc() will have already set
+    // ENOMEM if it should have.
+
+    ptr
+}
+
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `reallocarray`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
+    match classify_ptr(ptr) {
+        PtrClass::NullOrSentinel | PtrClass::Smalloc => {
+            if nmemb >= (1 << (1 << NUM_SC_BITS)) {
+                // smalloc can't allocate enough memory for that many things of any size.
+                // Set errno to ENOMEM and return NULL
+                platform::set_errno(ENOMEM);
+                return null_mut();
+            }
+            if size > 1 << DATA_ADDR_BITS_IN_HIGHEST_SC {
+                // smalloc can't allocate enough memory for even one thing of that size.
+                // Set errno to ENOMEM and return NULL
+                platform::set_errno(ENOMEM);
+                return null_mut();
+            }
+            let total = ((nmemb as u32 as u64) * (size as u32 as u64)) as usize;
+            return unsafe { smalloc_realloc(ptr, total) };
         }
-
-        if unlikely(reqsc >= NUM_SCS) {
-            // xxx fall back to prev alloc
-            return null_mut();
+        PtrClass::Foreign => {
+            return platform::call_prev_reallocarray(ptr, nmemb, size);
         }
-
-        // The "Growers" strategy. Promote the new sizeclass to the next one up in this schedule:
-        #[allow(clippy::suspicious_else_formatting)]
-        #[cfg(feature = "growers")]
-        let reqsc =
-            if reqsc <= 6 { 6 } else
-            if reqsc <= 7 { 7 } else
-            if reqsc <= 12 { 12 } else
-            if reqsc <= 14 { 14 } else
-            if reqsc <= 16 { 16 } else
-            if reqsc <= 18 { 18 } else
-            if reqsc <= 21 { 21 }
-        else { reqsc };
-
-        let newp = SMALLOC.inner_alloc(reqsc) as *mut c_void;
-        // if this is NULL then we're just going to return NULL
-        // xxx fall back to prev alloc
-
-        if likely(!newp.is_null()) {
-            let oldsize = 1 << oldsc;
-            unsafe { copy_nonoverlapping(ptr, newp, oldsize) };
-            SMALLOC.inner_dealloc(ptr.addr());
-        }
-
-        newp
-    } else {
-        platform::call_prev_realloc(ptr, new_size)
     }
 }
 
@@ -132,18 +227,85 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
 /// This has the same safety requirements as any implementation of `malloc_usable_size`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_malloc_usable_size(ptr: *mut c_void) -> usize {
-    if unlikely(ptr.is_null()) {
-        return 0;
+    match classify_ptr(ptr) {
+        PtrClass::Smalloc => {
+            let oldsc = ptr_to_sc(ptr);
+            debug_assert!(oldsc >= NUM_UNUSED_SCS);
+            debug_assert!(oldsc < NUM_SCS);
+            1 << oldsc
+        }
+        PtrClass::Foreign => {
+            platform::call_prev_malloc_usable_size(ptr)
+        }
+        PtrClass::NullOrSentinel => {
+            return 0;
+        }
+    }
+}
+
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `aligned_alloc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    debug_assert!(alignment > 0);
+
+    if unlikely(size == 0) {
+        return SIZE_0_ALLOC_SENTINEL;
     }
 
-    if let Some(sc) = classify_ptr(ptr) {
-        debug_assert!(sc >= NUM_UNUSED_SCS);
-        debug_assert!(sc < NUM_SCS);
-        1 << sc
-    } else {
-        let res = platform::call_prev_malloc_usable_size(ptr);
-        debug_assert!(res < 1 << 33);
-        res
+    debug_assert!(alignment.is_power_of_two());
+    debug_assert!(size.is_multiple_of(alignment));
+
+    let sc = reqali_to_sc(size, alignment);
+    if unlikely(sc >= NUM_SCS) {
+        platform::set_errno(ENOMEM);
+        return null_mut();
+    }
+
+    let ptr = smalloc_inner_alloc(sc);
+    if unlikely(ptr.is_null()) {
+        platform::set_errno(ENOMEM);
+    }
+
+    ptr
+}
+
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `free_aligned_sized`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_free_aligned_sized(ptr: *mut c_void, alignment: usize, size: usize) {
+    debug_assert!(alignment > 0);
+
+    match classify_ptr(ptr) {
+        PtrClass::Smalloc => {
+            SMALLOC.inner_dealloc(ptr.addr());
+        }
+        PtrClass::Foreign => {
+            platform::call_prev_free_aligned_sized(ptr, alignment, size);
+        }
+        PtrClass::NullOrSentinel => {
+            return;
+        }
+    }
+}
+
+/// # Safety
+///
+/// This has the same safety requirements as any implementation of `free_sized`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn smalloc_free_sized(ptr: *mut c_void, size: usize) {
+    match classify_ptr(ptr) {
+        PtrClass::Smalloc => {
+            SMALLOC.inner_dealloc(ptr.addr());
+        }
+        PtrClass::Foreign => {
+            platform::call_prev_free_sized(ptr, size);
+        }
+        PtrClass::NullOrSentinel => {
+            return;
+        }
     }
 }
 
@@ -162,6 +324,11 @@ mod platform {
 
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+
+    pub(crate) fn set_errno(value: i32) {
+        unsafe extern "C" { fn __errno_location() -> *mut i32; }
+        unsafe { *__errno_location() = value; }
     }
 
     // Macro to define a lazily-resolved dlsym wrapper
@@ -191,6 +358,9 @@ mod platform {
     define_prev_fn!(PREV_FREE, call_prev_free, "free", fn(ptr: *mut c_void));
     define_prev_fn!(PREV_REALLOC, call_prev_realloc, "realloc", fn(ptr: *mut c_void, size: usize) -> *mut c_void);
     define_prev_fn!(PREV_MALLOC_USABLE_SIZE, call_prev_malloc_usable_size, "malloc_usable_size", fn(ptr: *mut c_void) -> usize);
+    define_prev_fn!(PREV_REALLOCARRAY, call_prev_reallocarray, "reallocarray", fn(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void);
+    define_prev_fn!(PREV_FREE_ALIGNED_SIZE, call_prev_free_aligned_sized, "free_aligned_sized", fn(ptr: *mut c_void, alignment: usize, size: usize));
+    define_prev_fn!(PREV_FREE_SIZED, call_prev_free_sized, "free_sized", fn(ptr: *mut c_void, size: usize));
 
     // Macro to export interposed symbols
     macro_rules! export_interpose {
@@ -206,6 +376,11 @@ mod platform {
     export_interpose!(free => super::smalloc_free, fn(ptr: *mut c_void));
     export_interpose!(realloc => super::smalloc_realloc, fn(ptr: *mut c_void, new_size: usize) -> *mut c_void);
     export_interpose!(malloc_usable_size => super::smalloc_malloc_usable_size, fn(ptr: *mut c_void) -> usize);
+    export_interpose!(calloc => super::smalloc_calloc, fn(count: usize, size: usize) -> *mut c_void);
+    export_interpose!(reallocarray => super::smalloc_reallocarray, fn(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void);
+    export_interpose!(aligned_alloc => super::smalloc_aligned_alloc, fn(alignment: usize, size: usize) -> *mut c_void);
+    export_interpose!(free_aligned_sized => super::smalloc_free_aligned_sized, fn(ptr: *mut c_void, alignment: usize, size: usize));
+    export_interpose!(free_sized => super::smalloc_free_sized, fn(ptr: *mut c_void, size: usize));
 }
 
 // =============================================================================
@@ -215,6 +390,11 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+
+    pub(crate) fn set_errno(value: i32) {
+        unsafe extern "C" { fn __error() -> *mut i32; }
+        unsafe { *__error() = value; }
+    }
 
     unsafe extern "C" {
         fn malloc_default_zone() -> *mut c_void;
@@ -237,11 +417,41 @@ mod platform {
 
     // malloc_size doesn't use zones, so define it directly
     pub fn call_prev_malloc_usable_size(ptr: *mut c_void) -> usize {
-        let res = unsafe { malloc_size(ptr) };
-        debug_assert!(res < 1 << 33);
-        res
+        unsafe { malloc_size(ptr) }
+    }
+
+    // macOS System library doesn't implement free_aligned_sized, but its free implementation will work
+    pub fn call_prev_free_aligned_sized(ptr: *mut c_void, _alignment: usize, _size: usize) {
+        unsafe { call_prev_free(ptr) }
+    }
+
+    // macOS System library doesn't implement free_sized, but its free implementation will work
+    pub fn call_prev_free_sized(ptr: *mut c_void, _size: usize) {
+        unsafe { call_prev_free(ptr) }
     }
 }
+
+/// Return the size class for the size.
+#[inline(always)]
+fn req_to_sc(siz: usize) -> u8 {
+    debug_assert!(siz > 0);
+    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+}
+
+/// Return the size class for the aligned size.
+#[inline(always)]
+fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
+    debug_assert!(siz > 0);
+    debug_assert!(ali > 0);
+    debug_assert!(ali < 1 << NUM_SCS);
+    debug_assert!(ali.is_power_of_two());
+
+    (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+}
+
+const ENOMEM: i32 = 12;
+
+const SIZE_0_ALLOC_SENTINEL: *mut c_void = 1 as *mut c_void;
 
 use std::sync::atomic::Ordering::Acquire;
 use core::ffi::c_void;
@@ -249,3 +459,4 @@ use std::hint::{likely, unlikely};
 use std::ptr::{null_mut, copy_nonoverlapping};
 use smalloc::i::*;
 use smalloc::Smalloc;
+

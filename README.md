@@ -109,14 +109,17 @@ Within the smalloc package, there are three files:
 
 ## The Big Idea
 
-`smalloc`'s big idea is that while touching memory (i.e. reading or writing a specific memory
-location) imposes costs on the virtual memory subsystem, reserving virtual memory address space does
-not. Virtual memory addresses are a free and near-limitless resource. Use that big idea by reserving
-a huge swathe of virtual memory addresses that you will use only sparsely. When allocating memory,
-this sparseness enables you to efficiently find an unoccupied space big enough to hold the
-request. When de-allocating, this sparseness enables you to leverage information encoded into the
-pointer itself (the pointer to be de-allocated), and minimize the need to look up and compute upon
-additional information beyond that.
+`smalloc`'s big idea is that although touching memory (i.e. reading or writing a specific memory
+location) imposes costs on the operating system's virtual memory subsystem, reserving virtual memory
+address space does not. Virtual memory addresses are a free and near-limitless resource. Use that
+big idea by reserving a huge swathe of virtual memory addresses that you will use only sparsely.
+When allocating memory, this sparseness enables you to efficiently find an unoccupied space big
+enough to hold the request. When de-allocating, this sparseness enables you to leverage information
+encoded into the pointer itself (the pointer to be de-allocated), and minimize the need to look up
+and compute upon additional information beyond that.
+
+In addition, this sparseness allows the implementation to be simple in source code as well as
+efficient in execution.
 
 ## Data model
 
@@ -701,7 +704,9 @@ a very useful tool!
 
 * make it run benchmarks when you do `cargo run -p bench`, like iroh quinn does?
 
-* fall back to previous/system allocator on exhaustion
+* fall back to previous/system allocator on exhaustion??
+
+* rethink growers and caching
 
 # Acknowledgments
 
