@@ -101,7 +101,6 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
             platform::call_prev_free(ptr);
         }
         PtrClass::NullOrSentinel => {
-            return;
         }
     }
 }
@@ -156,10 +155,10 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
             newp
         }
         PtrClass::Foreign => {
-            return platform::call_prev_realloc(ptr, new_size);
+            platform::call_prev_realloc(ptr, new_size)
         }
         PtrClass::NullOrSentinel => {
-            return unsafe { smalloc_malloc(new_size) };
+            unsafe { smalloc_malloc(new_size) }
         }
     }
 }
@@ -214,10 +213,10 @@ pub unsafe extern "C" fn smalloc_reallocarray(ptr: *mut c_void, nmemb: usize, si
                 return null_mut();
             }
             let total = ((nmemb as u32 as u64) * (size as u32 as u64)) as usize;
-            return unsafe { smalloc_realloc(ptr, total) };
+            unsafe { smalloc_realloc(ptr, total) }
         }
         PtrClass::Foreign => {
-            return platform::call_prev_reallocarray(ptr, nmemb, size);
+            platform::call_prev_reallocarray(ptr, nmemb, size)
         }
     }
 }
@@ -238,7 +237,7 @@ pub unsafe extern "C" fn smalloc_malloc_usable_size(ptr: *mut c_void) -> usize {
             platform::call_prev_malloc_usable_size(ptr)
         }
         PtrClass::NullOrSentinel => {
-            return 0;
+            0
         }
     }
 }
@@ -286,7 +285,6 @@ pub unsafe extern "C" fn smalloc_free_aligned_sized(ptr: *mut c_void, alignment:
             platform::call_prev_free_aligned_sized(ptr, alignment, size);
         }
         PtrClass::NullOrSentinel => {
-            return;
         }
     }
 }
@@ -304,7 +302,6 @@ pub unsafe extern "C" fn smalloc_free_sized(ptr: *mut c_void, size: usize) {
             platform::call_prev_free_sized(ptr, size);
         }
         PtrClass::NullOrSentinel => {
-            return;
         }
     }
 }
@@ -420,14 +417,18 @@ mod platform {
         unsafe { malloc_size(ptr) }
     }
 
-    // macOS System library doesn't implement free_aligned_sized, but its free implementation will work
-    pub fn call_prev_free_aligned_sized(ptr: *mut c_void, _alignment: usize, _size: usize) {
-        unsafe { call_prev_free(ptr) }
+    // macOS System library doesn't implement free_aligned_sized, free_sized, or reallocarray, so
+    // those functions should never get called and passed a pointer that is not a smalloc pointer.
+    pub fn call_prev_free_aligned_sized(_ptr: *mut c_void, _alignment: usize, _size: usize) {
+        panic!("call to memory management function that isn't supported by the macOS System library");
     }
 
-    // macOS System library doesn't implement free_sized, but its free implementation will work
-    pub fn call_prev_free_sized(ptr: *mut c_void, _size: usize) {
-        unsafe { call_prev_free(ptr) }
+    pub fn call_prev_free_sized(_ptr: *mut c_void, _size: usize) {
+        panic!("call to memory management function that isn't supported by the macOS System library");
+    }
+
+    pub fn call_prev_reallocarray(_ptr: *mut c_void, _nmemb: usize, _size: usize) -> *mut c_void {
+        panic!("call to memory management function that isn't supported by the macOS System library");
     }
 }
 
@@ -451,7 +452,7 @@ fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
 
 const ENOMEM: i32 = 12;
 
-const SIZE_0_ALLOC_SENTINEL: *mut c_void = 1 as *mut c_void;
+const SIZE_0_ALLOC_SENTINEL: *mut c_void = std::ptr::dangling_mut::<c_void>();
 
 use std::sync::atomic::Ordering::Acquire;
 use core::ffi::c_void;
