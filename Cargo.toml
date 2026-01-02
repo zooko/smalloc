@@ -16,6 +16,7 @@ homepage = "https://github.com/zooko/smalloc"
 readme = "README.md"
 keywords = ["allocator", "memory", "malloc"]
 categories = ["memory-management"]
+license-file = "LICENSE-BOSL.txt"
 
 [profile.release]
 opt-level = 3

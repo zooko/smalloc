@@ -10,6 +10,7 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+license-file.workspace = true
 
 [dependencies]
 
