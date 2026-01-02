@@ -86,8 +86,6 @@ cargo nextest run
 
 This workspace contains seven packages:
  * _smalloc_: the core memory allocator
- * _plat_: interface to the operating system's `mmap` or equivalent system call to allocate virtual
-   address space
 
 These are usually the only two you need to use smalloc.
 
@@ -104,6 +102,8 @@ Within the smalloc package, there are three files:
  * _smalloc/src/lib.rs_: the core memory allocator
  * _smalloc/src/tests.rs_: transparent-box tests that use internals of the core to test it
  * _smalloc/tests/integration.rs_: opaque-box tests that use only the public API
+ * _smalloc/src/plat_: interface to the operating system's `mmap` or equivalent system call to
+   allocate virtual address space
  
 # How it works
 

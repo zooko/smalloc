@@ -26,7 +26,7 @@ fn classify_ptr(ptr: *mut c_void) -> PtrClass {
     }
 
     let p_addr = ptr.addr();
-    let smbp = SMALLOC.inner().smbp.load(Acquire);
+    let smbp = SMALLOC.inner().smbp.load(Acquire);//xxx could use Relaxed instead?
     debug_assert!(smbp != 0);
 
     if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {

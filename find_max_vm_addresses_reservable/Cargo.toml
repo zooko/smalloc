@@ -2,9 +2,9 @@
 name = "find_max_vm_addresses_reservable"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
-plat = { path = "../plat" }
 thousands = "0.2.0"
 
 [target.'cfg(target_vendor="apple")'.dependencies]

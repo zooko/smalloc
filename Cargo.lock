@@ -77,7 +77,6 @@ name = "find_max_vm_addresses_reservable"
 version = "7.4.7"
 dependencies = [
  "mach-sys",
- "plat",
  "rustix",
  "thousands",
 ]
@@ -136,14 +135,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
-name = "plat"
-version = "7.4.7"
-dependencies = [
- "mach-sys",
- "rustix",
-]
-
-[[package]]
 name = "rand_core"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -193,7 +184,8 @@ name = "smalloc"
 version = "7.4.7"
 dependencies = [
  "devutils",
- "plat",
+ "mach-sys",
+ "rustix",
 ]
 
 [[package]]

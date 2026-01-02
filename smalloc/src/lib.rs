@@ -516,6 +516,8 @@ fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
 
+mod plat;
+
 #[cfg(test)]
 mod tests;
 

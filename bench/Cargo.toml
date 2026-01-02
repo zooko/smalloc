@@ -2,6 +2,7 @@
 name = "bench"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 libc = "0.2"

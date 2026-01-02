@@ -2,6 +2,7 @@
 name = "devutils"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 smalloc = { path = "../smalloc" }

@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-plat = { path = "../plat" }
+
+[target.'cfg(target_vendor="apple")'.dependencies]
+mach-sys = "0.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.0.7", features = ["mm"] }
 
 [dev-dependencies]
 devutils = { path = "../devutils" }

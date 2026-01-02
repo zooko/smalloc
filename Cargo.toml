@@ -26,4 +26,3 @@ rustflags = ["-C", "target-cpu=native"]
 [profile.profiling]
 inherits = "release"
 debug = true           # Enable debug symbols for profiling
-# lto = false           # Disable LTO for faster builds and better symbol info
