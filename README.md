@@ -5,19 +5,16 @@
 etc.
 
 `smalloc` performs comparably or even better than those other high-quality memory managers, while
-being much simpler. The current implementation is only XXX lines of Rust code! The other
-high-quality memory allocators range from 2553 lines of code (`rpmalloc`) to 27,256 lines of code
+being much simpler. The current implementation is only 292 lines of Rust code! The other
+high-quality memory allocators range from 2509 lines of code (`rpmalloc`) to 25,713 lines of code
 (`jemalloc`) [^1].
 
 # Caveats
 
-No warranty. Not supported. Never been security audited. First time Rust project (and Jack O'Connor
-told me, laughing, that a low-level memory manager was "worst choice ever for a first-time Rust
-project"). There is no security contact information nor anyone you can contact for help using this
-code. Use at your own risk!
+No warranty. Use at your own risk.
 
 `smalloc` doesn't have any features for hardening your process against exploitation of memory
-management bugs. It also doesn't have any features for profiling or generating statistics.
+management bugs.
 
 # Performance
 
@@ -799,68 +796,85 @@ Licensed under any of:
 at your option.
 
 
-[^1]: Lines of code of various memory allocators, with an attempt to exclude test code and
-    platform-interface code:
+[^1]: Lines of code of various memory allocators, with an attempt to exclude assertions
     ```text
-    % tokei smalloc-7.3/smalloc/src/lib.rs
+    % echo smalloc
+    smalloc
+    % cd smalloc
+    % for F in src/lib.rs src/plat/mod.rs ; do
+    % for F in src/lib.rs src/plat/mod.rs; do F2="${F%.*}-noda.${F##*.}" ; grep -v debug_assert ${F} > ${F2} ; done
+    % tokei `find . -name '*-noda.*'`
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      Language              Files        Lines         Code     Comments       Blanks
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Rust                      1          499          288           99          112
-     |- Markdown               1           29            0           23            6
-     (Total)                              528          288          122          118
+     Rust                      2          547          292          123          132
+     |- Markdown               1            8            0            7            1
+     (Total)                              555          292          130          133
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                     1          528          288          122          118
+     Total                     2          555          292          130          133
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    % tokei ./rpmalloc/rpmalloc/
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Language              Files        Lines         Code     Comments       Blanks
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     C                         2         2840         2270          295          275
-     C Header                  2          521          283          159           79
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                     4         3361         2553          454          354
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    % tokei ./mimalloc/src --exclude='prim'
+    % echo rpmalloc
+    rpmalloc
+    % cd rpmalloc
+    % for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
+    % tokei `find . -name '*-noa.*'`
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      Language              Files        Lines         Code     Comments       Blanks
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     C                        20        11386         8131         1861         1394
-     C Header                  1          119           43           51           25
+     C                         2         2793         2226          292          275
+     C Header                  2          520          283          158           79
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                    21        11505         8174         1912         1419
+     Total                     4         3313         2509          450          354
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    % tokei glibc/malloc/ --exclude 'tst-*'
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Language              Files        Lines         Code     Comments       Blanks
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     C                        32        11863         7018         3249         1596
-     C Header                  5          960          449          369          142
-     Makefile                  1          533          383           80           70
-     Perl                      1          254          211           26           17
-     Shell                     1          273          217           35           21
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                    40        13883         8278         3759         1846
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    % tokei ./snmalloc/src/snmalloc --exclude='pal'
+    % echo glibc
+    glibc
+    % cd malloc
+    % for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
+    % tokei `find . -name "*-noa.*" ! -name "tst-*"`
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      Language              Files        Lines         Code     Comments       Blanks
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     C Header                103        17346        10745         4520         2081
-     C++                       6          800          542          156          102
-     Markdown                  4           51            0           42            9
+     C                        32        11773         6935         3242         1596
+     C Header                  5          954          449          363          142
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                   113        18197        11287         4718         2192
+     Total                    37        12727         7384         3605         1738
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    % tokei ./jemalloc/src
+    % echo mimalloc
+    mimalloc
+    % cd src
+    % for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
+    % tokei `find . -name '*-noa.*'`
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      Language              Files        Lines         Code     Comments       Blanks
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     C                        67        36039        27021         4822         4196
-     C++                       1          308          224           14           70
-     Python                    1           15           11            2            2
+     C                        27        13636         9487         2343         1806
+     C Header                  2         1022          462          431          129
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Total                    69        36362        27256         4838         4268
+     Total                    29        14658         9949         2774         1935
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    % echo snmalloc
+    snmalloc
+    % cd src
+    % for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
+    % tokei `find . -name "*-noa.*"`
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     Language              Files        Lines         Code     Comments       Blanks
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     C Header                130        20703        12728         5452         2523
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     Total                   130        20703        12728         5452         2523
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    % echo jemalloc
+    jemalloc
+    % cd src
+    % for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
+    % tokei `find . -name "*-noa.*"`
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     Language              Files        Lines         Code     Comments       Blanks
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     C                        67        34702        25713         4793         4196
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     Total                    67        34702        25713         4793         4196
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     ```
 

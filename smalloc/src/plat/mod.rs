@@ -21,12 +21,7 @@ pub mod p {
     #[allow(unsafe_code)]
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         match unsafe {
-            mmap_anonymous(
-                ptr::null_mut(),
-                reqsize,
-                ProtFlags::READ | ProtFlags::WRITE,
-                MapFlags::PRIVATE | MapFlags::NORESERVE,
-            )
+            mmap_anonymous(ptr::null_mut(), reqsize, ProtFlags::READ | ProtFlags::WRITE, MapFlags::PRIVATE | MapFlags::NORESERVE)
         } {
             Ok(p) => Ok(p as *mut u8),
             Err(_) => Err(AllocFailed),

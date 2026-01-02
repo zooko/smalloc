@@ -10,7 +10,7 @@
 //     - Constants having to do with the use of flh pointers
 //     - Constants having to do with the use of flh words
 //     - Constants for calculating the total virtual address space to reserve
-//xxx update ToC
+//xxx update this ToC
 
 
 // --- Public structs and methods ---
