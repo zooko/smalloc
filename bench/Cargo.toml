@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 libc = "0.2"
-smalloc = { path = "../smalloc" }
+smalloc = { path = "../smalloc", package = "smmalloc" }
 devutils = { path = "../devutils" }
 thousands = "0.2"
 mimalloc = { version = "*", features = ["v3"] }

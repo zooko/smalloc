@@ -5,6 +5,6 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-smalloc = { path = "../smalloc" }
+smalloc = { path = "../smalloc", package = "smmalloc" }
 wyhash = "0.6.0"
 wyrand = "0.3.2"

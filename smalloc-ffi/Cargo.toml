@@ -7,7 +7,7 @@ edition.workspace = true
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-smalloc = { path = "../smalloc" }
+smalloc = { path = "../smalloc", package = "smmalloc" }
 
 [features]
 growers = []

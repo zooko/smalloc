@@ -5,4 +5,4 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-smalloc = { path = "../smalloc" }
+smalloc = { path = "../smalloc", package = "smmalloc" }

@@ -1,5 +1,5 @@
 [package]
-name = "smalloc"
+name = "smmalloc"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
