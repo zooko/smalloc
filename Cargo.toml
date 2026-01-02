@@ -9,14 +9,13 @@ resolver = "3"
 version = "7.4.7"
 edition = "2024"
 authors = ["Zooko <noemail@thanks.com>"]
-license = "MIT OR Apache-2.0 OR TGPPL-1.0" # OR BOSL-1.0
+license = "MIT OR Apache-2.0 OR TGPPL-1.0" # OR BOSL-1.0, see LICENSE-BOSL.txt
 description = "smalloc is a very simple but performant allocator"
 repository = "https://github.com/zooko/smalloc"
 homepage = "https://github.com/zooko/smalloc"
 readme = "README.md"
 keywords = ["allocator", "memory", "malloc"]
 categories = ["memory-management"]
-license-file = "LICENSE-BOSL.txt"
 
 [profile.release]
 opt-level = 3
