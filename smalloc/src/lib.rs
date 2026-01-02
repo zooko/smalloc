@@ -1,4 +1,3 @@
-#![doc = include_str!("../../README.md")]
 #![feature(likely_unlikely)]
 
 // Table of contents of this file:
