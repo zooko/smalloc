@@ -12,6 +12,10 @@ authors = ["Zooko <noemail@thanks.com>"]
 license = "MIT OR Apache-2.0 OR TGPPL-1.0 OR BOSL-1.0"
 description = "smalloc is a very simple but performant allocator"
 repository = "https://github.com/zooko/smalloc"
+homepage = "https://github.com/zooko/smalloc"
+readme = "README.md"
+keywords = ["allocator", "memory", "malloc"]
+categories = ["memory-management"]
 
 [profile.release]
 opt-level = 3
