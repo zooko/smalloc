@@ -30,7 +30,7 @@ macro_rules! with_all_allocators {
     };
 }
 
-pub fn clock(clocktype: ClockType) -> u64 {
+pub fn clock(clocktype: ClockType) -> Nanoseconds {
     let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
     let retval = unsafe { libc::clock_gettime(clocktype, tp.as_mut_ptr()) };
     debug_assert_eq!(retval, 0);
@@ -38,7 +38,7 @@ pub fn clock(clocktype: ClockType) -> u64 {
     let instnsec = unsafe { (*tp.as_ptr()).tv_nsec };
     debug_assert!(instsec >= 0);
     debug_assert!(instnsec >= 0);
-    instsec as u64 * 1_000_000_000 + instnsec as u64
+    Nanoseconds(instsec as u64 * 1_000_000_000 + instnsec as u64)
 }
 
 unsafe impl GlobalAlloc for GlobalAllocWrap {
@@ -55,13 +55,12 @@ unsafe impl GlobalAlloc for GlobalAllocWrap {
     }
 }
 
-/// Returns elapsed nanoseconds (best of num_batches batches)
-pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> u64
+pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64)
 where
     T: GlobalAlloc,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
-    let mut best_ns = u64::MAX;
+    let mut results_ns = Vec::with_capacity(iters_per_batch as usize);
 
     for _batch in 0..num_batches {
         let mut s = TestState::new(iters_per_batch, seed);
@@ -73,24 +72,22 @@ where
         s.clean_up(al);
 
         let batch_ns = end - start;
-        if batch_ns < best_ns {
-            best_ns = batch_ns;
-        }
+        results_ns.push(batch_ns);
     }
 
-    let nspi = best_ns / iters_per_batch;
-    let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
-    println!("name: {name:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses_per_iter}", iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
-
-    best_ns
+    results_ns.sort_unstable();
+    let median_ns = results_ns[results_ns.len() / 2];
+    let nspi = median_ns.per_iter(iters_per_batch);
+    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 }
 
-pub fn multithread_bench<T, F>(bf: F, threads: u32, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> u64
+/// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
+pub fn multithread_bench<T, F>(bf: F, threads: u32, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> Nanoseconds
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
-    let mut best_ns = u64::MAX;
+    let mut results_ns = Vec::with_capacity(iters_per_batch as usize);
 
     for _batch in 0..num_batches {
         let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
@@ -102,9 +99,7 @@ where
         help_test_multithreaded_with_allocator(bf, threads, iters_per_batch, al, &mut tses);
         let end = clock(libc::CLOCK_MONOTONIC_RAW);
         let batch_ns = end - start;
-        if batch_ns < best_ns {
-            best_ns = batch_ns;
-        }
+        results_ns.push(batch_ns);
 
         // Dealloc all allocations so that we don't run out of space.
         for mut ts in tses {
@@ -112,11 +107,12 @@ where
         }
     }
 
-    let nspi = best_ns / iters_per_batch;
-    let hundredpses_per_iter = ((best_ns * 10) / iters_per_batch) % 10;
-    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses_per_iter}", threads.separate_with_commas(), iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    results_ns.sort_unstable();
+    let median_ns = results_ns[results_ns.len() / 2];
+    let nspi = median_ns.per_iter(iters_per_batch);
+    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
-    best_ns
+    median_ns
 }
 
 #[macro_export]
@@ -135,48 +131,43 @@ where
     }};
 }
 
-/// Wrapper to mark raw pointers as Send for cross-thread deallocation
-#[derive(Clone, Copy)]
-struct SendPtr(*mut u8);
-
-unsafe impl Send for SendPtr {}
-
 /// This is to stress test the case that many threads are simultaneously free'ing slots in the same
 /// slab as each other.
 ///
-/// Returns picoseconds per free. Not picoseconds per (free per thread). Picoseconds per free. The
-/// number of frees is equal to `numthreads` * `iters_per_thread`.
-///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_free_hotspot_inner<A>(numthreads: u32, iters_per_thread: u64, num_batches: u16, name: &str, al: &A, l: Layout) -> u64
+///
+/// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
+pub fn multithread_free_hotspot_inner<A>(numthreads: u32, iters_per_batch_per_thread: u64, num_batches: u16, name: &str, al: &A, l: Layout) -> Nanoseconds
 where
     A: GlobalAlloc + Send + Sync
 {
-    let iters_per_thread = iters_per_thread as usize;
+    let iters_pbpt = iters_per_batch_per_thread as usize;
     let numthreads = numthreads as usize;
-    let tot_iters = iters_per_thread * numthreads;
+    let tot_iters_pb = iters_pbpt * numthreads;
 
-    let mut best_ps = u64::MAX;
+    let mut results_ns = Vec::with_capacity(num_batches as usize);
 
     for _batch in 0..num_batches {
         // Allocate all pointers upfront
-        let mut pointers: Vec<SendPtr> = Vec::with_capacity(tot_iters);
-        for _ in 0..tot_iters {
+        let mut pointers: Vec<SendPtr> = Vec::with_capacity(tot_iters_pb);
+        for _ in 0..tot_iters_pb {
             let p = unsafe { al.alloc(l) };
             assert!(!p.is_null());
             pointers.push(SendPtr(p));
         }
 
+        let iters_pt = tot_iters_pb / numthreads;
+
         // Split pointers among threads
         let chunks: Vec<Vec<SendPtr>> = pointers
-            .chunks(iters_per_thread)
+            .chunks(iters_pt)
             .map(|c| c.to_vec())
             .collect();
 
         let start_barrier = Barrier::new(numthreads + 1);
         let end_barrier = Barrier::new(numthreads + 1);
 
-        let elap_ps = thread::scope(|s| {
+        let elap_ns = thread::scope(|s| {
             for chunk in &chunks {
                 let chunk = chunk.clone();
                 s.spawn(|| {
@@ -199,21 +190,18 @@ where
             let end = clock(libc::CLOCK_MONOTONIC_RAW);
 
             assert!(end > start);
-            (end - start) * 1000
+            end - start
         });
 
-        if elap_ps < best_ps {
-            best_ps = elap_ps;
-        }
+        results_ns.push(elap_ns);
     }
 
-    let pspi = best_ps / tot_iters as u64;
-    let hundredpses = (pspi / 100) % 10;
-    let nspi = pspi / 1000;
-    let best_ns = best_ps / 1000;
-    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses:1}", numthreads.separate_with_commas(), tot_iters.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    results_ns.sort_unstable();
+    let median_ns = results_ns[results_ns.len() / 2];
+    let nspi = median_ns.per_iter(tot_iters_pb as u64);
+    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
-    best_ps / tot_iters as u64
+    median_ns
 }
 
 /// This is to stress test the case that one slab's flh is under heavy multi-threading contention
@@ -223,13 +211,15 @@ where
 /// ones that are the %64'th to first-allocate then get unblocked, and proceed to deallocate,
 /// allocate, deallocate, allocate etc. `iters` times.
 ///
-/// Returns picoseconds per iters_pbpht. Not picoseconds per (iters * hotspot_threads), nor yet
-/// picoseconds per (iters * total_threads). Picoseconds per iter-per-batch-per-hot-thread.
+/// Returns median nanoseconds per batch. Not nanoseconds per (iters * hotspot_threads), nor yet
+/// nanoseconds per (iters * total_threads). Nor even nanoseconds per
+/// iter-per-batch-per-hot-thread. Median nanoseconds per batch for all hot threads and all iters in
+/// that batch. (Also the nanoseconds carries with it an extra .1 nanosecond precision.)
 ///
 /// iters_pbpht: iters per batch per hot thread
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_pbpht: u64, num_batches: u16, name: &str, al: &T, l: Layout) -> u64
+pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_pbpht: u64, num_batches: u16, name: &str, al: &T, l: Layout) -> Nanoseconds
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -243,7 +233,7 @@ where
     // One hot thread per 63 cool threads
     let total_threads: usize = hotspot_threads_usize * (1 + cool_threads_per_round);
 
-    let mut best_ns = u64::MAX;
+    let mut results_ns = Vec::with_capacity(num_batches as usize);
 
     for _batch in 0..num_batches {
         let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads_usize)
@@ -267,7 +257,7 @@ where
 
                 // Spawn hot thread
                 s.spawn(|| {
-                    let _ptr = unsafe { al.alloc(l) }; // xxx this gets leaked oh well
+                    let _ptr = unsafe { al.alloc(l) }; // this gets leaked oh well
                     let mut ts = TestState::new(iters_pbpht, 0);
 
                     hot_barrier.wait();
@@ -289,7 +279,7 @@ where
                 // Spawn cool threads
                 for _ in 0..cool_threads_per_round {
                     s.spawn(|| {
-                        let _ptr = unsafe { al.alloc(l) }; // xxx this gets leaked oh well
+                        let _ptr = unsafe { al.alloc(l) }; // this gets leaked oh well
                         cool_barrier.wait();
                         setup_complete_barrier.wait();
                         final_barrier.wait();
@@ -314,25 +304,22 @@ where
             end - start
         });
 
-        if batch_ns < best_ns {
-            best_ns = batch_ns;
-        }
+        results_ns.push(batch_ns);
     }
 
-    let elap_ps = best_ns * 1000;
-    let pspi = elap_ps / iters_pbpht;
-    let hundredpses = (pspi / 100) % 10;
-    let nspi = pspi / 1000;
-    println!("name: {name:>16}, threads: {:>5}, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{hundredpses:1}", hotspot_threads.separate_with_commas(), iters_pbpht.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas());
+    results_ns.sort_unstable();
+    let median_ns = results_ns[results_ns.len() / 2];
+    let nspi = median_ns.per_iter(iters_pbpht);
+    println!("name: {name:>16}, threads: {hotspot_threads_usize:>5}, iters/batch/hot-thread: {iters_pbpht:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
-    pspi
+    median_ns
 }
 
 /// Print comparison percentages
-pub fn print_comparisons(candidate_ns: u64, baselines: &[(&str, u64)]) {
-    for (name, baseline_ns) in baselines {
-        let diff_perc = 100.0 * (candidate_ns as f64 - *baseline_ns as f64) / (*baseline_ns as f64);
-        println!("smalloc diff from {:>8}: {:+4.0}%", name, diff_perc);
+pub fn print_comparisons(candidate: Nanoseconds, baselines: &[(&str, Nanoseconds)]) {
+    for (name, baseline) in baselines {
+        let diff_perc = candidate.diff_percent(*baseline);
+        println!("smalloc diff from {name:>8}: {diff_perc:+4.0}%");
     }
     println!();
 }
@@ -361,7 +348,7 @@ macro_rules! compare_st_bench_impl {
         @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
         @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
     ) => {{
-        use $crate::Separable;
+        use thousands::Separable;
         use std::sync::atomic::{AtomicU64, Ordering};
         let func_name = stringify!($func);
 
@@ -389,7 +376,7 @@ macro_rules! compare_st_bench_impl {
                 let iters_per_batch = $iters_per_batch;
                 let seed = $seed;
                 scope.spawn(move || {
-                    let mut best_ns = u64::MAX;
+                    let mut results_ns: Vec<$crate::Nanoseconds> = Vec::with_capacity(iters_per_batch as usize);
 
                     for _batch in 0..$num_batches {
                         let mut s = devutils::TestState::new(iters_per_batch, seed);
@@ -400,17 +387,16 @@ macro_rules! compare_st_bench_impl {
                         let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
                         s.clean_up(alloc_ref);
                         let batch_ns = end - start;
-                        if batch_ns < best_ns {
-                            best_ns = batch_ns;
-                        }
+                        results_ns.push(batch_ns);
                     }
 
-                    let nspi = best_ns / iters_per_batch;
-                    let frac = ((best_ns * 10) / iters_per_batch) % 10;
+                    results_ns.sort_unstable();
+                    let median_ns = results_ns[results_ns.len() / 2];
+                    let nspi = median_ns.per_iter(iters_per_batch);
                     let name = format!("{}_st_{}-1", short_str, stringify!($func));
-                    println!("name: {:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
-                    result_ref.store(best_ns, Ordering::Relaxed);
+                    result_ref.store(median_ns.into(), Ordering::Relaxed);
                 });
                 _idx += 1;
             )+
@@ -422,7 +408,7 @@ macro_rules! compare_st_bench_impl {
             let iters_per_batch = $iters_per_batch;
             let seed = $seed;
             scope.spawn(move || {
-                let mut best_ns = u64::MAX;
+                let mut results_ns = Vec::with_capacity(iters_per_batch as usize);
 
                 for _batch in 0..$num_batches {
                     let mut s = devutils::TestState::new(iters_per_batch, seed);
@@ -433,25 +419,24 @@ macro_rules! compare_st_bench_impl {
                     let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
                     s.clean_up(cand_ref);
                     let batch_ns = end - start;
-                    if batch_ns < best_ns {
-                        best_ns = batch_ns;
-                    }
+                    results_ns.push(batch_ns);
                 }
 
-                let nspi = best_ns / iters_per_batch;
-                let frac = ((best_ns * 10) / iters_per_batch) % 10;
+                results_ns.sort_unstable();
+                let median_ns = results_ns[results_ns.len() / 2];
+                let nspi = median_ns.per_iter(iters_per_batch);
                 let name = format!("{}_st_{}-1", cand_short_str, stringify!($func));
-                println!("name: {:>16}, threads:     1, iters: {:>10}, ns: {:>14}, ns/i: {:>8}.{}", name, iters_per_batch.separate_with_commas(), best_ns.separate_with_commas(), nspi.separate_with_commas(), frac);
+                println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
-                cand_result_ref.store(best_ns, Ordering::Relaxed);
+                cand_result_ref.store(median_ns.into(), Ordering::Relaxed);
             });
         });
 
         // Collect results and print comparisons
-        let candidate_ns = candidate_result.load(Ordering::Relaxed);
-        let comparisons: Vec<(&str, u64)> = results
+        let candidate_ns = candidate_result.load(Ordering::Relaxed).into();
+        let comparisons: Vec<(&str, $crate::Nanoseconds)> = results
             .iter()
-            .map(|(atomic, name)| (*name, atomic.load(Ordering::Relaxed)))
+            .map(|(atomic, name)| (*name, atomic.load(Ordering::Relaxed).into()))
             .collect();
 
         $crate::print_comparisons(candidate_ns, &comparisons);
@@ -500,7 +485,7 @@ macro_rules! compare_mt_bench_impl {
         $($cand_setup)*
 
         // Run benchmarks sequentially (mt_bench already uses multiple threads internally)
-            let mut results: Vec<(&str, u64)> = Vec::new();
+            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_mt_{}-{}", stringify!($short), func_name, $threads);
@@ -533,7 +518,7 @@ macro_rules! compare_fh_bench_impl {
         $($cand_setup)*
 
         // Run benchmarks sequentially
-            let mut results: Vec<(&str, u64)> = Vec::new();
+            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
         $(
             let name = format!("{}_fh-{}", stringify!($short), $threads);
             let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &$short, $l);
@@ -542,8 +527,8 @@ macro_rules! compare_fh_bench_impl {
 
         // Candidate
             let name = format!("{}_fh-{}", stringify!($cand_short), $threads);
-        let candidate_ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, $cand_short, $l);
-        $crate::print_comparisons(candidate_ns, &results);
+        let candidate_ps = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, $cand_short, $l);
+        $crate::print_comparisons(candidate_ps, &results);
     }};
 }
 
@@ -584,7 +569,7 @@ macro_rules! compare_hs_bench_impl {
         $($cand_setup)*
 
         // Run benchmarks and collect results
-            let mut results: Vec<(&str, u64)> = Vec::new();
+            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
         $(
             let f = |al: &_, s: &mut TestState| { $func(al, s) };
             let name = format!("{}_hs_{}-{}", stringify!($short), func_name, $threads);
@@ -608,6 +593,65 @@ macro_rules! compare_hs_bench {
     };
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Nanoseconds(pub u64);
+
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+pub struct NanosecondsPerIter(pub f64);
+
+impl Nanoseconds {
+    pub fn diff_percent(self, baseline: Nanoseconds) -> f64 {
+        100.0 * (self.0 as f64 - baseline.0 as f64) / (baseline.0 as f64)
+    }
+
+    pub fn per_iter(self, iters: u64) -> NanosecondsPerIter {
+        NanosecondsPerIter(self.0 as f64 / iters as f64)
+    }
+}
+
+impl fmt::Display for Nanoseconds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0.separate_with_commas();
+        if let Some(width) = f.width() {
+            write!(f, "{s:>width$}")
+        } else {
+            write!(f, "{s}")
+        }
+    }
+}
+
+impl fmt::Display for NanosecondsPerIter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let full = format!("{}.{}", (self.0 as u64).separate_with_commas(), (self.0 * 10.0) as u64 % 10);
+        write!(f, "{full:>width$}", width = f.width().unwrap_or(0))
+    }
+}
+
+impl std::ops::Sub for Nanoseconds {
+    type Output = Nanoseconds;
+    fn sub(self, rhs: Nanoseconds) -> Nanoseconds {
+        Nanoseconds(self.0 - rhs.0)
+    }
+}
+
+impl From<Nanoseconds> for u64 {
+    fn from(ns: Nanoseconds) -> u64 {
+        ns.0
+    }
+}
+
+impl From<u64> for Nanoseconds {
+    fn from(val: u64) -> Nanoseconds {
+        Nanoseconds(val)
+    }
+}
+
+/// Wrapper to mark raw pointers as Send for cross-thread deallocation
+#[derive(Clone, Copy)]
+struct SendPtr(*mut u8);
+
+unsafe impl Send for SendPtr {}
+
 pub struct GlobalAllocWrap;
 
 mod platform;
@@ -615,8 +659,9 @@ use platform::ClockType;
 
 use devutils::*;
 
-pub use thousands::Separable;
+use thousands::Separable;
 
+use std::fmt;
 use std::mem::MaybeUninit;
 use std::sync::Barrier;
 use std::thread;
