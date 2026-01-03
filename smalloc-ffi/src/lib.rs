@@ -56,6 +56,7 @@ fn ptr_to_sc(ptr: *mut c_void) -> u8 {
     sc
 }
 
+#[inline(always)]
 fn smalloc_inner_alloc(sc: u8) -> *mut c_void {
     SMALLOC.idempotent_init();
     SMALLOC.inner_alloc(sc) as *mut c_void
@@ -323,6 +324,7 @@ mod platform {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
 
+    #[inline(always)]
     pub(crate) fn set_errno(value: i32) {
         unsafe extern "C" { fn __errno_location() -> *mut i32; }
         unsafe { *__errno_location() = value; }
@@ -388,6 +390,7 @@ mod platform {
 mod platform {
     use super::*;
 
+    #[inline(always)]
     pub(crate) fn set_errno(value: i32) {
         unsafe extern "C" { fn __error() -> *mut i32; }
         unsafe { *__error() = value; }

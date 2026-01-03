@@ -27,6 +27,7 @@ impl Smalloc {
         }),
     } }
 
+    #[inline(always)]
     pub fn idempotent_init(&self) {
         let inner = self.inner();
 
