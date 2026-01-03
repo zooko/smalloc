@@ -23,7 +23,7 @@ pub fn main() {
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
-    let num_batches = if thorough { 400 } else { 10 };
+    let num_batches = if thorough { 100 } else { 10 };
 
     println!("Using seed: {}", seed);
     
@@ -31,7 +31,7 @@ pub fn main() {
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
     // for benchmarks that are going to re-use space
-    let iters_many = if thorough { 100_000 } else { 50_000 };
+    let iters_many = if thorough { 50_000 } else { 10_000 };
 
     // for benchmarks that are not going to re-use space, so they'll run out of space if we do
     // iters_many

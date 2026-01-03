@@ -14,7 +14,7 @@ Run it with
 
 You can optionally add the `--compare` or `--thorough` flags or both.
 
-# Code size
+# Lines of code
 
 This is the one of the main measurements that I was optimizing for!
 
