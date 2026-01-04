@@ -18,6 +18,10 @@ pub mod p {
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
     use std::ptr;
 
+    // The size class necessary to hold a memory page, since memory pages on Linux (except in cases
+    // of "huge pages") are 4 KiB.
+    pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(4096, 4096);
+
     #[allow(unsafe_code)]
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         match unsafe {
@@ -38,6 +42,9 @@ pub mod p {
     use mach_sys::vm::mach_vm_allocate;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
+
+    // The size class necessary to hold a memory page, since memory pages on Macos are 16 KiB.
+    pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(16_384, 16_384);
 
     #[allow(unsafe_code)]
     pub fn sys_alloc(size: usize) -> Result<*mut u8, AllocFailed> {

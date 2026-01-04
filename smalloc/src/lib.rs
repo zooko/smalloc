@@ -129,19 +129,13 @@ unsafe impl GlobalAlloc for Smalloc {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
-            // The "Growers" strategy. Promote the new sizeclass to the next one up in this
-            // schedule:
-            // xxx test this again against the simd_json benchmark
-            #[cfg(feature = "growers")]
-            let reqsc =
-                if reqsc <= 6 { 6 } else // cache line size on x86 and non-Apple ARM
-                if reqsc <= 7 { 7 } else // cache line size on Apple Silicon
-                if reqsc <= 12 { 12 } else // page size on Linux and Windows
-                if reqsc <= 14 { 14 } else // page size on Apple OS
-                if reqsc <= 16 { 16 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 18 { 18 } else // this is just so the larger sc's don't get filled up
-                if reqsc <= 21 { 21 } else // huge/large/super-page size on various OSes
-            { reqsc };
+            // The "Growers" strategy.
+
+            // How did I come with sc 22? It's big, but hopefully we won't run out of slots even if
+            // a lot of growers get a sc 22 slot. Also my profiling of Zcash Zebra said that it grew
+            // a lot of vectors up to 1, 2, or 3 MiB, and a few up to even 4 MiB and I think there
+            // may have been a 5 MiB or two in there...S
+            let reqsc = if (plat::p::SC_FOR_PAGE..22).contains(&reqsc) { 22 } else { reqsc };
 
             let newp = self.inner_alloc(reqsc);
             if unlikely(newp.is_null()) {
@@ -506,7 +500,7 @@ impl Default for Smalloc {
 
 /// Return the size class for the aligned size.
 #[inline(always)]
-fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
+const fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     debug_assert!(siz > 0);
     debug_assert!(ali > 0);
     debug_assert!(ali < 1 << NUM_SCS);
