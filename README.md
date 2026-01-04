@@ -4,10 +4,12 @@
 `libmalloc` (the Macos userspace memory allocator), `jemalloc`, `mimalloc`, `snmalloc`, `rpmalloc`,
 etc.
 
-`smalloc` performs comparably or even better than those other high-quality memory managers, while
-being much simpler. The current implementation is only 292 lines of Rust code! The other
-high-quality memory allocators range from 2509 lines of code (`rpmalloc`) to 25,713 lines of code
-(`jemalloc`) [^1].
+`smalloc` performs comparably or even better than those other memory managers, while being much
+simpler. The current implementation is only 286 lines of Rust code! The other high-quality memory
+allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
+
+Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
+consistent and debuggable behavior.
 
 # Caveats
 
@@ -18,25 +20,72 @@ management bugs.
 
 # Performance
 
-To run benchmarks measuring the latency of `smalloc` operations compared to other memory managers,
-build the `bench` executable and run `bench --compare`. You can also pass `--thorough` to `bench` to
-test more edge cases and do more iterations.
-
-See [./bench/README.md](./bench/README.md) for more ways to benchmark memory allocators and see the
-files in the [./bench/results/](./bench/results/) directory for saved outputs from my own
+See [./bench/README.md](./bench/README.md) for various ways to benchmark memory allocators, and see
+the files in the [./bench/results/](./bench/results/) directory for saved outputs from my own
 benchmarking runs.
+
+Here are two data points to demonstrate that `smalloc` is sometimes faster than the alternatives:
+
+From `smalloc`'s bench tool:
+
+```text
+name:     de_mt_aww-32, threads:    32, iters:       2000, ns:        814,375, ns/i:      407.1
+name:     mi_mt_aww-32, threads:    32, iters:       2000, ns:      1,826,500, ns/i:      913.2
+name:     je_mt_aww-32, threads:    32, iters:       2000, ns:      9,878,000, ns/i:    4,939.0
+name:     sn_mt_aww-32, threads:    32, iters:       2000, ns:      1,277,959, ns/i:      638.9
+name:     rp_mt_aww-32, threads:    32, iters:       2000, ns:        756,750, ns/i:      378.3
+name:      s_mt_aww-32, threads:    32, iters:       2000, ns:        346,541, ns/i:      173.2
+smalloc diff from  default:  -57%
+smalloc diff from mimalloc:  -81%
+smalloc diff from jemalloc:  -96%
+smalloc diff from snmalloc:  -73%
+smalloc diff from rpmalloc:  -54%
+```
+
+From `simd-json`'s benchmarks:
+
+```text
+% ./critcmp.py default jemalloc snmalloc mimalloc rpmalloc smalloc
+test                                                                            default                jemalloc                snmalloc                mimalloc                rpmalloc                 smalloc
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+apache_builds/simd_json::to_borrowed_value                            77.35 µs (  0.0%)       79.58 µs ( +2.9%)       79.20 µs ( +2.4%)       66.16 µs (-14.5%)       65.86 µs (-14.9%)       64.97 µs (-16.0%)
+apache_builds/simd_json::to_borrowed_value_with_buffers               75.64 µs (  0.0%)       78.14 µs ( +3.3%)       66.41 µs (-12.2%)       64.59 µs (-14.6%)       65.75 µs (-13.1%)       64.19 µs (-15.1%)
+apache_builds/simd_json::to_owned_value                              159.62 µs (  0.0%)      152.61 µs ( -4.4%)      100.30 µs (-37.2%)      115.86 µs (-27.4%)       97.73 µs (-38.8%)       96.39 µs (-39.6%)
+canada/simd_json::to_borrowed_value                                    3.84 ms (  0.0%)        4.06 ms ( +5.8%)        3.77 ms ( -1.7%)        3.22 ms (-16.1%)        3.16 ms (-17.6%)        2.80 ms (-27.0%)
+canada/simd_json::to_borrowed_value_with_buffers                       3.82 ms (  0.0%)        3.93 ms ( +3.0%)        3.15 ms (-17.6%)        3.19 ms (-16.4%)        3.12 ms (-18.4%)        2.78 ms (-27.1%)
+canada/simd_json::to_owned_value                                       3.83 ms (  0.0%)        4.01 ms ( +4.9%)        3.75 ms ( -2.1%)        3.21 ms (-16.2%)        3.14 ms (-18.1%)        2.78 ms (-27.5%)
+citm_catalog/simd_json::to_borrowed_value                              1.12 ms (  0.0%)        1.16 ms ( +3.8%)        1.28 ms (+14.7%)      913.48 µs (-18.4%)      875.52 µs (-21.8%)      842.52 µs (-24.8%)
+citm_catalog/simd_json::to_borrowed_value_with_buffers                 1.12 ms (  0.0%)        1.13 ms ( +0.9%)        1.00 ms (-10.6%)      907.55 µs (-19.0%)      869.11 µs (-22.4%)      838.72 µs (-25.1%)
+citm_catalog/simd_json::to_owned_value                                 1.49 ms (  0.0%)        1.50 ms ( +1.1%)        1.34 ms ( -9.8%)        1.16 ms (-22.0%)        1.00 ms (-32.6%)      948.31 µs (-36.2%)
+event_stacktrace_10kb/simd_json::to_borrowed_value                     2.70 µs (  0.0%)        2.66 µs ( -1.2%)        2.79 µs ( +3.4%)        2.51 µs ( -6.8%)        2.71 µs ( +0.6%)        2.65 µs ( -1.8%)
+event_stacktrace_10kb/simd_json::to_borrowed_value_with_buffers        2.46 µs (  0.0%)        2.60 µs ( +5.7%)        2.45 µs ( -0.5%)        2.40 µs ( -2.6%)        2.50 µs ( +1.6%)        2.53 µs ( +2.9%)
+event_stacktrace_10kb/simd_json::to_owned_value                        3.12 µs (  0.0%)        3.03 µs ( -3.2%)        2.89 µs ( -7.5%)        2.92 µs ( -6.4%)        3.06 µs ( -2.0%)        2.89 µs ( -7.5%)
+github_events/simd_json::to_borrowed_value                            34.73 µs (  0.0%)       32.48 µs ( -6.5%)       31.08 µs (-10.5%)       30.46 µs (-12.3%)       30.42 µs (-12.4%)       33.06 µs ( -4.8%)
+github_events/simd_json::to_borrowed_value_with_buffers               32.97 µs (  0.0%)       31.48 µs ( -4.5%)       30.27 µs ( -8.2%)       29.83 µs ( -9.5%)       30.16 µs ( -8.5%)       32.83 µs ( -0.4%)
+github_events/simd_json::to_owned_value                               60.18 µs (  0.0%)       56.38 µs ( -6.3%)       40.57 µs (-32.6%)       46.93 µs (-22.0%)       41.68 µs (-30.7%)       41.67 µs (-30.8%)
+log/simd_json::to_borrowed_value                                       1.39 µs (  0.0%)        1.29 µs ( -7.5%)        1.36 µs ( -2.1%)        1.30 µs ( -7.1%)        1.28 µs ( -8.0%)        1.29 µs ( -7.5%)
+log/simd_json::to_borrowed_value_with_buffers                          1.24 µs (  0.0%)        1.20 µs ( -2.8%)        1.26 µs ( +1.6%)        1.20 µs ( -3.5%)        1.19 µs ( -4.3%)        1.26 µs ( +1.4%)
+log/simd_json::to_owned_value                                          2.47 µs (  0.0%)        1.92 µs (-22.4%)        1.71 µs (-30.6%)        2.01 µs (-18.9%)        1.77 µs (-28.5%)        1.69 µs (-31.6%)
+twitter/simd_json::to_borrowed_value                                 412.72 µs (  0.0%)      400.88 µs ( -2.9%)      521.96 µs (+26.5%)      384.85 µs ( -6.8%)      376.72 µs ( -8.7%)      425.46 µs ( +3.1%)
+twitter/simd_json::to_borrowed_value_with_buffers                    407.27 µs (  0.0%)      395.84 µs ( -2.8%)      452.72 µs (+11.2%)      380.43 µs ( -6.6%)      371.06 µs ( -8.9%)      423.57 µs ( +4.0%)
+twitter/simd_json::to_owned_value                                    702.08 µs (  0.0%)      645.70 µs ( -8.0%)      616.54 µs (-12.2%)      531.52 µs (-24.3%)      480.18 µs (-31.6%)      484.49 µs (-31.0%)
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+NORMALIZED (100s baseline work)                                      2100.0 s  (      )      2059.0 s  (      )      1964.5 s  (      )      1808.7 s  (      )      1761.0 s  (      )      1757.5 s  (      )
+RELATIVE TO BASELINE                                                           ( +0.0%)                ( -2.0%)                ( -6.5%)                (-13.9%)                (-16.1%)                (-16.3%)
+```
 
 # Limitations
 
 There are two limitations:
 
-1. You can't allocate more than 2 GiB in a single `malloc()`, and you can only allocate at most 496
-   allocations between 1 GiB and 2 GiB, plus at most 1008 allocations between 512 MiB and 1 GiB, and
-   so on (see below for details). If all of smalloc's slots are exhausted so that it cannot deliver
-   a requested allocation, then it will return a null pointer. (It would be possible to make a
-   variant of smalloc that falls back to the default allocator or to `mmap` in that case, but that
-   would result in performance degradation and possible in less predictable failure modes. I want
-   smalloc to have consistent performance so I choose to return a null pointer in that case.)
+1. You can't allocate more than 2 GiB in a single `malloc()`, and you can only allocate at most 224
+   allocations between 1 GiB and 2 GiB, plus at most 480 allocations between 512 MiB and 1 GiB, plus
+   at most 992 allocations between 256 MiB and 512 MiB, and so on (see `Figure 1` for details). If
+   all of smalloc's slots are exhausted so that it cannot deliver a requested allocation, then it
+   will return a null pointer. (It would be possible to make a variant of smalloc that falls back to
+   the default allocator or to `mmap` in that case, but that would result in performance degradation
+   and possibly in less predictable failure modes. I want smalloc to have consistent performance and
+   failure modes so I choose to return a null pointer in that case.)
    
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
@@ -83,8 +132,8 @@ cargo nextest run
 
 This workspace contains six packages:
 
- * _smalloc_: the core memory allocator. This is the only code you need to use smalloc as the global
-   allocator in your Rust code.
+ * _smalloc_: the core memory allocator. This package contains the only code you need to use smalloc
+   as the global allocator in your Rust code.
  * _smalloc-ffi_: Foreign Function Interface to use smalloc from C/C++/native code.
  * _bench_: micro-benchmarking tool to measure latency of operations and compare to other memory
    allocators
@@ -95,10 +144,10 @@ This workspace contains six packages:
 
 ## Organization of the core code
 
-Within the smalloc package, there are three files:
+Within the smalloc package, there are four files:
  * _smalloc/src/lib.rs_: the core memory allocator
  * _smalloc/src/plat/mod.rs_: interface to the operating system's `mmap` or equivalent system call
-   to allocate virtual address space
+   to reserve virtual address space
 
 These two files contain the only source code you are relying on if you use smalloc as the global
 allocator in Rust.
@@ -131,18 +180,18 @@ fixed-length "slots" of bytes. Every pointer returned by a call to `malloc()` or
 pointer to the beginning of one of those slots, and that slot is used exclusively for that memory
 allocation until it is `free()`'ed.
 
-Each slab holds slots of a specific fixed length, called a "size class". Size class 4 contains
-16-byte slots, size class 5 contains 32-byte slots, and so on with each size class having slots
-twice as big as the size class before.
+Each slab holds slots of a specific fixed length, called a "size class". Size class 2 contains
+4-byte slots, size class 3 contains 8-byte slots, and so on with each size class having slots twice
+as big as the size class before.
 
-Within each size class there are 16 separate slabs holding slots of that size. (See below for why.)
+Within each size class there are 32 separate slabs holding slots of that size. (See below for why.)
 
-Sizeclasses 0, 1, 2, and 3 are unused and the space reserved for them is repurposed to hold "free
-list heads" (see below). Figure 1 shows the information encoded into memory addresses (shown in
-binary notation) of slots and of bytes of data within each slot:
+Sizeclasses 0 and 1 are unused and the space reserved for them is repurposed to hold "free list
+heads" (see below). Here is how the information is encoded into memory addresses of slots and of
+bytes of data within a slot (memory addresses shown in binary notation).
 
 ```text
-Figure 1. Overview
+Figure 1: Memory layout of slots and slabs and free-list-heads
 
 slabs
                                       slab sc   flh
@@ -197,13 +246,13 @@ slabs
   28                                                    2^28  2^ 6   2^5
  
        [sla][sc ][slo][data                       ]
-  29   00000111010000000000000000000000000000000000    2^29  2^ 5   2^5
+  29   00000111010000000000000000000000000000000000     2^29  2^ 5   2^5
 
        [sla][sc ][sl][data                        ]
-  30   00000111100000000000000000000000000000000000    2^30  2^ 4   2^5
+  30   00000111100000000000000000000000000000000000     2^30  2^ 4   2^5
 
        [sla][sc ][s][data                         ]
-  31   00000111110000000000000000000000000000000000    2^31  2^ 3   2^5
+  31   00000111110000000000000000000000000000000000     2^31  2^ 3   2^5
 ```
 
 ### Free-Lists
@@ -218,8 +267,8 @@ free list entry, i.e. this entry is the end of the free list).
 
 For each slab there is one additional associated variable, which holds the pointer to the first free
 list entry (or the sentinel value if there are no entries in the list). This variable is called the
-"free-list head" and is abbreviated `flh`. The contents of the free list head is the only
-additional information you need beside the information present in the pointers themselves.
+"free-list head" and is abbreviated `flh`. The contents of the free list head is the only additional
+information you need to read or write beside the information present in the pointers themselves.
 
 That's it! Those are all the data elements in `smalloc`.
 
@@ -234,9 +283,9 @@ sentinel value meaning that there are no more elements in the free list.
 
 * `malloc()`
 
-To allocate space, calculate the size class of the request (which includes the requested alignment
--- see below). Now pick one of the slabs in that size class (see below for how). Pop the head
-element from the free list and return the pointer to that slot.
+To allocate space, calculate the size class of the request. Now pick one of the slabs in that size
+class (see below for how). Pop the head element from the free list and return the pointer to that
+slot.
 
 * `free()`
 
@@ -265,11 +314,8 @@ same space where the data goes when the slot is in use! Each data slot is either
 meaning you can use its space to hold the pointer to the next free list entry, or currently
 allocated, meaning it is not in the free list and doesn't have a next-pointer.
 
-(This is also why not to use size classes 0, 1, or 2: because you need 8 bytes in each slot to store
-the next-entry link. The reason not use size class 3 is different: because on Linux and Macos on
-x86-64 and arm64, the C standard requires allocations be aligned to 16-bytes. We could provide
-8-byte slots for Rust code, but not for C code while satisfying that standard. So, for simplicity,
-we just leave out the 8-byte slots entirely.)
+(This is also why not to use size class 0 -- 1-byte slots -- or size class 1 -- 2-byte slots:
+because you need 4 bytes in each slot to store the next-entry link.)
 
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
 colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
@@ -293,21 +339,21 @@ list entries such that when all of the bits of the `flh` and the slots are `0`, 
 completely populated free list -- the `flh` points to the first slot number as the first free list
 entry, the first free list entry points to the second slot number as the second free list entry, and
 so on until the last-numbered slot which points to nothing -- a sentinel value meaning "this points
-to no slot". (This is an example of a design pattern called "Zero Is Initialization" -- "ZII".)
+to no slot".
 
 Here's how that encoding works:
 
-The `flh` contains the slot number of the first free list entry. So, when it is all `0` bits, it is
-pointing to the slot with slot number `0`.
+The `flh` contains the slot number of the first free list entry. So, when it is all 0 bits, it is
+pointing to the slot with slot number 0.
 
-To get the next-entry pointer of a slot, load `4` bytes from the slot, interpret them as a 32-bit
-unsigned integer, add it to the slot number of the slot, and add `1`, mod the total number of slots
-in that slab.
+To get the next-entry pointer of a slot, load 4 bytes from the slot, interpret them as a 32-bit
+unsigned integer, add it to the slot number of the slot, and add 1, mod the total number of slots in
+that slab.
 
-This way, a slot that is initialized to all `0` bits, points to the next slot number as its next
-free list entry. The final slot in the slab, when it is all `0` bits, points to no next entry,
-because when its `4` bytes are interpreted as a next-entry pointer, it equals the highest possible
-slot number, which is the "sentinel value" meaning no next entry.
+This way, a slot that is initialized to all 0 bits, points to the next slot number as its next free
+list entry. The final slot in the slab, when it is all 0 bits, points to no next entry, because when
+its bytes are interpreted as a next-entry pointer, it equals the highest possible slot number, which
+is the "sentinel value" meaning no next entry.
 
 ## Thread-Safe `flh` Updates
 
@@ -354,10 +400,10 @@ popped off, then another pop occurred (removing `nextslotnum` from the free list
 original value got pushed back on. In that case the `flh` would contain the original value but with
 a different next-entry link. This is a kind of "ABA problem".
 
-In order to prevent this, store a counter in the unused bits of the flh word. Increment that counter
-each time you attempt a compare-and-exchange on a push (`dealloc`). Now if there were any pushes
-concurrently completed between step 1 of the pop algorithm and step 4, the compare-and-exchange will
-fail.
+In order to prevent this, store a counter in the unused high-order bits of the flh word. Increment
+that counter each time you attempt a compare-and-exchange on a push (`free`). Now if there were any
+pushes concurrently completed between step 1 of the pop algorithm and step 4, the
+compare-and-exchange will fail.
 
 Now you know the entire data model and almost all of the algorithms for `smalloc`! Read on for a few
 more details.
@@ -373,26 +419,25 @@ same processor as each other.
 
 To do this, define a global static variable named `GLOBAL_THREAD_NUM`, initialized to `0`. 
 
-Give each thread a thread-local variable named `THREAD_NUM`. The first time `alloc()` is called from
+Give each thread a thread-local variable named `SLABNUM`. The first time `alloc()` is called from
 within a given thread, use the atomic `fetch_add` operation to increment `GLOBAL_THREAD_NUM` and set
-this thread's `THREAD_NUM` to the previous value of `GLOBAL_THREAD_NUM`. Also give each thread
-another thread-local variable named `SLAB_NUM`, and set it to `THREAD_NUM` mod 16.
+this thread's `SLABNUM` to the previous value of `GLOBAL_THREAD_NUM`.
 
-Whenever allocating, allocate from the slab indicated by your thread's `SLAB_NUM`.
+Whenever allocating, allocate from the slab indicated by your thread's `SLABNUM`.
 
 ## Handling Overflows and Update-Collisions
 
 Suppose the user calls `malloc()` and the slab (determined by the size class of the request and your
-thread's `SLAB_NUM`) is exhausted, i.e. the free list is empty. This could happen only if there were
-that many allocations from that slab active simultaneously.
+thread's `SLABNUM`) is exhausted, i.e. the free list is empty. This could happen only if there were
+that many slots from that slab currently allocated.
 
 Or, suppose the user calls `malloc()` and you encounter a free-list-head update collision, i.e. you
-reach step 5 of the thread-safe algorithm for popping an entry from the free list (shown above).
+reach step 5 of the thread-safe algorithm for popping an entry from the free list (above).
 
 In either of these cases, try allocating from a different slab in the same size class. If it
-succeeds, update your thread's `SLAB_NUM` to point to this new slab. If this attempt, too, fails,
-for either of those two reasons, then try yet another different slab in the same size class. If
-you've tried every slab in this size class, and they've all failed (whether due to that slab being
+succeeds, update your thread's `SLABNUM` to point to this new slab. If this attempt, too, fails, for
+either of those two reasons, then try yet another different slab in the same size class. If you've
+tried every slab in this size class, and they've all failed (whether due to that slab being
 exhausted or due to encountering an `flh` update collision when trying to pop from that slab's free
 list), then *if* at least one slab was exhausted, move to the next bigger size class and continue
 trying. (Thanks to Nate Wilcox -- also my colleague at Shielded Labs -- for suggesting this
@@ -402,7 +447,7 @@ through them trying to allocate from one of them.
 ## Realloc Growers
 
 Suppose the user calls `realloc()` and the new requested size is larger than the original
-size. Allocations that ever get reallocated to larger sizes often, in practice, get reallocated over
+size. Allocations that get reallocated to larger sizes sometimes, in practice, get reallocated over
 and over again to larger and larger sizes. Call any allocation that has gotten reallocated to a
 larger size a "grower".
 
@@ -410,15 +455,25 @@ If the user calls `realloc()` asking for a new larger size, and the new size sti
 current slot that the data is already occupying, then just be lazy and consider this `realloc()` a
 success and return the current pointer as the return value.
 
-If the new requested size doesn't fit into the current slot, then choose the smallest of the
-following list that can hold the new requested size: 64 B, 128 B, 4096 B, 16 KiB, 64 KiB, 256 KiB,
-or 2 MiB.
+If the new requested size doesn't fit into the current slot, and the new requested size is small
+enough that you could pack more than one of them into a virtual memory page (i.e. the new requested
+size is <= 2048 bytes on Linux, or <= 8,192 bytes on Apple OS), then just return a slot of that
+size.
 
-If the new requested size doesn't fit into 2 MiB then just use the smallest size class that can hold
-it.
+If the new requested size is so large that you can't pack more than one of them into a virtual
+memory page, then return a slot of a very large size. Currently that "very large size" is 4 MiB --
+size class 22 -- because that is the largest size I can think of where I still optimistically hope
+that this will not result in exhausting all of the larger slots. There are 261,568 slots in size
+classes 22 and up. Also because when I profiled the memory usage of the Zcash "Zebra" server, I saw
+that it often grew reallocations up to around 4 MiB -- I think it is processing blockchain blocks by
+extending a vector as it receives more bytes of that block.
 
-This reduces unnecessary `memcpy`'s when an allocation gets reallocated to a larger size repeatedly,
-while trying to avoid using up the very large slots, which are not that plentiful.
+Why use a very large slot for this case? Think of the virtual memory space as a very long linear
+address space -- stretched out in a line. If the allocation is too large to pack more than one of
+them into a page, then there is no benefit to having the address of the allocation close to the
+address of another allocation. Instead, you want their addresses far apart so that if the allocation
+is subsequently grown by `realloc`, there will be plenty of room to grow without having to move to a
+new starting adddress.
 
 # Design Goals
 
@@ -428,11 +483,14 @@ If you accept the Big Idea that "avoiding reserving too much virtual address spa
 important goal for a memory manager, what *are* good goals? `smalloc` was designed with the
 following goals, written here in roughly descending order of importance:
 
-1. Be simple. This helps greatly to ensure correctness -- always a critical issue in modern
+1. Be simple. This helps greatly to ensure correctness -- always a critical issue in
    computing. "Simplicity is the inevitable price that we must pay for correctness."--Tony Hoare
    (paraphrased)
 
-   Simplicity also eases making improvements to the codebase and learning from the codebase.
+   In addition to "correctness", simplicity also helps make the performance and failure modes more
+   consistent and debuggable, because there are fewer modes.
+
+   Simplicity also facilitates making improvements to the codebase and learning from the codebase.
 
    I've tried to pay the price of keeping `smalloc` simple while designing and implementing it.
 
@@ -457,18 +515,17 @@ following goals, written here in roughly descending order of importance:
 
    3. Suppose the program accesses multiple separate allocations in quick succession -- regardless
       of whether the accesses are by the same processor or from different processors. If the
-      allocations are packed into the same memory page, this avoids a potentially costly page
-      fault. Page faults can cost only a few CPU cycles in the best case, but in case of a TLB cache
-      miss they could incur substantially more. In the worst case, the kernel has to load the data
-      from swap, which could incur a performance penalty of hundreds of *thousands* of CPU cycles or
-      even more, depending on the performance of the persistent storage. Additionally, faulting in a
-      page of memory increases the pressure on the TLB cache and the swap subsystem, thus
-      potentially causing a performance degradation for other processes running on the same system.
+      allocations are packed into the same memory page, this avoids potentially costly TLB cache
+      misses and page faults. In the worst case, the kernel would have to load the data from swap,
+      which could incur a performance penalty of hundreds of *thousands* of CPU cycles or even more,
+      depending on the performance of the persistent storage. Additionally, faulting in a page of
+      memory increases the pressure on the TLB cache and the swap subsystem, thus potentially
+      causing a performance degradation for other processes running on the same system.
 
-   Note that these three goals cannot be fully optimized for by the memory manager, because they
-   depend on how the user code accesses the memory. What `smalloc` does is use some simple
-   heuristics intended to optimize the above goals under some reasonable assumptions about the
-   behavior of the user code:
+   Note that these three goals cannot be fully optimized by the memory manager, because they depend
+   on how the user code accesses the memory. What `smalloc` does is use some simple heuristics
+   intended to optimize the above goals under some reasonable assumptions about the behavior of the
+   user code:
 
    1. Try to pack separate small allocations from a single thread together to optimize for
       (constructive) cache-line sharing.
@@ -490,7 +547,7 @@ following goals, written here in roughly descending order of importance:
       allocations in a stack-like way will enjoy improved caching. (Thanks to Andrew Reece from
       Shielded Labs for teaching me this.)
 
-   4. The same strategies also tend to pack together allocations into pages of virtual memory.
+   4. The same strategies also tend to pack allocations together into pages of virtual memory.
 
 3. Execute `malloc()`, `free()`, and `realloc()` as efficiently as possible. `smalloc` is great at
    this goal! The obvious reason for that is that the code implementing those three functions is
@@ -518,8 +575,7 @@ following goals, written here in roughly descending order of importance:
    is in thread-local storage: one potential-cache-miss). Having computed the location of the slab,
    it can access the `flh` from that slab (one potential-cache-miss), at which point it has all the
    data it needs to compute the exact location of the resulting slot and to update the free
-   list. (See below about why we don't typically incur another potential-cache-miss when updating
-   the free list.)
+   list.
 
    For the implementation of `free()`, we need to use *only* the pointer to be freed (which is on
    the stack in an argument -- not a potential-cache-miss) in order to calculate the precise
@@ -539,8 +595,8 @@ following goals, written here in roughly descending order of importance:
    So to sum up, here are the counts of the potential-cache-line misses for the common cases:
 
    1. To `malloc()` and then write into the resulting memory:
-     * 🟠 one to access the `THREAD_AREANUM`
-     * 🟠 one to access the `flh`
+     * 🟠 one to access the thread's `SLABNUM`
+     * 🟠 one to access the slab's `flh`
      * 🟠 one to access the intrusive free list entry
      * 🟢 no additional cache-miss for the user code to access the data
 
@@ -548,24 +604,24 @@ following goals, written here in roughly descending order of importance:
 
    2. To read from some memory and then `free()` it:
      * 🟠 one for the user code to read from the memory
-     * 🟠 one to access the `flh`
+     * 🟠 one to access the slab's `flh`
      * 🟢 no additional cache-miss for `free()` to access the intrusive free list entry
 
      For a total of 2 potential-cache-misses.
 
    3. To `free()` some memory without first reading it:
      * 🟢 no cache-miss for user code since it doesn't read the memory
-     * 🟠 one to access the `flh`
+     * 🟠 one to access the slab's `flh`
      * 🟠 one to access the intrusive free list entry
 
      For a total of 2 potential-cache-misses.
 
    Note that the above counts do not count a potential cache miss to access the base pointer. That's
-   because the base pointer is fixed and shared -- every call (by any thread) to `malloc()`,
-   `free()`, or `realloc()` accesses the base pointer, so it is more likely to be in cache.
+   because the base pointer is fixed and shared -- every call by any thread to `malloc()`, `free()`,
+   or `realloc()` accesses the base pointer, so it is more likely to be in cache.
    
-   Similarly, for accessing the `SLAB_NUM`, if this thread has recently called `malloc()` then this
-   thread's `SLAB_NUM` will likely already be in cache, but if this thread has not made such a call
+   Similarly, for accessing the `SLABNUM`, if this thread has recently called `malloc()` then this
+   thread's `SLABNUM` will likely already be in cache, but if this thread has not made such a call
    recently then it would likely cache-miss.
    
    And similarly for the potential cache-miss of accessing the `flh` -- if any thread using this
@@ -574,7 +630,7 @@ following goals, written here in roughly descending order of importance:
 
 4. Be *consistently* efficient.
 
-   I want to avoid intermittent performance degradation, such as when your function takes little
+   I want to avoid unpredictable performance degradation, such as when your function takes little
    time to execute usually, but occasionally there is a latency spike when the function takes much
    longer to execute.
 
@@ -591,32 +647,31 @@ following goals, written here in roughly descending order of importance:
    any "deferred accounting". This nicely eliminates some sources of intermittent performance
    degradation. See [this blog post](https://pwy.io/posts/mimalloc-cigarette/) and [this
    one](https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view#jemalloc-purging-will-commence-in-ten-seconds)
-   for cautionary tales of how deferred accounting, while it can improve performance in the "hot
-   paths", can also give rise to edge cases that can occasionally degrade performance or cause other
-   problems.
+   for cautionary tales of how some techniques can improve performance in the common case, but also
+   occasionally degrade performance or cause confusing failure modes.
 
    There are no locks in `smalloc`. There are concurrent-update loops in `malloc` and `free` -- see
    the pseudo-code in "Thread-Safe State Changes" above -- but these are not locks. Whenever
    multiple threads are running that code, one of them will make progress (i.e. successfully update
-   the `flh`) after it gets only a few CPU cycles, regardless of what any other threads do. And, if
-   any thread becomes suspended in that code, one of the *other*, still-running threads will be the
-   one to make progress (update the `flh`). Therefore, these concurrent-update loops cannot cause a
+   the `flh`) after only a few CPU cycles, regardless of what any other threads do. And, if any
+   thread becomes suspended in that code, one of the *other*, still-running threads will be the one
+   to make progress (update the `flh`). Therefore, these concurrent-update loops cannot cause a
    pile-up of threads waiting for a (possibly-suspended) thread to release a lock, nor can they
    suffer from priority inversion.
 
-   Also, for `malloc()` (but not for `free()`), if a thread experiences an update collision it will
-   immediately switch over to a different slab, which will immediately clear out any such contention
-   unless all slabs are simultaneously occupied by more than one thread actively
-   `malloc()`'ing.
+   For `malloc()` (but not for `free()`), if a thread experiences an update collision it will
+   immediately switch over to a different slab, which will quickly avoid out any such contention
+   unless all slabs are simultaneously occupied by more than one thread actively `malloc()`'ing or
+   `free()`'ing.
    
    For `free()` it isn't possible to change slabs (the pointer to be freed needs to be pushed back
    onto this particular free list and no other), so multiple threads simultaneously attempting to
    free slots in the same slab is the worst-case-scenario for `smalloc`.
 
    See the benchmarks named `hs` (for "hotspot") and `fh` (for "free hotspot") for how `smalloc`
-   currently performs in these worst-case-scenarios. It is much less efficient than the best modern
-   memory allocators (`mimalloc`, `snmalloc`, and `rpmalloc`) in these scenarios, but it is still
-   very efficient, and in particular its performance is still bounded and consistent even in these
+   currently performs in these worst-case-scenarios. It is less efficient than the best modern
+   memory allocators (`mimalloc`, `snmalloc`, and `rpmalloc`) in the "free hotspot" scenario, but it
+   is still very efficient, and in particular its performance is still consistent even in these
    worst-case-scenarios.
 
 I am hopeful that `smalloc` has achieved all four of these main goals. If so, it may turn out to be
@@ -631,16 +686,17 @@ a very useful tool!
    cases it did so repeatedly in order to enlarge a Vector, then fill it with data until it was full
    again, and then enlarge it again, and so on. This can result in the underlying memory manager
    having to copy the contents of the Vector over and over. `smalloc()` optimizes out much of that
-   copying of data, with the simple expedient of jumping to a larger slot size whenever
-   `realloc()`'ing an allocation to a larger size (see "Realloc Growers", above). My profiling
-   results indicate that this technique would indeed eliminate most of the memory-copying when
-   extending Vectors.
+   copying of data -- see "Realloc Growers" above.
 
 # Open Issues / Future Work
 
-* make it FIFO instead of LIFO -- improved security (?), maybe improved multithreading, maybe
-  improved cache-friendliness for FIFO-oriented usage patterns, probably worse load on the virtual
-  memory subsystem
+* try again to get the cpu number, at least on non macOS, instead of the thread-local "threadnum"
+  variable :-) Also try again with Rust threadid
+
+* Experiment with making it FIFO instead of LIFO -- this would potentially harden against bugs like
+  double-frees and buffer overflows, it might improve multithreading performance (because pushes
+  would be updating a different pointer than pops), it would maybe improved cache-friendliness for
+  FIFO-oriented usage patterns, but it would potentially probably worse load on the virtual memory subsystem
 
 * Port to Cheri, add capability-safety
 
@@ -652,17 +708,13 @@ a very useful tool!
 
 * and cargo-mutants
 
-* If we could allocate even more virtual memory address space, `smalloc` could more scalable (eg
-  huge slots could be larger than 4 mebibytes, the number of per-thread areas could be greater than
-  64), it could be even simpler (eg maybe just remove the (quite complex!)  overflow algorithm, and
-  the special-casing of the number of slots for the huge-slots slab), and you could have more than
-  one `smalloc` heap in a single process. Larger (than 48-bit) virtual memory addresses are already
-  supported on some platforms/configurations, especially server-oriented ones, but are not widely
-  supported on desktop and smartphone platforms. We could consider creating a variant of `smalloc`
+* If we could allocate even more virtual memory address space, `smalloc` could more scalable
+  (i.e. have more large slots, more per-thread slabs, etc). And you could have more than one
+  `smalloc` heap in a single process. Larger (than 48-bit) virtual memory addresses are already
+  supported on most platforms/configurations, including almost all Linux desktop and server
+  platforms, and Windows, but not iOS or Android. We could consider creating a variant of `smalloc`
   that works only platforms with larger (than 48-bit) virtual memory addresses and offers these
-  advantages. TODO: make an even simpler smalloc ("ssmalloc"??) for 5-level-page-table systems.
-
-* try again to get the cpu number, at least on non macOS, instead of the thread-local "threadnum" variable :-) Also try again with Rust threadid
+  advantages.
 
 * Rewrite it in Zig. :-)
 
@@ -687,8 +739,6 @@ a very useful tool!
 * Try "tarpaulin" again HT Sean Bowe
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
-
-* automatically detect and use 5lpt?
 
 # Acknowledgments
 
@@ -728,7 +778,9 @@ a very useful tool!
 
 * Thanks to Denis Bazhenov, author of the "Tango" benchmarking tool.
 
-* Thanks to Grok 4 for helping me out with a lot of thorough, detailed, and almost entirely accurate explanations of kernel/machine timekeeping issues, Rust language behavior, etc, and thanks to 
+* Thanks to Grok 4 and Claude (Opus 4.5) for helping me out with a lot of thorough, detailed, and
+  almost entirely accurate explanations of kernel/machine timekeeping issues, Rust language
+  behavior, etc, etc.
 
 # Historical notes about lines of code of older versions
 
@@ -779,90 +831,3 @@ Licensed under any of:
 * Bootstrap Open Source License v1.0 ([LICENSE-BOSL.txt](LICENSE-BOSL.txt))
 
 at your option.
-
-
-[^1]: See [./bench/README.md](./bench/README.md) for counts of lines of code along with the
-    methodology.
-
-[^2]: Output of `bench --compare` on Macos 26.2/Apple Silicon M4 Max:
-    ```text
-    name:     de_mt_adr-32, threads:    32, iters:  50,000, ns:     23,301,750, ns/i:      466.0
-    name:     mm_mt_adr-32, threads:    32, iters:  50,000, ns:      8,233,834, ns/i:      164.6
-    name:     jm_mt_adr-32, threads:    32, iters:  50,000, ns:      2,602,667, ns/i:       52.0
-    name:     nm_mt_adr-32, threads:    32, iters:  50,000, ns:      1,232,209, ns/i:       24.6
-    name:     rp_mt_adr-32, threads:    32, iters:  50,000, ns:      1,259,667, ns/i:       25.1
-    name:     sm_mt_adr-32, threads:    32, iters:  50,000, ns:        821,791, ns/i:       16.4
-    smalloc diff from  default:  -96%
-    smalloc diff from mimalloc:  -90%
-    smalloc diff from jemalloc:  -68%
-    smalloc diff from snmalloc:  -33%
-    smalloc diff from rpmalloc:  -35%
-    ```
-
-[^3]:  Output of  `simd_json`'s  `cargo bench  -- --save-baseline  baseline-default  && cargo  bench
-    --features=smalloc  -- --baseline  baseline-default |  grep -B  1 -Ee"within  noise|o change  in
-    performance|egressed|mproved"` on Macos 26.2/Apple Silicon M4 Max:
-    ```text
-    thrpt:  [+16.580% +16.985% +17.379%]
-    Performance has improved.
-    --
-    thrpt:  [+15.711% +15.945% +16.165%]
-    Performance has improved.
-    --
-    thrpt:  [+61.962% +62.512% +63.092%]
-    Performance has improved.
-    --
-    thrpt:  [+0.5093% +1.0261% +1.5016%]
-    Change within noise threshold.
-    --
-    thrpt:  [−2.0851% −1.6801% −1.2499%]
-    Performance has regressed.
-    --
-    thrpt:  [+10.138% +10.611% +11.073%]
-    Performance has improved.
-    --
-    thrpt:  [+16.631% +17.563% +18.566%]
-    Performance has improved.
-    --
-    thrpt:  [+10.697% +11.590% +12.583%]
-    Performance has improved.
-    --
-    thrpt:  [+51.888% +52.659% +53.491%]
-    Performance has improved.
-    --
-    thrpt:  [+37.046% +37.274% +37.512%]
-    Performance has improved.
-    --
-    thrpt:  [+36.707% +36.979% +37.258%]
-    Performance has improved.
-    --
-    thrpt:  [+39.052% +39.261% +39.459%]
-    Performance has improved.
-    --
-    thrpt:  [+34.876% +35.583% +36.345%]
-    Performance has improved.
-    --
-    thrpt:  [+34.649% +35.374% +36.129%]
-    Performance has improved.
-    --
-    thrpt:  [+58.748% +59.603% +60.496%]
-    Performance has improved.
-    --
-    thrpt:  [+9.4057% +9.8442% +10.360%]
-    Performance has improved.
-    --
-    thrpt:  [−2.3211% −1.7501% −1.2120%]
-    Performance has regressed.
-    --
-    thrpt:  [+47.005% +47.483% +47.968%]
-    Performance has improved.
-    --
-    thrpt:  [+11.964% +12.281% +12.592%]
-    Performance has improved.
-    --
-    thrpt:  [+11.828% +12.100% +12.385%]
-    Performance has improved.
-    --
-    thrpt:  [+55.077% +55.446% +55.815%]
-    Performance has improved.
-    ```

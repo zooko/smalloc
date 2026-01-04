@@ -30,42 +30,24 @@ Run it with
 
 You can optionally add the `--compare` or `--thorough` flags or both.
 
-Example output:
-
-```text
-name:     de_mt_aww-32, threads:    32, iters:       2000, ns:        814,375, ns/i:      407.1
-name:     mi_mt_aww-32, threads:    32, iters:       2000, ns:      1,826,500, ns/i:      913.2
-name:     je_mt_aww-32, threads:    32, iters:       2000, ns:      9,878,000, ns/i:    4,939.0
-name:     sn_mt_aww-32, threads:    32, iters:       2000, ns:      1,277,959, ns/i:      638.9
-name:     rp_mt_aww-32, threads:    32, iters:       2000, ns:        756,750, ns/i:      378.3
-name:      s_mt_aww-32, threads:    32, iters:       2000, ns:        346,541, ns/i:      173.2
-smalloc diff from  default:  -57%
-smalloc diff from mimalloc:  -81%
-smalloc diff from jemalloc:  -96%
-smalloc diff from snmalloc:  -73%
-smalloc diff from rpmalloc:  -54%
-```
-
 # Benchmarking smalloc in real code
 
 Here are some ways I've benchmarked smalloc to see the effect it has on performance of other code,
 and also to compare it to the default allocator, mimalloc, rpmalloc, snmalloc, and jemalloc.
 
-* Rust simd-json (https://github.com/zooko/simd-json)
+## Rust simd-json
 
-```text
-cargo bench -- --save-baseline default 2>&1 | tee default
-for AL in jemalloc mimalloc rpmalloc snmalloc smalloc; do BLNAME=${AL}; cargo bench --features=${AL} -- --save-baseline ${BLNAME} 2>&1 | tee ${BLNAME} ; done
-./critcmp.py default jemalloc mimalloc rpmalloc snmalloc smalloc
-```
+Get this fork of the Rust simd-json repo: https://github.com/zooko/simd-json and run the
+[bench-allocators.sh](https://github.com/zooko/simd-json/blob/26a671f60228123cb5b6dd1a8da136dff6523244/bench-allocators.sh)
+script. [Example output](results/simd-json.output.txt).
 
 * Rust regex as benchmarked by rebar (https://github.com/zooko/rebar)
 
+Get this fork of the Rust rebar repo: https://github.com/zooko/simd-json and run the
+[bench-allocators.sh](https://github.com/zooko/simd-json/blob/26a671f60228123cb5b6dd1a8da136dff6523244/bench-allocators.sh)
+script. [Example output](results/simd-json.output.txt).
+
 ```code
-cargo build --release
-./target/release/rebar build -e '^rust/regex(-(s|mi|sn|je|rp)malloc)?$'
-./target/release/rebar measure -e '^rust/regex(-(s|mi|sn|je|rp)malloc)?$' -f curated | tee res.csv
-./target/release/rebar rank res.csv
 ```
 
 * mimalloc-bench (https://github.com/daanx/mimalloc-bench)

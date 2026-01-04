@@ -131,11 +131,6 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             // The "Growers" strategy.
-
-            // How did I come with sc 22? It's big, but hopefully we won't run out of slots even if
-            // a lot of growers get a sc 22 slot. Also my profiling of Zcash Zebra said that it grew
-            // a lot of vectors up to 1, 2, or 3 MiB, and a few up to even 4 MiB and I think there
-            // may have been a 5 MiB or two in there...S
             let reqsc = if (plat::p::SC_FOR_PAGE..22).contains(&reqsc) { 22 } else { reqsc };
 
             let newp = self.inner_alloc(reqsc);
