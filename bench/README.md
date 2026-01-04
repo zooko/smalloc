@@ -1,3 +1,19 @@
+# Count Lines of Code
+
+This is the one of the main measurements that I was optimizing for.
+
+ * smalloc core: 286
+ * smalloc core + smalloc-ffi: 634
+ * rpmalloc: 2,509
+ * glibc: 7,384
+ * mimalloc: 9,949
+ * snmalloc: 12,728
+ * jemalloc: 25,713
+
+To count lines of code in various memory allocators using my methodology (mostly just excluding
+debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
+[results/count-locs.output.txt](results/count-locs.output.txt).
+
 # Smalloc's bench tool
 
 Smalloc comes with a "micro-benchmarking" tool, used to measure smalloc's performance at a low level, which can also compare to low-level measurements of other allocators. Build it with
@@ -29,22 +45,6 @@ smalloc diff from jemalloc:  -96%
 smalloc diff from snmalloc:  -73%
 smalloc diff from rpmalloc:  -54%
 ```
-
-# Lines of code
-
-This is the one of the main measurements that I was optimizing for!
-
- * smalloc core: 286
- * smalloc core + smalloc-ffi: 634
- * rpmalloc: 2,509
- * glibc: 7,384
- * mimalloc: 9,949
- * snmalloc: 12,728
- * jemalloc: 25,713
-
-To count lines of code in various memory allocators using my methodology (mostly just excluding
-debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
-[results/count-locs.output.txt](results/count-locs.output.txt).
 
 # Benchmarking smalloc in real code
 
