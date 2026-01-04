@@ -1,6 +1,6 @@
-# Builtin bench tool
+# Smalloc's bench tool
 
-smalloc comes with a "micro-benchmarking" tool, used to measure smalloc's performance at a low level, which can also compare to low-level measurements of other allocators. Build it with
+Smalloc comes with a "micro-benchmarking" tool, used to measure smalloc's performance at a low level, which can also compare to low-level measurements of other allocators. Build it with
 
 ```
 cargo build --release --package bench
@@ -14,106 +14,37 @@ Run it with
 
 You can optionally add the `--compare` or `--thorough` flags or both.
 
+Example output:
+
+```text
+name:     de_mt_aww-32, threads:    32, iters:       2000, ns:        814,375, ns/i:      407.1
+name:     mi_mt_aww-32, threads:    32, iters:       2000, ns:      1,826,500, ns/i:      913.2
+name:     je_mt_aww-32, threads:    32, iters:       2000, ns:      9,878,000, ns/i:    4,939.0
+name:     sn_mt_aww-32, threads:    32, iters:       2000, ns:      1,277,959, ns/i:      638.9
+name:     rp_mt_aww-32, threads:    32, iters:       2000, ns:        756,750, ns/i:      378.3
+name:      s_mt_aww-32, threads:    32, iters:       2000, ns:        346,541, ns/i:      173.2
+smalloc diff from  default:  -57%
+smalloc diff from mimalloc:  -81%
+smalloc diff from jemalloc:  -96%
+smalloc diff from snmalloc:  -73%
+smalloc diff from rpmalloc:  -54%
+```
+
 # Lines of code
 
 This is the one of the main measurements that I was optimizing for!
 
-```text
-% echo smalloc
-smalloc
-% cd smalloc
-% for F in src/lib.rs src/plat/mod.rs ; do
-% for F in src/lib.rs src/plat/mod.rs; do F2="${F%.*}-noda.${F##*.}" ; grep -v debug_assert ${F} > ${F2} ; done
-% tokei `find . -name '*-noda.*'`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Rust                      2          547          292          123          132
- |- Markdown               1            8            0            7            1
- (Total)                              555          292          130          133
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                     2          555          292          130          133
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo smalloc-ffi
-smalloc-ffi
-% cd smalloc-ffi
-% for F in `find . -name '*.rs' -o -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name "*-noa.*"`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C                         1           26           21            0            5
-─────────────────────────────────────────────────────────────────────────────────
- Rust                      2          431          322           32           77
- |- Markdown               1           30            0           21            9
- (Total)                              461          322           53           86
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                     3          487          343           53           91
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo rpmalloc
-rpmalloc
-% cd rpmalloc
-% for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name '*-noa.*'`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C                         2         2793         2226          292          275
- C Header                  2          520          283          158           79
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                     4         3313         2509          450          354
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo glibc
-glibc
-% cd malloc
-% for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name "*-noa.*" ! -name "tst-*"`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C                        32        11773         6935         3242         1596
- C Header                  5          954          449          363          142
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                    37        12727         7384         3605         1738
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo mimalloc
-mimalloc
-% cd src
-% for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name '*-noa.*'`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C                        27        13636         9487         2343         1806
- C Header                  2         1022          462          431          129
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                    29        14658         9949         2774         1935
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo snmalloc
-snmalloc
-% cd src
-% for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name "*-noa.*"`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C Header                130        20703        12728         5452         2523
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                   130        20703        12728         5452         2523
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-% echo jemalloc
-jemalloc
-% cd src
-% for F in `find . -name '*.c' -o -name '*.h'`; do F2="${F%.*}-noa.${F##*.}" ; grep -v -i assert ${F} > ${F2} ; done
-% tokei `find . -name "*-noa.*"`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Language              Files        Lines         Code     Comments       Blanks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- C                        67        34702        25713         4793         4196
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Total                    67        34702        25713         4793         4196
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
+ * smalloc core: 286
+ * smalloc core + smalloc-ffi: 634
+ * rpmalloc: 2,509
+ * glibc: 7,384
+ * mimalloc: 9,949
+ * snmalloc: 12,728
+ * jemalloc: 25,713
+
+To count lines of code in various memory allocators using my methodology (mostly just excluding
+debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
+[results/count-locs.output.txt](results/count-locs.output.txt).
 
 # Benchmarking smalloc in real code
 

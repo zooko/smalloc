@@ -19,16 +19,12 @@ management bugs.
 # Performance
 
 To run benchmarks measuring the latency of `smalloc` operations compared to other memory managers,
-build the `bench` executable and run `bench --compare`. On Apple Silicon M4 Max, `smalloc` takes
-substantially less time for most or all of these operations than the other memory alloctors
-[^2]. You can also pass `--thorough` to `bench` to test more edge cases.
+build the `bench` executable and run `bench --compare`. You can also pass `--thorough` to `bench` to
+test more edge cases and do more iterations.
 
-To measure performance in real application code, get [this fork of
-simd-json](https://github.com/zooko/simd-json) and pass one of `smalloc`, `jemalloc`, `snmalloc`,
-`rpmalloc`, or `mimalloc` to `--features=` on the `cargo bench` command-line. For example `cargo
-bench -- --save-baseline baseline-default && cargo bench --features=smalloc -- --baseline
-baseline-default`. `smalloc` improves the performance of `simd_json` substantially in my experiments
-[^3].
+See [./bench/README.md](./bench/README.md) for more ways to benchmark memory allocators and see the
+files in the [./bench/results/](./bench/results/) directory for saved outputs from my own
+benchmarking runs.
 
 # Limitations
 
@@ -36,13 +32,17 @@ There are two limitations:
 
 1. You can't allocate more than 2 GiB in a single `malloc()`, and you can only allocate at most 496
    allocations between 1 GiB and 2 GiB, plus at most 1008 allocations between 512 MiB and 1 GiB, and
-   so on. (See below for complete details.)
+   so on (see below for details). If all of smalloc's slots are exhausted so that it cannot deliver
+   a requested allocation, then it will return a null pointer. (It would be possible to make a
+   variant of smalloc that falls back to the default allocator or to `mmap` in that case, but that
+   would result in performance degradation and possible in less predictable failure modes. I want
+   smalloc to have consistent performance so I choose to return a null pointer in that case.)
    
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
-If you run into either of these limitations in practice, open an issue on the `smalloc` github
-repository. It would be possible to lift these limitations, but I'd like to know if it is needed in
-practice before complicating the code to do so.
+If you run into either of these limitations in practice, please open an issue on the `smalloc`
+github repository. It would be possible in theory to lift these limitations, but I'd like to know if
+it is needed in practice before complicating the code to do so.
 
 # Usage in Rust Code
 
@@ -81,11 +81,11 @@ cargo nextest run
 
 ## Packages within the workspace
 
-This workspace contains seven packages:
- * _smalloc_: the core memory allocator
+This workspace contains six packages:
 
-These are usually the only two you need to use smalloc.
-
+ * _smalloc_: the core memory allocator. This is the only code you need to use smalloc as the global
+   allocator in your Rust code.
+ * _smalloc-ffi_: Foreign Function Interface to use smalloc from C/C++/native code.
  * _bench_: micro-benchmarking tool to measure latency of operations and compare to other memory
    allocators
  * _hellomalloc_: a sample app that shows how to make smalloc be the global allocator in Rust code
@@ -97,10 +97,14 @@ These are usually the only two you need to use smalloc.
 
 Within the smalloc package, there are three files:
  * _smalloc/src/lib.rs_: the core memory allocator
+ * _smalloc/src/plat/mod.rs_: interface to the operating system's `mmap` or equivalent system call
+   to allocate virtual address space
+
+These two files contain the only source code you are relying on if you use smalloc as the global
+allocator in Rust.
+
  * _smalloc/src/tests.rs_: transparent-box tests that use internals of the core to test it
  * _smalloc/tests/integration.rs_: opaque-box tests that use only the public API
- * _smalloc/src/plat_: interface to the operating system's `mmap` or equivalent system call to
-   allocate virtual address space
  
 # How it works
 

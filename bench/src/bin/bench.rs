@@ -52,12 +52,12 @@ pub fn main() {
            compare_hs_bench!(one_ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, iters_many, num_batches);
            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches);
            compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches);
-           compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, ITERS_FEW, num_batches);
+           // compare_hs_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 4, ITERS_FEW, num_batches); // This one reliably crashes the default allocator on Macos, so it is commented out.
 
             // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
             // that many threads are trying to free slots in the same slab as each other.
             const TOT_ITERS: u64 = 100_000;
-            for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
+            for numthreads in [10u32, 20, 40, 100] {
                 let iters_per_thread = TOT_ITERS / numthreads as u64;
                 let l = Layout::from_size_align(8, 1).unwrap();
                 compare_fh_bench!(numthreads, iters_per_thread, num_batches, l);
@@ -65,19 +65,20 @@ pub fn main() {
 
             println!();
 
-            // These benchmarks with 1024 threads are worst-case-scenarios. This is the case that there
-            // are more threads than cores *and* every thread is hammering on the allocator as fast as
-            // it can. This is not something to optimize for at the cost of performance in other cases,
-            // because the user code shouldn't do that. However, we do want to benchmark it, partially
-            // just in order to look for pathological behavior in smalloc, and also in order to optimize
-            // it if we can do so without penalizing other cases. In particular smalloc v7.2 made it so
-            // on flh-collision, alloc fails over to another slab.
+            // These benchmarks with 1024 threads are worst-case-scenarios. This is the case that
+            // there are more threads than cores *and* every thread is hammering on the allocator as
+            // fast as it can. This is not something to optimize for at the cost of performance in
+            // other cases, because the user code shouldn't do that. However, we do want to
+            // benchmark it, partially just in order to look for pathological behavior in smalloc,
+            // and also in order to optimize it if we can do so without penalizing other cases. In
+            // particular smalloc v7.2 made it so on flh-collision, alloc fails over to another
+            // slab.
             compare_mt_bench!(adrww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(ad, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
-            compare_mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
+            // compare_mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed); // This one reliably crashes the default allocator on Macos, so it is commented out.
         }
         
         compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
