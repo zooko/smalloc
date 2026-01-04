@@ -515,10 +515,10 @@ mod plat;
 #[cfg(test)]
 mod tests;
 
-use std::hint::{likely, unlikely};
-use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, AtomicBool};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use std::cell::{Cell, UnsafeCell};
+use core::hint::{likely, unlikely};
+use core::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, AtomicBool};
+use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use core::cell::{Cell, UnsafeCell};
 use core::alloc::{GlobalAlloc, Layout};
-use std::ptr::{copy_nonoverlapping, null_mut};
+use core::ptr::{copy_nonoverlapping, null_mut};
 use plat::p::sys_alloc;
