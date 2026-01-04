@@ -6,7 +6,7 @@ default-members = ["smalloc"]
 resolver = "3"
 
 [workspace.package]
-version = "7.4.8"
+version = "7.4.9"
 edition = "2024"
 authors = ["Zooko <noemail@thanks.com>"]
 license = "MIT OR Apache-2.0 OR TGPPL-1.0" # OR BOSL-1.0, see LICENSE-BOSL.txt
