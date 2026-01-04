@@ -78,7 +78,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 }
 
 /// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
@@ -110,7 +110,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {threads:>5}, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -199,7 +199,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(tot_iters_pb as u64);
-    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {numthreads:>5}, iters:  {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -310,7 +310,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_pbpht);
-    println!("name: {name:>16}, threads: {hotspot_threads_usize:>5}, iters/batch/hot-thread: {iters_pbpht:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {hotspot_threads_usize:>5}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -394,7 +394,7 @@ macro_rules! compare_st_bench_impl {
                     let median_ns = results_ns[results_ns.len() / 2];
                     let nspi = median_ns.per_iter(iters_per_batch);
                     let name = format!("{}_st_{}-1", short_str, stringify!($func));
-                    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+                    println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
                     result_ref.store(median_ns.into(), Ordering::Relaxed);
                 });
@@ -426,7 +426,7 @@ macro_rules! compare_st_bench_impl {
                 let median_ns = results_ns[results_ns.len() / 2];
                 let nspi = median_ns.per_iter(iters_per_batch);
                 let name = format!("{}_st_{}-1", cand_short_str, stringify!($func));
-                println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>10}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+                println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
                 cand_result_ref.store(median_ns.into(), Ordering::Relaxed);
             });
