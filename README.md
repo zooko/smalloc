@@ -662,10 +662,6 @@ a very useful tool!
 
 * Rewrite it in Zig. :-)
 
-* make it so you can use the 8-byte slots (size class 3) when you're using only Rust code (not using
-  `smalloc-ffi`) or when you're on a platform that allows 8-byte alignment of the results of
-  `malloc`?
-
 * make it work with valgrind
   * per the valgrind manual:
     * smalloc should register the "pool anchor address" (in valgrind terminology) which is the smalloc base pointer, by calling `VALGRIND_CREATE_MEMPOOL()`.
@@ -678,15 +674,8 @@ a very useful tool!
     * We should definitely call `VALGRIND_MEMPOOL_ALLOC()` on `alloc()` and `VALGRIND_MEMPOOL_FREE()` on `dealloc()`.
     * ... xyz0
     
-* try adding some newtypey goodness?
-
 * add support for the [new experimental Rust Allocator
   API](https://doc.rust-lang.org/nightly/std/alloc/trait.Allocator.html)
-
-* add initialized-to-zero alloc alternative, relying on kernel 0-initialization when coming from eac
-
-* make it usable as the implementation `malloc()`, `free()`, and `realloc()` for native code. :-)
-  (Nate's suggestion.)
 
 * Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the programming language, not for
   the rewrite.)
@@ -695,15 +684,7 @@ a very useful tool!
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
 
-* Put back the fallback to mmap for requests that overflow.??? Or document why not.
-
 * automatically detect and use 5lpt?
-
-* make it run benchmarks when you do `cargo run -p bench`, like iroh quinn does?
-
-* fall back to previous/system allocator on exhaustion??
-
-* rethink growers and caching
 
 # Acknowledgments
 

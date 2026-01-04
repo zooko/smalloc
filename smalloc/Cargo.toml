@@ -21,6 +21,3 @@ rustix = { version = "1.0.7", features = ["mm"] }
 
 [dev-dependencies]
 devutils = { path = "../devutils" }
-
-[features]
-growers = []

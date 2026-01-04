@@ -457,7 +457,6 @@ thread_local! {
 }
 
 /// Get the slab number for this thread. On first call, initializes it from GLOBAL_THREAD_NUM.
-//xxx look at asm of using Option instead of the sentinel value
 #[inline(always)]
 fn get_slabnum() -> u8 {
     SLABNUM.with(|cell| {
