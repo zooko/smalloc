@@ -29,7 +29,15 @@ Run it with
 ./target/release/bench
 ```
 
-You can optionally add the `--compare` or `--thorough` flags or both.
+You can optionally add the `--thorough` flag for benchmarking more "edge cases" and doing more
+iterations to try to get more statistically reliable results.
+
+You can also optionally add the `--compare` flag to compare smalloc's performance against the
+default allocator and -- if they have been built into `bench` -- `mimalloc`, `rpmalloc`, `snmalloc`,
+and `jemalloc`.
+
+To build one or more of those other allocators into `bench`, add this to the `cargo build` command
+line: `--features mimalloc,rpmalloc,snmalloc,jemalloc`.
 
 There is an example output in [results/cargo-bench.output.txt](results/cargo-bench.output.txt).
 
@@ -59,4 +67,4 @@ script. (Only works on Linux.) [Example output](results/mimalloc-bench.output.tx
 
 ## Your Code Here
 
-Make a script that runs benchmarks against your codebase like these above and submit a pull request!
+Make a script that runs benchmarks against your codebase like these and submit a pull request!
