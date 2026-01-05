@@ -22,33 +22,10 @@
 // 2025-12-11: The current smalloc (v7.1.0) requires 70,360,449,210,367 bytes.
 // 
 // 2025-12-16: The current smalloc (v7.2.0) requires 70,366,596,694,014 bytes.
+//
+// 2026-01-04: The current smalloc (v7.4.9) requires 35,182,224,605,182 bytes.
 
 
-
-#[cfg(any(target_os = "linux", doc))]
-pub fn sys_dealloc(p: *mut u8, size: usize) {
-    use rustix::mm::munmap;
-    use core::ffi::c_void;
-
-    unsafe {
-        munmap(p as *mut c_void, size).ok();
-    }
-}
-
-#[cfg(any(target_vendor = "apple", doc))]
-pub fn sys_dealloc(p: *mut u8, size: usize) {
-    use mach_sys::kern_return::KERN_SUCCESS;
-    use mach_sys::vm::mach_vm_deallocate;
-    use mach_sys::traps::mach_task_self;
-
-    debug_assert!(size_of::<usize>() == size_of::<u64>());
-    debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
-
-    unsafe {
-        let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
-        debug_assert!(retval == KERN_SUCCESS);
-    }
-}
 
 use thousands::Separable;
 fn dev_find_max_vm_space_allocatable() {
@@ -71,7 +48,7 @@ fn dev_find_max_vm_space_allocatable() {
                     bestsuccess = trysize;
                 }
                 lastsuccess = trysize;
-                sys_dealloc(m, trysize);
+                p::sys_dealloc(m, trysize);
                 trysize = (trysize + lastfailure) / 2;
             }
             Err(_) => {
@@ -99,6 +76,33 @@ impl fmt::Display for AllocFailed {
     }
 }
 
+#[cfg(any(target_os = "windows", doc))]
+pub mod p {
+    use super::AllocFailed;
+    use windows_sys::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, MEM_RELEASE};
+    use core::ffi::c_void;
+
+    #[allow(unsafe_code)]
+    pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
+        eprintln!("About to alloc {reqsize}");
+        let p = unsafe {
+            VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_READWRITE)
+        };
+
+        if !p.is_null() {
+            eprintln!("Succeeded to alloc {reqsize}");
+            Ok(p as *mut u8)
+        } else {
+            eprintln!("Failed to alloc {reqsize}");
+            Err(AllocFailed)
+        }
+    }
+
+    pub fn sys_dealloc(p: *mut u8, _size: usize) {
+        unsafe { VirtualFree(p as *mut c_void, 0, MEM_RELEASE) };
+    }
+}
+
 #[cfg(any(target_os = "linux", doc))]
 pub mod p {
     use super::AllocFailed;
@@ -117,6 +121,15 @@ pub mod p {
         } {
             Ok(p) => Ok(p as *mut u8),
             Err(_) => Err(AllocFailed),
+        }
+    }
+
+    pub fn sys_dealloc(p: *mut u8, size: usize) {
+        use rustix::mm::munmap;
+        use core::ffi::c_void;
+
+        unsafe {
+            munmap(p as *mut c_void, size).ok();
         }
     }
 }
@@ -145,6 +158,20 @@ pub mod p {
             Ok(address as *mut u8)
         } else {
             Err(AllocFailed)
+        }
+    }
+
+    pub fn sys_dealloc(p: *mut u8, size: usize) {
+        use mach_sys::kern_return::KERN_SUCCESS;
+        use mach_sys::vm::mach_vm_deallocate;
+        use mach_sys::traps::mach_task_self;
+
+        debug_assert!(size_of::<usize>() == size_of::<u64>());
+        debug_assert!(size_of::<*mut u8>() == size_of::<u64>());
+
+        unsafe {
+            let retval = mach_vm_deallocate(mach_task_self(), p as u64, size as u64);
+            debug_assert!(retval == KERN_SUCCESS);
         }
     }
 }

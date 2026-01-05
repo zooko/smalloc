@@ -51,6 +51,15 @@ impl Smalloc {
 
             // release the spin lock
             inner.initlock.store(false, Release);
+
+            #[cfg(any(target_os = "windows", doc))]
+            {
+                // This needs to happen at least once but it is okay if it happens more than once so
+                // it is inside the if smbpval == 0 and outside the spin lock:
+                let flharea_p = inner.smbp.load(Acquire);
+                let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
+                sys_commit(flharea_p as *mut u8, size_of_flh_area).unwrap();
+            }
         }
     }
 }
@@ -323,6 +332,9 @@ pub mod i {
 
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
+                    #[cfg(any(target_os = "windows", doc))]
+                    sys_commit(curfirstentry_p as *mut u8, 4).unwrap();
+
                     let curfirstentrylink_v = unsafe { *(curfirstentry_p as *mut u32) };
                     let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, sentinel_slotnum);
 
@@ -340,6 +352,9 @@ pub mod i {
                             // The slabnum changed. Save the new slabnum for next time.
                             set_slab_num(slabnum);
                         }
+
+                        #[cfg(any(target_os = "windows", doc))]
+                        sys_commit(curfirstentry_p as *mut u8, 1 << sc).unwrap();
 
                         break curfirstentry_p as *mut u8;
                     } else {
@@ -516,3 +531,6 @@ use core::cell::{Cell, UnsafeCell};
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{copy_nonoverlapping, null_mut};
 use plat::p::sys_alloc;
+
+#[cfg(any(target_os = "windows", doc))]
+use plat::p::sys_commit;

@@ -26,17 +26,6 @@ macro_rules! with_all_allocators {
     };
 }
 
-pub fn clock(clocktype: ClockType) -> Nanoseconds {
-    let mut tp: MaybeUninit<libc::timespec> = MaybeUninit::uninit();
-    let retval = unsafe { libc::clock_gettime(clocktype, tp.as_mut_ptr()) };
-    debug_assert_eq!(retval, 0);
-    let instsec = unsafe { (*tp.as_ptr()).tv_sec };
-    let instnsec = unsafe { (*tp.as_ptr()).tv_nsec };
-    debug_assert!(instsec >= 0);
-    debug_assert!(instnsec >= 0);
-    Nanoseconds(instsec as u64 * 1_000_000_000 + instnsec as u64)
-}
-
 unsafe impl GlobalAlloc for GlobalAllocWrap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe { System.alloc(layout) }
@@ -60,11 +49,11 @@ where
 
     for _batch in 0..num_batches {
         let mut s = TestState::new(iters_per_batch, seed);
-        let start = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        let start = platform::p::thread_cputime();
         for _i in 0..iters_per_batch {
             bf(al, &mut s);
         }
-        let end = clock(libc::CLOCK_THREAD_CPUTIME_ID);
+        let end = platform::p::thread_cputime();
         s.clean_up(al);
 
         let batch_ns = end - start;
@@ -93,9 +82,9 @@ where
             tses.push(TestState::new(iters_per_batch, seed));
         }
 
-        let start = clock(libc::CLOCK_MONOTONIC_RAW);
+        let start = platform::p::clock_monotonic_raw();
         help_test_multithreaded_with_allocator(bf, threads, iters_per_batch, al, &mut tses);
-        let end = clock(libc::CLOCK_MONOTONIC_RAW);
+        let end = platform::p::clock_monotonic_raw();
         let batch_ns = end - start;
         results_ns.push(batch_ns);
 
@@ -181,11 +170,11 @@ where
 
             start_barrier.wait();
             // Start timing right before releasing threads
-            let start = clock(libc::CLOCK_MONOTONIC_RAW);
+            let start = platform::p::clock_monotonic_raw();
 
             // Wait for all threads to finish
             end_barrier.wait();
-            let end = clock(libc::CLOCK_MONOTONIC_RAW);
+            let end = platform::p::clock_monotonic_raw();
 
             assert!(end > start);
             end - start
@@ -290,11 +279,11 @@ where
             setup_complete_barrier.wait();
 
             // Start timing right before releasing hot threads
-            let start = clock(libc::CLOCK_MONOTONIC_RAW);
+            let start = platform::p::clock_monotonic_raw();
             hot_start_barrier.wait();
             // Wait for all hot threads to finish
             hot_finish_barrier.wait();
-            let end = clock(libc::CLOCK_MONOTONIC_RAW);
+            let end = platform::p::clock_monotonic_raw();
 
             final_barrier.wait();
 
@@ -622,14 +611,12 @@ unsafe impl Send for SendPtr {}
 pub struct GlobalAllocWrap;
 
 mod platform;
-use platform::ClockType;
 
 use devutils::*;
 
 use thousands::Separable;
 
 use std::fmt;
-use std::mem::MaybeUninit;
 use std::sync::Barrier;
 use std::thread;
 use std::alloc::{GlobalAlloc, System, Layout};

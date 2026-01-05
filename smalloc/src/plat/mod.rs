@@ -12,6 +12,57 @@ impl fmt::Display for AllocFailed {
     }
 }
 
+#[cfg(any(target_os = "windows", doc))]
+pub mod p {
+    use super::AllocFailed;
+    use windows_sys::Win32::System::Memory::{VirtualAlloc, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PAGE_NOACCESS};
+    use windows_sys::Win32::Foundation::GetLastError;
+    use core::ffi::c_void;
+
+    // The size class necessary to hold a memory page, since memory pages on Windows (except in 
+    // cases of "large pages") are 4 KiB.
+    pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(4096, 4096);
+
+    #[allow(unsafe_code)]
+    pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
+        //eprintln!("about to alloc {reqsize}");
+        let p = unsafe {
+            //VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_READWRITE)
+            VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_NOACCESS)
+        };
+
+        if !p.is_null() {
+            //eprintln!("succeeded to alloc {reqsize}");
+            Ok(p as *mut u8)
+        } else {
+            let error = unsafe { GetLastError() };
+            println!("VirtualAlloc failed with error code: {}", error);
+
+            //eprintln!("Failed to alloc {reqsize}");
+            Err(AllocFailed)
+        }
+    }
+
+    #[allow(unsafe_code)]
+    pub fn sys_commit(p: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
+        //eprintln!("about to commit {reqsize}");
+        let p = unsafe {
+            VirtualAlloc(p as *mut c_void, reqsize, MEM_COMMIT, PAGE_READWRITE)
+        };
+
+        if !p.is_null() {
+            //eprintln!("succeeded to commit {reqsize}");
+            Ok(p as *mut u8)
+        } else {
+            let error = unsafe { GetLastError() };
+            println!("VirtualAlloc failed with error code: {}", error);
+
+            //eprintln!("Failed to commit {reqsize}");
+            Err(AllocFailed)
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", doc))]
 pub mod p {
     use super::AllocFailed;

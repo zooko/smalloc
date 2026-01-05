@@ -13,6 +13,9 @@ categories.workspace = true
 
 [dependencies]
 
+[target.'cfg(target_os="windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Memory"] }
+
 [target.'cfg(target_vendor="apple")'.dependencies]
 mach-sys = "0.5"
 
