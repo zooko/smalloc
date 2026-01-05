@@ -16,7 +16,8 @@ debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
 
 # Smalloc's bench tool
 
-Smalloc comes with a "micro-benchmarking" tool, used to measure smalloc's performance at a low level, which can also compare to low-level measurements of other allocators. Build it with
+`smalloc` comes with a "micro-benchmarking" tool, used to measure `smalloc`'s performance at a low
+level, which can also compare to low-level measurements of other allocators. Build it with
 
 ```
 cargo build --release --package bench
@@ -30,10 +31,13 @@ Run it with
 
 You can optionally add the `--compare` or `--thorough` flags or both.
 
-# Benchmarking smalloc in real code
+There is an example output in [results/cargo-bench.output.txt](results/cargo-bench.output.txt).
 
-Here are some ways I've benchmarked smalloc to see the effect it has on performance of other code,
-and also to compare it to the default allocator, mimalloc, rpmalloc, snmalloc, and jemalloc.
+# Benchmarking user code with different allocators
+
+Here are some ways to benchmark smalloc to see the effect it has on performance of various
+codebases, and also to compare it to the default allocator, mimalloc, rpmalloc, snmalloc, and
+jemalloc.
 
 ## Rust simd-json
 
@@ -41,26 +45,18 @@ Get this fork of the Rust simd-json repo: https://github.com/zooko/simd-json and
 [bench-allocators.sh](https://github.com/zooko/simd-json/blob/26a671f60228123cb5b6dd1a8da136dff6523244/bench-allocators.sh)
 script. [Example output](results/simd-json.output.txt).
 
-* Rust regex as benchmarked by rebar (https://github.com/zooko/rebar)
+## Rust rebar
 
-Get this fork of the Rust rebar repo: https://github.com/zooko/simd-json and run the
-[bench-allocators.sh](https://github.com/zooko/simd-json/blob/26a671f60228123cb5b6dd1a8da136dff6523244/bench-allocators.sh)
+Get this fork of the Rust rebar repo: https://github.com/zooko/rebar and run the
+[bench-allocators.sh](https://github.com/zooko/rebar/blob/7c3b699226a4170d8d817f83a4711d8e3bed4fe9/bench-allocators.sh)
 script. [Example output](results/simd-json.output.txt).
 
-```code
-```
+## mimalloc-bench
 
-* mimalloc-bench (https://github.com/daanx/mimalloc-bench)
+Get this fork of the mimalloc-bench repo: https://github.com/zooko/mimalloc-bench and run the
+[bench-allocators.sh](https://github.com/zooko/mimalloc-bench/blob/10fe6ba9546be3fb97bd5b71990bb1dc34b58f8a/bench-allocators.sh)
+script. (Only works on Linux.) [Example output](results/mimalloc-bench.output.txt)
 
-* C++ simdjson (https://github.com/zooko/simdjson)
+## Your Code Here
 
-```code
-git clone https://github.com/simdjson/simdjson
-cd simdjson
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DSIMDJSON_DEVELOPER_MODE=ON
-cmake --build build --config Release
-TYP=ondemand ; ALLOC=default ; for i in {1..3} ; do ./build/benchmark/bench_${TYP} --benchmark_format=csv --benchmark_filter="simdjson_${TYP}" --benchmark_out=o.${TYP}.${ALLOC}.${i}.csv ; done
-TYP=ondemand ; ALLOC=smalloc ; for i in {1..3} ; do LD_PRELOAD=${PATH_TO_DYNLIB}/libsmalloc_ffi.so ./build/benchmark/bench_${TYP} --benchmark_format=csv --benchmark_filter="simdjson_${TYP}" --benchmark_out=o.${TYP}.${ALLOC}.${i}.csv ; done
-TYP=ondemand ; ALLOC=mimalloc ; for i in {1..3} ; do LD_PRELOAD=${PATH_TO_DYNLIB}/libmimalloc.so ./build/benchmark/bench_${TYP} --benchmark_format=csv --benchmark_filter="simdjson_${TYP}" --benchmark_out=o.${TYP}.${ALLOC}.${i}.csv ; done
-```
-
+Make a script that runs benchmarks against your codebase like these above and submit a pull request!

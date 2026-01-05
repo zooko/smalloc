@@ -20,11 +20,11 @@ management bugs.
 
 # Performance
 
-See [./bench/README.md](./bench/README.md) for various ways to benchmark memory allocators, and see
-the files in the [./bench/results/](./bench/results/) directory for saved outputs from my own
-benchmarking runs.
+See [./bench/README.md](./bench/README.md) for various ways to benchmark `smalloc` and compare it to
+the default memory allocator, `jemalloc`, `snmalloc`, `mimalloc`, and `rpmalloc`.
 
-Here are two data points to demonstrate that `smalloc` is sometimes faster than the alternatives:
+Here are two data points to demonstrate that `smalloc` is sometimes faster than the
+alternatives. See the [./bench/results/](./bench/results/) directory for more results.
 
 From `smalloc`'s bench tool:
 
@@ -487,8 +487,8 @@ following goals, written here in roughly descending order of importance:
    computing. "Simplicity is the inevitable price that we must pay for correctness."--Tony Hoare
    (paraphrased)
 
-   In addition to "correctness", simplicity also helps make the performance and failure modes more
-   consistent and debuggable, because there are fewer modes.
+   In addition to "correctness", simplicity also helps make the performance and the failure modes
+   more consistent and debuggable, because there are fewer modes.
 
    Simplicity also facilitates making improvements to the codebase and learning from the codebase.
 
@@ -674,9 +674,6 @@ following goals, written here in roughly descending order of importance:
    is still very efficient, and in particular its performance is still consistent even in these
    worst-case-scenarios.
 
-I am hopeful that `smalloc` has achieved all four of these main goals. If so, it may turn out to be
-a very useful tool!
-
 5. (Optional, provisional goal) Efficiently support using `realloc()` to extend vectors. `smalloc`'s
    initial target user is Rust code, and Rust code uses a lot of Vectors, and not uncommonly it
    grows those Vectors dynamically, which results in a call to `realloc()` in the underlying memory
@@ -688,9 +685,18 @@ a very useful tool!
    having to copy the contents of the Vector over and over. `smalloc()` optimizes out much of that
    copying of data -- see "Realloc Growers" above.
 
+`smalloc` appears to have achieved all five of these goals. If so, it may turn out to be a very
+useful tool!
+
 # Open Issues / Future Work
 
-* try again to get the cpu number, at least on non macOS, instead of the thread-local "threadnum"
+* Port to Windows (probably just a matter of adding a call to `VirtualAlloc` using the
+  Microsoft-supported Rust `windows-sys` Rust crate, in [src/plat/mod.rs](src/plat/mod.rs)).
+
+* Port to iOS (you just need to give your app the entitlement named
+  `com.apple.developer.kernel.extended-virtual-addressing`), Android
+
+* try again to get the cpu number, at least on non-macOS, instead of the thread-local "threadnum"
   variable :-) Also try again with Rust threadid
 
 * Experiment with making it FIFO instead of LIFO -- this would potentially harden against bugs like
@@ -707,6 +713,8 @@ a very useful tool!
 * And llvm-cov's Modified Condition/Decision Coverage analysis. :-)
 
 * and cargo-mutants
+
+* Try "tarpaulin" again HT Sean Bowe
 
 * If we could allocate even more virtual memory address space, `smalloc` could more scalable
   (i.e. have more large slots, more per-thread slabs, etc). And you could have more than one
@@ -736,17 +744,15 @@ a very useful tool!
 * Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the programming language, not for
   the rewrite.)
 
-* Try "tarpaulin" again HT Sean Bowe
-
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
 
 # Acknowledgments
 
 * Thanks to Andrew Reece and Sam Smith from Shielded Labs for some specific suggestions that I
   implemented (see notes in documentation above). Thanks also to Andrew Reece for suggesting (at the
-  Shielded Labs team meeting in San Diego) that we use multiple slabs for all size classes in order
-  to reduce multithreading write conflicts. This suggestion forms a big part of smalloc v6 vs
-  smalloc v5, which used multiple slabs for small size classes but not for larger ones.
+  Shielded Labs team meeting in San Diego) to use multiple slabs for all size classes in order to
+  reduce flh update conflicts. This suggestion forms a big part of smalloc v6 vs smalloc v5, which
+  used multiple slabs for small size classes but not for larger ones.
 
 * Thanks to Jack O'Connor, Nate Wilcox, Sean Bowe, and Brian Warner for advice and
   encouragement. Thanks to Nate Wilcox and Jack O'Connor for hands-on debugging help!
@@ -773,8 +779,6 @@ a very useful tool!
   that he's still alive. :-)
 
 * Thanks to fluidvanadium for the first PR from a contributor. :-)
-
-* Thanks to Chenyao Lou for suggesting in https://lemire.me/blog/2021/01/06/memory-access-on-the-apple-m1-processor/#comment-565474 xor'ing a counter into indexes in benchmarks to foil speculative pre-fetching.
 
 * Thanks to Denis Bazhenov, author of the "Tango" benchmarking tool.
 

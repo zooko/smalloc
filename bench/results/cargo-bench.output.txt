@@ -1,3 +1,6 @@
+# CPU Type:
+
+# Apple M4 Max
 
 # ./target/release/bench --compare
 
