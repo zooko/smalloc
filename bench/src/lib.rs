@@ -1,32 +1,29 @@
-// Thanks to Claude Opus 4.5 for refactoring this entire file with me.
+// Thanks to Claude Opus 4.5 and Claude Sonnet 4.5 for refactoring this entire file with me.
 
 // ============================================================================
 // ALLOCATOR REGISTRY - Add new allocators here!
 // ============================================================================
 //
-// Each allocator entry is: (short_name, display_name, constructor, setup_block)
+// Each allocator entry is: (display_name, constructor)
 //
-// - short_name: Used for benchmark output prefixes (e.g., "mi" -> "mi_st_funcname-1")  
 // - display_name: Used in comparison output (e.g., "smalloc diff from mimalloc: +5%")
 // - constructor: Expression that creates the allocator instance
-// - setup_block: Code to run after construction (use {} for none)
 //
 // The LAST entry is treated as the "candidate" (the one being compared against others).
 
 #[macro_export]
 macro_rules! with_all_allocators {
-    ($($macro_path:tt)::+ ! ( $($args:tt)* )) => {
-        $($macro_path)::+! {
-            $($args)* ;
-            @allocators
-                de, "default",  $crate::GlobalAllocWrap,       {}; // This causes crashes on Macos+M4Max with --thorough
-            mi, "mimalloc", mimalloc::MiMalloc,            {};
-            je, "jemalloc", tikv_jemallocator::Jemalloc,   {};
-            sn, "snmalloc", snmalloc_rs::SnMalloc,         {};
-            rp, "rpmalloc", rpmalloc::RpMalloc,            {};
-            @candidate
-                s, "smalloc",  devutils::get_devsmalloc!(),   {};
-        }
+    ($mac:ident; $($args:tt)*) => {
+        $crate::$mac!(
+            $($args)*;
+            @allocators "default", $crate::GlobalAllocWrap;
+            @optional_allocators
+                #[cfg(feature = "mimalloc")] "mimalloc", mimalloc::MiMalloc;
+            #[cfg(feature = "jemalloc")] "jemalloc", tikv_jemallocator::Jemalloc;
+            #[cfg(feature = "snmalloc")] "snmalloc", snmalloc_rs::SnMalloc;
+            #[cfg(feature = "rpmalloc")] "rpmalloc", rpmalloc::RpMalloc;
+            @candidate "smalloc", devutils::get_devsmalloc!();
+        )
     };
 }
 
@@ -55,7 +52,7 @@ unsafe impl GlobalAlloc for GlobalAllocWrap {
     }
 }
 
-pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64)
+pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> Nanoseconds
 where
     T: GlobalAlloc,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
@@ -78,7 +75,9 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+
+    median_ns
 }
 
 /// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
@@ -110,7 +109,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads: {threads:>5}, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -199,7 +198,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(tot_iters_pb as u64);
-    println!("name: {name:>16}, threads: {numthreads:>5}, iters:  {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -343,110 +342,90 @@ macro_rules! st_bench {
 
 #[macro_export]
 macro_rules! compare_st_bench_impl {
+    // Entry point
     (
         $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
-        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
-        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+        @allocators $req_display:expr, $req_instance:expr;
+        @optional_allocators $( #[cfg($cfg:meta)] $display:expr, $instance:expr; )*
+            @candidate $cand_display:expr, $cand_instance:expr;
     ) => {{
-        use thousands::Separable;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let func_name = stringify!($func);
+        $crate::compare_st_bench_impl! {
+            @collect
+                $func, $iters_per_batch, $num_batches, $seed;
+            @required $req_display, $req_instance;
+            @optional_ns
+                @remaining [ $( { #[cfg($cfg)] $display, $instance } )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
 
-        // Create all allocator instances and run setup
+    // Recursive case
+    (
+        @collect
+            $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($collected_cfg:meta)] $collected_display:expr, $collected_instance:expr; )*
+            @remaining [ { #[cfg($cfg:meta)] $display:expr, $instance:expr } $( $rest:tt )* ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        $crate::compare_st_bench_impl! {
+            @collect
+                $func, $iters_per_batch, $num_batches, $seed;
+            @required $req_display, $req_instance;
+            @optional_ns $( #[cfg($collected_cfg)] $collected_display, $collected_instance; )* #[cfg($cfg)] $display, $instance;
+            @remaining [ $( $rest )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
+
+    // Base case
+    (
+        @collect
+            $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
+            @remaining [ ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+
+        // Required
+        {
+            let req_alloc = $req_instance;
+            let short = $crate::short_name($req_display);
+            let name = format!("{}_st_{}", short, stringify!($func));
+            let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &req_alloc, $seed);
+            results.push(($req_display, ns));
+        }
+
+        // Optional
         $(
-            let $short = $instance;
-            $($setup)*
-        )+
-            let $cand_short = $cand_instance;
-        $($cand_setup)*
+            #[cfg($opt_cfg)]
+            {
+                let opt_alloc = $opt_instance;
+                let short = $crate::short_name($opt_display);
+                let name = format!("{}_st_{}", short, stringify!($func));
+                let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &opt_alloc, $seed);
+                results.push(($opt_display, ns));
+            }
+        )*
 
-        // Create atomic storage for results
-            let results: Vec<(AtomicU64, &str)> = vec![
-                $( (AtomicU64::new(0), $display), )+
-            ];
-        let candidate_result = AtomicU64::new(0);
+        // Candidate
+        {
+            let cand_alloc = $cand_instance;
+            let short = $crate::short_name($cand_display);
+            let name = format!("{}_st_{}", short, stringify!($func));
+            let candidate_ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, cand_alloc, $seed);
 
-        // Spawn threads for each allocator
-        std::thread::scope(|scope| {
-            let mut _idx = 0usize;
-            $(
-                let result_ref = &results[_idx].0;
-                let alloc_ref = &$short;
-                let short_str = stringify!($short);
-                let iters_per_batch = $iters_per_batch;
-                let seed = $seed;
-                scope.spawn(move || {
-                    let mut results_ns: Vec<$crate::Nanoseconds> = Vec::with_capacity(iters_per_batch as usize);
-
-                    for _batch in 0..$num_batches {
-                        let mut s = devutils::TestState::new(iters_per_batch, seed);
-                        let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                        for _i in 0..iters_per_batch {
-                            $func(alloc_ref, &mut s);
-                        }
-                        let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                        s.clean_up(alloc_ref);
-                        let batch_ns = end - start;
-                        results_ns.push(batch_ns);
-                    }
-
-                    results_ns.sort_unstable();
-                    let median_ns = results_ns[results_ns.len() / 2];
-                    let nspi = median_ns.per_iter(iters_per_batch);
-                    let name = format!("{}_st_{}-1", short_str, stringify!($func));
-                    println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
-
-                    result_ref.store(median_ns.into(), Ordering::Relaxed);
-                });
-                _idx += 1;
-            )+
-
-            // Candidate allocator
-                let cand_result_ref = &candidate_result;
-            let cand_ref = $cand_short;
-            let cand_short_str = stringify!($cand_short);
-            let iters_per_batch = $iters_per_batch;
-            let seed = $seed;
-            scope.spawn(move || {
-                let mut results_ns = Vec::with_capacity(iters_per_batch as usize);
-
-                for _batch in 0..$num_batches {
-                    let mut s = devutils::TestState::new(iters_per_batch, seed);
-                    let start = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                    for _i in 0..iters_per_batch {
-                        $func(cand_ref, &mut s);
-                    }
-                    let end = $crate::clock(libc::CLOCK_THREAD_CPUTIME_ID);
-                    s.clean_up(cand_ref);
-                    let batch_ns = end - start;
-                    results_ns.push(batch_ns);
-                }
-
-                results_ns.sort_unstable();
-                let median_ns = results_ns[results_ns.len() / 2];
-                let nspi = median_ns.per_iter(iters_per_batch);
-                let name = format!("{}_st_{}-1", cand_short_str, stringify!($func));
-                println!("name: {name:>16}, threads:     1, iters:  {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
-
-                cand_result_ref.store(median_ns.into(), Ordering::Relaxed);
-            });
-        });
-
-        // Collect results and print comparisons
-        let candidate_ns = candidate_result.load(Ordering::Relaxed).into();
-        let comparisons: Vec<(&str, $crate::Nanoseconds)> = results
-            .iter()
-            .map(|(atomic, name)| (*name, atomic.load(Ordering::Relaxed).into()))
-            .collect();
-
-        $crate::print_comparisons(candidate_ns, &comparisons);
+            $crate::print_comparisons(candidate_ns, &results);
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! compare_st_bench {
     ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
-        $crate::with_all_allocators!($crate::compare_st_bench_impl!($func, $iters_per_batch, $num_batches, $seed))
+        $crate::with_all_allocators!(compare_st_bench_impl; $func, $iters_per_batch, $num_batches, $seed)
     };
 }
 
@@ -469,80 +448,179 @@ macro_rules! mt_bench {
 
 #[macro_export]
 macro_rules! compare_mt_bench_impl {
+    // Entry point
     (
         $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
-        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
-        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+        @allocators $req_display:expr, $req_instance:expr;
+        @optional_allocators $( #[cfg($cfg:meta)] $display:expr, $instance:expr; )*
+            @candidate $cand_display:expr, $cand_instance:expr;
     ) => {{
-        let func_name = stringify!($func);
+        $crate::compare_mt_bench_impl! {
+            @collect
+                $func, $threads, $iters_per_batch, $num_batches, $seed;
+            @required $req_display, $req_instance;
+            @optional_ns
+                @remaining [ $( { #[cfg($cfg)] $display, $instance } )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
 
-        // Create all allocator instances and run setup
-        $(
-            let $short = $instance;
-            $($setup)*
-        )+
-            let $cand_short = $cand_instance;
-        $($cand_setup)*
+    // Recursive case
+    (
+        @collect
+            $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($collected_cfg:meta)] $collected_display:expr, $collected_instance:expr; )*
+            @remaining [ { #[cfg($cfg:meta)] $display:expr, $instance:expr } $( $rest:tt )* ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        $crate::compare_mt_bench_impl! {
+            @collect
+                $func, $threads, $iters_per_batch, $num_batches, $seed;
+            @required $req_display, $req_instance;
+            @optional_ns $( #[cfg($collected_cfg)] $collected_display, $collected_instance; )* #[cfg($cfg)] $display, $instance;
+            @remaining [ $( $rest )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
 
-        // Run benchmarks sequentially (mt_bench already uses multiple threads internally)
-            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+    // Base case
+    (
+        @collect
+            $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
+            @remaining [ ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+
+        // Required
+        {
+            let req_alloc = $req_instance;
+            let short = $crate::short_name($req_display);
+            let name = format!("{}_mt_{}-{}", short, stringify!($func), $threads);
+            let ns = $crate::multithread_bench($func, $threads, $iters_per_batch, $num_batches, &name, &req_alloc, $seed);
+            results.push(($req_display, ns));
+        }
+
+        // Optional
         $(
-            let f = |al: &_, s: &mut TestState| { $func(al, s) };
-            let name = format!("{}_mt_{}-{}", stringify!($short), func_name, $threads);
-            let ns = $crate::multithread_bench(f, $threads, $iters_per_batch, $num_batches, &name, &$short, $seed);
-            results.push(($display, ns));
-        )+
+            #[cfg($opt_cfg)]
+            {
+                let opt_alloc = $opt_instance;
+                let short = $crate::short_name($opt_display);
+                let name = format!("{}_mt_{}-{}", short, stringify!($func), $threads);
+                let ns = $crate::multithread_bench($func, $threads, $iters_per_batch, $num_batches, &name, &opt_alloc, $seed);
+                results.push(($opt_display, ns));
+            }
+        )*
 
         // Candidate
-            let f = |al: &_, s: &mut TestState| { $func(al, s) };
-        let name = format!("{}_mt_{}-{}", stringify!($cand_short), func_name, $threads);
-        let candidate_ns = $crate::multithread_bench(f, $threads, $iters_per_batch, $num_batches, &name, $cand_short, $seed);
+        {
+            let cand_alloc = $cand_instance;
+            let short = $crate::short_name($cand_display);
+            let name = format!("{}_mt_{}-{}", short, stringify!($func), $threads);
+            let candidate_ns = $crate::multithread_bench($func, $threads, $iters_per_batch, $num_batches, &name, cand_alloc, $seed);
 
-        $crate::print_comparisons(candidate_ns, &results);
+            $crate::print_comparisons(candidate_ns, &results);
+        }
     }};
 }
 
 #[macro_export]
+macro_rules! compare_mt_bench {
+    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
+        $crate::with_all_allocators!(compare_mt_bench_impl; $func, $threads, $iters_per_batch, $num_batches, $seed)
+    };
+}
+
+#[macro_export]
 macro_rules! compare_fh_bench_impl {
+    // Entry point
     (
         $threads:expr, $iters:expr, $num_batches:expr, $l:expr ;
-        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
-        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+        @allocators $req_display:expr, $req_instance:expr;
+        @optional_allocators $( #[cfg($cfg:meta)] $display:expr, $instance:expr; )*
+            @candidate $cand_display:expr, $cand_instance:expr;
     ) => {{
-        // Create all allocator instances and run setup
-        $(
-            let $short = $instance;
-            $($setup)*
-        )+
-            let $cand_short = $cand_instance;
-        $($cand_setup)*
+        $crate::compare_fh_bench_impl! {
+            @collect
+                $threads, $iters, $num_batches, $l;
+            @required $req_display, $req_instance;
+            @optional_ns
+                @remaining [ $( { #[cfg($cfg)] $display, $instance } )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
 
-        // Run benchmarks sequentially
-            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+    // Recursive case
+    (
+        @collect
+            $threads:expr, $iters:expr, $num_batches:expr, $l:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($collected_cfg:meta)] $collected_display:expr, $collected_instance:expr; )*
+            @remaining [ { #[cfg($cfg:meta)] $display:expr, $instance:expr } $( $rest:tt )* ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        $crate::compare_fh_bench_impl! {
+            @collect
+                $threads, $iters, $num_batches, $l;
+            @required $req_display, $req_instance;
+            @optional_ns $( #[cfg($collected_cfg)] $collected_display, $collected_instance; )* #[cfg($cfg)] $display, $instance;
+            @remaining [ $( $rest )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
+
+    // Base case
+    (
+        @collect
+            $threads:expr, $iters:expr, $num_batches:expr, $l:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
+            @remaining [ ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+
+        // Required
+        {
+            let req_alloc = $req_instance;
+            let short = $crate::short_name($req_display);
+            let name = format!("{}_fh-{}", short, $threads);
+            let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &req_alloc, $l);
+            results.push(($req_display, ns));
+        }
+
+        // Optional
         $(
-            let name = format!("{}_fh-{}", stringify!($short), $threads);
-            let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &$short, $l);
-            results.push(($display, ns));
-        )+
+            #[cfg($opt_cfg)]
+            {
+                let opt_alloc = $opt_instance;
+                let short = $crate::short_name($opt_display);
+                let name = format!("{}_fh-{}", short, $threads);
+                let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &opt_alloc, $l);
+                results.push(($opt_display, ns));
+            }
+        )*
 
         // Candidate
-            let name = format!("{}_fh-{}", stringify!($cand_short), $threads);
-        let candidate_ps = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, $cand_short, $l);
-        $crate::print_comparisons(candidate_ps, &results);
+        {
+            let cand_alloc = $cand_instance;
+            let short = $crate::short_name($cand_display);
+            let name = format!("{}_fh-{}", short, $threads);
+            let candidate_ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, cand_alloc, $l);
+
+            $crate::print_comparisons(candidate_ns, &results);
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! compare_fh_bench {
     ($threads:expr, $iters:expr, $num_batches:expr, $l:expr) => {
-        $crate::with_all_allocators!($crate::compare_fh_bench_impl!($threads, $iters, $num_batches, $l))
-    };
-}
-
-#[macro_export]
-macro_rules! compare_mt_bench {
-    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
-        $crate::with_all_allocators!($crate::compare_mt_bench_impl!($func, $threads, $iters_per_batch, $num_batches, $seed))
+        $crate::with_all_allocators!(compare_fh_bench_impl; $threads, $iters, $num_batches, $l)
     };
 }
 
@@ -552,44 +630,93 @@ macro_rules! compare_mt_bench {
 
 #[macro_export]
 macro_rules! compare_hs_bench_impl {
+    // Entry point
     (
         $func:expr, $threads:expr, $iters_per_batch:expr, $num_batches:expr ;
-        @allocators $( $short:ident, $display:expr, $instance:expr, { $($setup:tt)* } );+ ;
-        @candidate $cand_short:ident, $cand_display:expr, $cand_instance:expr, { $($cand_setup:tt)* };
+        @allocators $req_display:expr, $req_instance:expr;
+        @optional_allocators $( #[cfg($cfg:meta)] $display:expr, $instance:expr; )*
+            @candidate $cand_display:expr, $cand_instance:expr;
     ) => {{
-        let func_name = stringify!($func);
-        let l = Layout::from_size_align(32, 1).unwrap();
+        $crate::compare_hs_bench_impl! {
+            @collect
+                $func, $threads, $iters_per_batch, $num_batches;
+            @required $req_display, $req_instance;
+            @optional_ns
+                @remaining [ $( { #[cfg($cfg)] $display, $instance } )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    }};
 
-        // Create all allocator instances and run setup
+    // Recursive case - just collect cfg info
+    (
+        @collect
+            $func:expr, $threads:expr, $iters_per_batch:expr, $num_batches:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($collected_cfg:meta)] $collected_display:expr, $collected_instance:expr; )*
+            @remaining [ { #[cfg($cfg:meta)] $display:expr, $instance:expr } $( $rest:tt )* ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {
+        $crate::compare_hs_bench_impl! {
+            @collect
+                $func, $threads, $iters_per_batch, $num_batches;
+            @required $req_display, $req_instance;
+            @optional_ns $( #[cfg($collected_cfg)] $collected_display, $collected_instance; )* #[cfg($cfg)] $display, $instance;
+            @remaining [ $( $rest )* ]
+                @candidate $cand_display, $cand_instance;
+        }
+    };
+
+    // Base case - run all benchmarks
+    (
+        @collect
+            $func:expr, $threads:expr, $iters_per_batch:expr, $num_batches:expr;
+        @required $req_display:expr, $req_instance:expr;
+        @optional_ns $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
+            @remaining [ ]
+            @candidate $cand_display:expr, $cand_instance:expr;
+    ) => {{
+        let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
+
+        // Required allocator
+        {
+            let req_alloc = $req_instance;
+            let short = $crate::short_name($req_display);
+            let name = format!("{}_hs_{}", short, stringify!($func));
+            let l = Layout::from_size_align(32, 1).unwrap();
+            let ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, &req_alloc, l);
+            results.push(($req_display, ns));
+        }
+
+        // Optional allocators
         $(
-            let $short = $instance;
-            $($setup)*
-        )+
-            let $cand_short = $cand_instance;
-        $($cand_setup)*
+            #[cfg($opt_cfg)]
+            {
+                let opt_alloc = $opt_instance;
+                let short = $crate::short_name($opt_display);
+                let name = format!("{}_hs_{}", short, stringify!($func));
+                let l = Layout::from_size_align(32, 1).unwrap();
+                let ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, &opt_alloc, l);
+                results.push(($opt_display, ns));
+            }
+        )*
 
-        // Run benchmarks and collect results
-            let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
-        $(
-            let f = |al: &_, s: &mut TestState| { $func(al, s) };
-            let name = format!("{}_hs_{}-{}", stringify!($short), func_name, $threads);
-            let ns = $crate::multithread_hotspot_inner(f, $threads, $iters_per_batch, $num_batches, &name, &$short, l);
-            results.push(($display, ns));
-        )+
+        // Candidate allocator
+        {
+            let cand_alloc = $cand_instance;
+            let short = $crate::short_name($cand_display);
+            let name = format!("{}_hs_{}", short, stringify!($func));
+            let l = Layout::from_size_align(32, 1).unwrap();
+            let candidate_ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, cand_alloc, l);
 
-        // Candidate
-            let f = |al: &_, s: &mut TestState| { $func(al, s) };
-        let name = format!("{}_hs_{}-{}", stringify!($cand_short), func_name, $threads);
-        let candidate_ns = $crate::multithread_hotspot_inner(f, $threads, $iters_per_batch, $num_batches, &name, $cand_short, l);
-
-        $crate::print_comparisons(candidate_ns, &results);
+            $crate::print_comparisons(candidate_ns, &results);
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! compare_hs_bench {
     ($func:expr, $threads:expr, $iters_per_batch:expr, $num_batches:expr) => {
-        $crate::with_all_allocators!($crate::compare_hs_bench_impl!($func, $threads, $iters_per_batch, $num_batches))
+        $crate::with_all_allocators!(compare_hs_bench_impl; $func, $threads, $iters_per_batch, $num_batches)
     };
 }
 
@@ -644,6 +771,10 @@ impl From<u64> for Nanoseconds {
     fn from(val: u64) -> Nanoseconds {
         Nanoseconds(val)
     }
+}
+
+pub fn short_name(name: &str) -> String {
+    name.chars().take(2).collect()
 }
 
 /// Wrapper to mark raw pointers as Send for cross-thread deallocation

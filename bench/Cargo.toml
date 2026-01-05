@@ -9,10 +9,20 @@ libc = "0.2"
 smalloc = { path = "../smalloc", package = "smmalloc" }
 devutils = { path = "../devutils" }
 thousands = "0.2"
-mimalloc = { version = "*", features = ["v3"] }
-tikv-jemallocator = "0.6"
-snmalloc-rs = "0.3"
-rpmalloc = "0.2"
+
+# For benchmarking other allocators:
+mimalloc = { version = "*", features = ["v3"], optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
+snmalloc-rs = { version = "0.3", optional = true }
+rpmalloc = { version = "0.2", optional = true }
 
 [[bin]]
 name = "bench"
+
+[features]
+
+# For benchmarking other allocators:
+jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]
+snmalloc = ["dep:snmalloc-rs"]
+rpmalloc = ["dep:rpmalloc"]
