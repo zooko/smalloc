@@ -333,17 +333,10 @@ pub mod i {
 
                     #[cfg(any(target_os = "windows", doc))]
                     {
-                        use std::cmp::{min,max};
+                        use std::cmp::max;
 
-                        const WIN32_ADD_COMMIT_BITS: u8 = 20;
-                        const WIN32_MAX_COMMIT_BITS: u8 = 27;
-
-                        // commit at least 1 slot, and at least 1 page, but commit multiple pages/slots worth at a time, but never more than a certain max amount, but it always has to be at least one slot. Got it? Good.
-                        let mut cbits = max(plat::p::SC_FOR_PAGE, sc);
-                        cbits += WIN32_ADD_COMMIT_BITS;
-                        cbits = min(cbits, WIN32_MAX_COMMIT_BITS);
-                        cbits = max(cbits, sc);
-
+                        // commit the larger of 1 slot and 1 page
+                        let cbits = max(plat::p::SC_FOR_PAGE, sc);
                         if curfirstentry_p.trailing_zeros() >= cbits as u32 {
                             //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
                             sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
