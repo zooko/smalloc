@@ -46,20 +46,19 @@ impl Smalloc {
             if smbpval == 0 {
                 let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
                 assert!(sysbp != 0);
-                inner.smbp.store(sysbp.next_multiple_of(BASEPTR_ALIGN), Release);
+                let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
+
+                #[cfg(any(target_os = "windows", doc))]
+                {
+                    let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
+                    sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
+                }
+
+                inner.smbp.store(smbp, Release);
             }
 
             // release the spin lock
             inner.initlock.store(false, Release);
-
-            #[cfg(any(target_os = "windows", doc))]
-            {
-                // This needs to happen at least once but it is okay if it happens more than once so
-                // it is inside the if smbpval == 0 and outside the spin lock:
-                let flharea_p = inner.smbp.load(Acquire);
-                let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
-                sys_commit(flharea_p as *mut u8, size_of_flh_area).unwrap();
-            }
         }
     }
 }
@@ -332,10 +331,21 @@ pub mod i {
 
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
+                    const WIN32_COMMIT_BITS: u32 = 17;
+                    use std::cmp::max;
                     #[cfg(any(target_os = "windows", doc))]
-                    sys_commit(curfirstentry_p as *mut u8, 4).unwrap();
+                    {
+                        let cbits = max(WIN32_COMMIT_BITS, sc as u32);
+                        if curfirstentry_p.trailing_zeros() >= cbits {
+                            sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
+                        }
+                    }
+
+                    //xxxeprintln!("in inner_alloc, about to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
 
                     let curfirstentrylink_v = unsafe { *(curfirstentry_p as *mut u32) };
+                    //xxx we could early detect that this is invalid if it is > sentinel
+                    //xxxeprintln!("in inner_alloc, succeeded to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
                     let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, sentinel_slotnum);
 
                     // Put the new first entry slot num in place of the old in our local (in a
@@ -352,9 +362,6 @@ pub mod i {
                             // The slabnum changed. Save the new slabnum for next time.
                             set_slab_num(slabnum);
                         }
-
-                        #[cfg(any(target_os = "windows", doc))]
-                        sys_commit(curfirstentry_p as *mut u8, 1 << sc).unwrap();
 
                         break curfirstentry_p as *mut u8;
                     } else {

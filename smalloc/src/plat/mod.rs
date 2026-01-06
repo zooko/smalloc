@@ -27,7 +27,6 @@ pub mod p {
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         //eprintln!("about to alloc {reqsize}");
         let p = unsafe {
-            //VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_READWRITE)
             VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_NOACCESS)
         };
 
@@ -36,28 +35,28 @@ pub mod p {
             Ok(p as *mut u8)
         } else {
             let error = unsafe { GetLastError() };
-            println!("VirtualAlloc failed with error code: {}", error);
+            eprintln!("VirtualAlloc reserve failed with error code: {}", error); // xxx cant do as allocator
 
-            //eprintln!("Failed to alloc {reqsize}");
+            //println!("Failed to alloc {reqsize}");
             Err(AllocFailed)
         }
     }
 
     #[allow(unsafe_code)]
-    pub fn sys_commit(p: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
-        //eprintln!("about to commit {reqsize}");
-        let p = unsafe {
-            VirtualAlloc(p as *mut c_void, reqsize, MEM_COMMIT, PAGE_READWRITE)
+    pub fn sys_commit(pin: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
+        //eprintln!("about to commit {pin:p}, {reqsize}");
+        let pout = unsafe {
+            VirtualAlloc(pin as *mut c_void, reqsize, MEM_COMMIT, PAGE_READWRITE)
         };
 
-        if !p.is_null() {
-            //eprintln!("succeeded to commit {reqsize}");
-            Ok(p as *mut u8)
+        if !pout.is_null() {
+            //eprintln!("succeeded to commit {pin:p}, {reqsize}");
+            Ok(pout as *mut u8)
         } else {
             let error = unsafe { GetLastError() };
-            println!("VirtualAlloc failed with error code: {}", error);
+            println!("VirtualAlloc commit failed with error code: {}", error); // xxx cant do as allocator
 
-            //eprintln!("Failed to commit {reqsize}");
+            //eprintln!("failed to commit {pin:p}, {reqsize}");
             Err(AllocFailed)
         }
     }

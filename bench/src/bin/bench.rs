@@ -77,7 +77,7 @@ pub fn main() {
             compare_mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
             compare_mt_bench!(ad, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
-            compare_mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
+            // compare_mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed); // This one causes the default allocator on Windows to return NULL pointer.
             // compare_mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed); // This one reliably crashes the default allocator on Macos, so it is commented out.
         }
         
