@@ -21,7 +21,8 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     debug_assert!(first_i <= u32::MAX as usize);
 
     let mut i = first_i;
-    sm.help_set_flh_singlethreaded(sc, i as u32, slabnum, true);
+    sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
+    sm.help_commit_slots(slabnum, sc, i as u32, 2); // last slot is sentinel
 
     // Step 1: allocate a slot and store it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -104,7 +105,7 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
     }
 
     // Step 3: Allocate another slot and store it in local variables:
@@ -154,7 +155,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
     }
 
     // Step 2: reach into each slab's `flh` of the *next* sizeclass and set it to the max slot
@@ -162,7 +163,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let sc_next = sc + 1;
     let numslots_next = help_numslots(sc_next);
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc_next, (numslots_next - 1) as u32, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc_next, (numslots_next - 1) as u32, slabnum);
     }
 
     // Step 3: Allocate another slot and store it in local variables:
@@ -212,7 +213,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
     }
 
     // Step 2: Allocate another slot and store it in local variables:
@@ -245,7 +246,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     // Step 4: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
     }
 
     // Step 5: Allocate another slot and store it in local variables:
@@ -509,7 +510,7 @@ nextest_unit_tests! {
         // Step 0: reach into each slab's `flh` and set it to the max slot number (which means the
         // free list is empty).
         for slabnum in 0..NUM_SLABS {
-            sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum, false);
+            sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
         }
 
         // Step 1: allocate a slot
@@ -531,7 +532,7 @@ nextest_unit_tests! {
         // Step 0: reach into the current slab's `flh` and set it to the max slot number (which
         // means the free list is empty).
         let slabnum = get_slabnum();
-        sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum, false);
+        sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot
         let p1 = unsafe { sm.alloc(l) };
@@ -576,7 +577,7 @@ nextest_unit_tests! {
 }
 
 impl Smalloc {
-    fn help_set_flh_singlethreaded(&self, sc: u8, slotnum: u32, slabnum: u8, commit: bool) {
+    fn help_set_flh_singlethreaded(&self, sc: u8, slotnum: u32, slabnum: u8) {
         debug_assert!(sc >= NUM_UNUSED_SCS, "{sc}");
         debug_assert!(sc < NUM_SCS);
 
@@ -586,27 +587,22 @@ impl Smalloc {
 
         let flhi = NUM_SCS as usize * slabnum as usize + sc as usize;
         let flhptr = smbp | flhi << 3;
-        //eprintln!("in help_set_flh_singlethreaded, flhptr: {flhptr:b}/{flhptr:x}");
         let flha = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
         // single threaded so don't bother with the counter
         flha.store(slotnum as u64, Relaxed);
-        //eprintln!("in help_set_flh_singlethreaded, flhptr: {flhptr:b}/{flhptr:x} written");
+    }
 
-        if commit {
-            #[cfg(any(target_os = "windows", doc))]
-            {
-                let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SLOTNUM_AND_DATA_BITS) | (slotnum as usize) << sc;
+    fn help_commit_slots(&self, slabnum: u8, sc: u8, firstslotnum: u32, numslots: u32) {
+        #[cfg(any(target_os = "windows", doc))]
+        {
+            let inner = self.inner();
+            let smbp = inner.smbp.load(Acquire);
+            let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SLOTNUM_AND_DATA_BITS) | (firstslotnum as usize) << sc;
 
-                //eprintln!("in help_set_flh, cfep: {curfirstentry_p:x}/{curfirstentry_p:b}");
-                const WIN32_COMMIT_BITS: u32 = 17;
-                use std::cmp::max;
-                let cbits = max(WIN32_COMMIT_BITS, sc as u32);
-
-                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
-            }
+            let commit_size = (1usize << sc) * numslots as usize;
+            sys_commit(curfirstentry_p as *mut u8, commit_size).unwrap();
         }
-
     }
 
     /// Return the sizeclass, slabnum, and slotnum
