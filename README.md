@@ -825,6 +825,18 @@ Smalloc v6.0.4 has the following lines counts:
 (I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
 each of them.)
 
+Smalloc v7.4.9 (git commit 6ed1ae401b0ff29df3e2b14d4e86448eec1b6c2f) has the following lines counts:
+* docs and comments: 1568
+* implementation loc: 286 (excluding debug_asserts)
+* tests loc: 760
+* benches loc: 669
+
+This is the last version of `smalloc` before adding Windows support and it is probably the fewest
+lines of code `smalloc` will ever be!
+
+(I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
+each of them.)
+
 ## License
 
 Licensed under any of:
