@@ -42,6 +42,7 @@ pub mod p {
         }
     }
 
+    #[cfg(any(target_os = "windows", doc))]
     #[allow(unsafe_code)]
     pub fn sys_commit(pin: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
         //eprintln!("about to commit {pin:p}, {reqsize}");

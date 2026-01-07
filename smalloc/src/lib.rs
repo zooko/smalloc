@@ -250,8 +250,13 @@ pub mod i {
             const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
             let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SLOTNUM_AND_DATA_BITS - FLHWORD_SIZE_BITS);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+
             let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
 
+            #[cfg(target_os = "windows")]
+            // On windows we need one bit to indicate whether the slot has been COMMITted.
+            let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
+            #[cfg(not(target_os = "windows"))]
             let sentinel_slotnum = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS - sc, u32);
 
             loop {
@@ -267,7 +272,13 @@ pub mod i {
                 debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, sentinel_slotnum));
 
                 // Write it into the new slot's link
+                #[cfg(target_os = "windows")]
+                // Set the high bit to indicate that this slot has already been COMMITted.
+                unsafe { *(p_addr as *mut u32) = next_entry_link | FLHWORD_COMMITTED_BIT };
+
+                #[cfg(not(target_os = "windows"))]
                 unsafe { *(p_addr as *mut u32) = next_entry_link };
+
 
                 // Increment the push counter
                 let counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
@@ -313,6 +324,10 @@ pub mod i {
                 let flhword = flh.load(Acquire);
                 let curfirstentryslotnum = (flhword & FLHWORD_SLOTNUM_MASK) as u32;
 
+                #[cfg(target_os = "windows")]
+                // On windows we need one bit to indicate whether the slot has been COMMITted.
+                let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
+                #[cfg(not(target_os = "windows"))]
                 let sentinel_slotnum = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS - sc, u32);
 
                 // curfirstentryslotnum can be the sentinel value.
@@ -333,13 +348,15 @@ pub mod i {
 
                     #[cfg(any(target_os = "windows", doc))]
                     {
-                        use std::cmp::max;
+                        if !(flhword & FLHWORD_COMMITTED_BIT) {
+                            use std::cmp::max;
 
-                        // commit the larger of 1 slot and 1 page
-                        let cbits = max(plat::p::SC_FOR_PAGE, sc);
-                        if curfirstentry_p.trailing_zeros() >= cbits as u32 {
-                            //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
-                            sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
+                            // commit the larger of 1 slot and 1 page
+                            let cbits = max(plat::p::SC_FOR_PAGE, sc);
+                            if curfirstentry_p.trailing_zeros() >= cbits as u32 {
+                                //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
+                                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
+                            }
                         }
                     }
 
@@ -455,6 +472,9 @@ const FLHWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh words
 const FLHWORD_PUSH_COUNTER_MASK: u64 = gen_mask!(32, u64) << 32;
 const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
 const FLHWORD_SLOTNUM_MASK: u64 = gen_mask!(32, u64);
+
+#[cfg(target_os = "windows")]
+const FLHWORD_COMMITTED_BIT: u64 = 1 << 31;
 
 // ---- Constants for calculating the total virtual address space to reserve ----
 

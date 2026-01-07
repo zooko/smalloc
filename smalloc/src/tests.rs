@@ -22,6 +22,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
     let mut i = first_i;
     sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
+    #[cfg(target_os = "windows")]
     sm.help_commit_slots(slabnum, sc, i as u32, 2); // last slot is sentinel
 
     // Step 1: allocate a slot and store it in local variables:
@@ -593,8 +594,8 @@ impl Smalloc {
         flha.store(slotnum as u64, Relaxed);
     }
 
+    #[cfg(any(target_os = "windows", doc))]
     fn help_commit_slots(&self, slabnum: u8, sc: u8, firstslotnum: u32, numslots: u32) {
-        #[cfg(any(target_os = "windows", doc))]
         {
             let inner = self.inner();
             let smbp = inner.smbp.load(Acquire);
