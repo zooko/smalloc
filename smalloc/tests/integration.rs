@@ -7,6 +7,17 @@ use devutils::nextest_integration_tests;
 use devutils::get_devsmalloc;
 
 nextest_integration_tests! {
+    /// This reproduces a bug in the Windows support in which dealloc incorrectly marked a slot as
+    /// COMMITted.
+    fn pop_push_pop_pop() {
+        let sm = get_devsmalloc!();
+        let l = Layout::from_size_align(65536, 1).unwrap();
+        let p = unsafe { sm.alloc(l) };
+        unsafe { sm.dealloc(p, l) };
+        unsafe { sm.alloc(l) };
+        unsafe { sm.alloc(l) };
+    }
+
     /// This reproduces a bug in `platform::plat::sys_realloc()` /
     /// `_sys_realloc_if_vm_remap_did_what_i_want()` (or possibly in MacOS's `mach_vm_remap()`) that
     /// was uncovered by tests::threads_1_large_alloc_dealloc_realloc_x()

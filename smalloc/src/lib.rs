@@ -254,6 +254,8 @@ pub mod i {
             let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
 
             #[cfg(target_os = "windows")]
+            use std::cmp::min;
+            #[cfg(target_os = "windows")]
             // On windows we need one bit to indicate whether the slot has been COMMITted.
             let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
             #[cfg(not(target_os = "windows"))]
@@ -267,23 +269,30 @@ pub mod i {
                 // The curfirstentryslotnum can be the sentinel slotnum.
                 debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
+                #[cfg(target_os = "windows")]
+                let curcommitbit = flhword as u32 & ENTRY_COMMITTED_BIT;
+
                 // Encode the curfirstentryslotnum as the next-entry link for the new entry
                 let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, sentinel_slotnum);
                 debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, sentinel_slotnum));
 
                 // Write it into the new slot's link
                 #[cfg(target_os = "windows")]
-                // Set the high bit to indicate that this slot has already been COMMITted.
-                unsafe { *(p_addr as *mut u32) = next_entry_link | FLHWORD_COMMITTED_BIT };
+                unsafe { *(p_addr as *mut u32) = curcommitbit | next_entry_link };
 
                 #[cfg(not(target_os = "windows"))]
                 unsafe { *(p_addr as *mut u32) = next_entry_link };
-
 
                 // Increment the push counter
                 let counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
 
                 // The new flhword is made up of the push counter and the newslotnum:
+
+                #[cfg(target_os = "windows")]
+                // We know the memory that just got freed has already been committed.
+                let newflhword = counter | ENTRY_COMMITTED_BIT as u64 | newslotnum as u64;
+
+                #[cfg(not(target_os = "windows"))]
                 let newflhword = counter | newslotnum as u64;
 
                 // Compare and exchange
@@ -291,6 +300,40 @@ pub mod i {
                     break;
                 }
             }
+        }
+
+        #[inline(always)]
+        /// Read the 4-byte next-entry code from this entry. Return (commit_bit, next_entry_code)
+        fn read_entry(flhword: u64, entry_p: usize, sc: u8) -> (u32, u32) {
+            #[cfg(target_os = "windows")]
+            {
+                if unlikely((flhword as u32 & ENTRY_COMMITTED_BIT) == 0) {
+                    //eprintln!("in ia, uncommitted: slabnum: {slabnum}, sc: {sc}, curfirstentryslotnum: {curfirstentryslotnum}");
+                    use std::cmp::max;
+
+                    // commit the larger of 1 slot and 1 page
+                    let cbits = max(plat::p::SC_FOR_PAGE, sc);
+                    if unlikely(entry_p.trailing_zeros() >= cbits as u32) {
+                        //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
+                        sys_commit(entry_p as *mut u8, 1 << cbits).unwrap();
+
+                        // if it was uncommitted then we don't need to read it -- we know the next entry code is 0.
+                        //eprintln!("in read_entry, read of uncommitted flhword: {flhword:b}, entry_p: {entry_p:x}/{entry_p:b}, sc: {sc}");
+                        return (0, 0);
+                    }
+                }
+            }
+
+            //eprintln!("in inner_alloc, about to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
+
+            //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b} READ!");
+            let cfe_v = unsafe { *(entry_p as *mut u32) };
+
+            #[cfg(target_os = "windows")]
+            return (cfe_v & ENTRY_COMMITTED_BIT, cfe_v & ENTRY_CODEWORD_MASK);
+
+            #[cfg(not(target_os = "windows"))]
+            return (0, cfe_v & ENTRY_CODEWORD_MASK);
         }
 
         #[inline(always)]
@@ -325,6 +368,8 @@ pub mod i {
                 let curfirstentryslotnum = (flhword & FLHWORD_SLOTNUM_MASK) as u32;
 
                 #[cfg(target_os = "windows")]
+                use std::cmp::min;
+                #[cfg(target_os = "windows")]
                 // On windows we need one bit to indicate whether the slot has been COMMITted.
                 let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
                 #[cfg(not(target_os = "windows"))]
@@ -346,43 +391,33 @@ pub mod i {
 
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
-                    #[cfg(any(target_os = "windows", doc))]
-                    {
-                        if !(flhword & FLHWORD_COMMITTED_BIT) {
-                            use std::cmp::max;
+                    let (next_entry_committed_bit, next_entry_code) = Self::read_entry(flhword, curfirstentry_p, sc);
 
-                            // commit the larger of 1 slot and 1 page
-                            let cbits = max(plat::p::SC_FOR_PAGE, sc);
-                            if curfirstentry_p.trailing_zeros() >= cbits as u32 {
-                                //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
-                                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
-                            }
-                        }
+                    // Early-detect that this is invalid (it is user data) if it is > sentinel
+                    if unlikely(next_entry_code > sentinel_slotnum) {
+                        //eprintln!("in ia, early detect");
+                        continue;
                     }
 
-                    //xxxeprintln!("in inner_alloc, about to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
-
-                    //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b} READ!");
-                    let curfirstentrylink_v = unsafe { *(curfirstentry_p as *mut u32) };
-                    //xxx we could early detect that this is invalid if it is > sentinel
-                    //xxxeprintln!("in inner_alloc, succeeded to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
-                    let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, curfirstentrylink_v, sentinel_slotnum);
+                    //eprintln!("in inner_alloc, succeeded to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
+                    let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, next_entry_code, sentinel_slotnum);
 
                     // Put the new first entry slot num in place of the old in our local (in a
                     // register) copy of flhword, leaving the push-counter bits unchanged.
-                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | newfirstentryslotnum as u64;
+                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry_committed_bit as u64 | newfirstentryslotnum as u64;
 
                     // Compare and exchange
                     if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
                         debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
                         debug_assert!(newfirstentryslotnum <= sentinel_slotnum);
-                        debug_assert!(Self::encode_next_entry_link(curfirstentryslotnum, newfirstentryslotnum, sentinel_slotnum) == curfirstentrylink_v);
+                        debug_assert!(Self::encode_next_entry_link(curfirstentryslotnum, newfirstentryslotnum, sentinel_slotnum) == next_entry_code);
 
                         if unlikely(slabnum != orig_slabnum) {
                             // The slabnum changed. Save the new slabnum for next time.
                             set_slab_num(slabnum);
                         }
 
+                        //eprintln!("in ia, returning {curfirstentry_p:x}/{curfirstentry_p:b}");
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
@@ -467,14 +502,20 @@ const SLOTNUM_AND_DATA_ADDR_MASK: u64 = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS, u64
 
 const FLHWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh words
 
-// ---- Constants having to do with the use of flh words ----
+// ---- Constants having to do with the use of flh words and free list entries ----
 
 const FLHWORD_PUSH_COUNTER_MASK: u64 = gen_mask!(32, u64) << 32;
 const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
+
+#[cfg(target_os = "windows")]
+const FLHWORD_SLOTNUM_MASK: u64 = gen_mask!(31, u64);
+#[cfg(not(target_os = "windows"))]
 const FLHWORD_SLOTNUM_MASK: u64 = gen_mask!(32, u64);
 
 #[cfg(target_os = "windows")]
-const FLHWORD_COMMITTED_BIT: u64 = 1 << 31;
+const ENTRY_COMMITTED_BIT: u32 = 1 << 31;
+
+const ENTRY_CODEWORD_MASK: u32 = FLHWORD_SLOTNUM_MASK as u32;
 
 // ---- Constants for calculating the total virtual address space to reserve ----
 

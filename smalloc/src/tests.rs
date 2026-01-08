@@ -21,9 +21,14 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     debug_assert!(first_i <= u32::MAX as usize);
 
     let mut i = first_i;
-    sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
     #[cfg(target_os = "windows")]
-    sm.help_commit_slots(slabnum, sc, i as u32, 2); // last slot is sentinel
+    {
+        const FLHWORD_COMMITTED_BIT: u32 = 1 << 31;
+        sm.help_commit_slots(slabnum, sc, i as u32, 2); // last slot is sentinel so we aren't going to actually touch its memory
+        sm.help_set_flh_singlethreaded(sc, i as u32 | FLHWORD_COMMITTED_BIT, slabnum);
+    }
+    #[cfg(not(target_os = "windows"))]
+    sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
 
     // Step 1: allocate a slot and store it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -596,14 +601,13 @@ impl Smalloc {
 
     #[cfg(any(target_os = "windows", doc))]
     fn help_commit_slots(&self, slabnum: u8, sc: u8, firstslotnum: u32, numslots: u32) {
-        {
-            let inner = self.inner();
-            let smbp = inner.smbp.load(Acquire);
-            let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SLOTNUM_AND_DATA_BITS) | (firstslotnum as usize) << sc;
+        //xxxeprintln!("in help_commit_slots, committing: slabnum: {slabnum}, sc: {sc}, firstslotnum: {firstslotnum}, numslots: {numslots}");
+        let inner = self.inner();
+        let smbp = inner.smbp.load(Acquire);
+        let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SLOTNUM_AND_DATA_BITS) | (firstslotnum as usize) << sc;
 
-            let commit_size = (1usize << sc) * numslots as usize;
-            sys_commit(curfirstentry_p as *mut u8, commit_size).unwrap();
-        }
+        let commit_size = (1usize << sc) * numslots as usize;
+        sys_commit(curfirstentry_p as *mut u8, commit_size).unwrap();
     }
 
     /// Return the sizeclass, slabnum, and slotnum
@@ -625,7 +629,13 @@ impl Smalloc {
 }
 
 fn help_numslots(sc: u8) -> usize {
-    help_pow2_usize(NUM_SLOTNUM_AND_DATA_BITS - sc)
+    #[cfg(target_os = "windows")]
+    use std::cmp::min;
+    #[cfg(target_os = "windows")]
+    return help_pow2_usize(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc));
+
+    #[cfg(not(target_os = "windows"))]
+    return help_pow2_usize(NUM_SLOTNUM_AND_DATA_BITS - sc);
 }
 
 fn help_slotsize(sc: u8) -> usize {

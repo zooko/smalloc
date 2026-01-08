@@ -15,19 +15,20 @@ impl fmt::Display for AllocFailed {
 #[cfg(any(target_os = "windows", doc))]
 pub mod p {
     use super::AllocFailed;
-    use windows_sys::Win32::System::Memory::{VirtualAlloc, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PAGE_NOACCESS};
+    use windows_sys::Win32::System::Memory::{VirtualAlloc2, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PAGE_NOACCESS};
+    const MEM_64K_PAGES: u32 = 0x20400000;
     use windows_sys::Win32::Foundation::GetLastError;
     use core::ffi::c_void;
+    use core::ptr::null_mut;
 
-    // The size class necessary to hold a memory page, since memory pages on Windows (except in 
-    // cases of "large pages") are 4 KiB.
-    pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(4096, 4096);
+    // The size class necessary to hold a memory page, since we're using 64 KiB pages:
+    pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(65_536, 65_536);
 
     #[allow(unsafe_code)]
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         //eprintln!("about to alloc {reqsize}");
         let p = unsafe {
-            VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_NOACCESS)
+            VirtualAlloc2(null_mut(), std::ptr::null(), reqsize, MEM_RESERVE, PAGE_NOACCESS, null_mut(), 0)
         };
 
         if !p.is_null() {
@@ -47,7 +48,7 @@ pub mod p {
     pub fn sys_commit(pin: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
         //eprintln!("about to commit {pin:p}, {reqsize}");
         let pout = unsafe {
-            VirtualAlloc(pin as *mut c_void, reqsize, MEM_COMMIT, PAGE_READWRITE)
+            VirtualAlloc2(null_mut(), pin as *mut c_void, reqsize, MEM_COMMIT | MEM_64K_PAGES, PAGE_READWRITE, null_mut(), 0)
         };
 
         if !pout.is_null() {
