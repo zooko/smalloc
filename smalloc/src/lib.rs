@@ -116,7 +116,7 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(reqali_to_sc(oldsize, oldalignment) >= NUM_UNUSED_SCS);
         debug_assert!(reqali_to_sc(oldsize, oldalignment) < NUM_SCS);
 
-        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
         debug_assert!(oldsc >= NUM_UNUSED_SCS);
         debug_assert!(oldsc < NUM_SCS);
         debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
@@ -169,60 +169,6 @@ pub mod i {
     // Everything in this `i` ("internal") module is for the use of the smalloc core lib (this file)
     // and for the use of the smalloc-ffi package.
 
-    // --- Fixed constants chosen for the design ---
-
-    // NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
-    // because that means there are 32 size classes, and the first one (that is used -- see below)
-    // has 2^32 slots. This is the largest number of slots that we can encode their slot numbers
-    // into a 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more
-    // allocations of 1, 2, 3, or 4 bytes into each cache line.
-    pub const NUM_SC_BITS: u8 = 5;
-
-    // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
-    pub const NUM_SLABS_BITS: u8 = 5;
-
-    // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
-    // we re-use that unused space to hold flh's.
-    pub const NUM_UNUSED_SCS: u8 = 2;
-
-
-    // --- Constants determined by the constants above ---
-
-    // See the ASCII-art map in `README.md` for where these bits fit into addresses.
-
-    pub const NUM_SCS: u8 = 1 << NUM_SC_BITS; // 32
-
-    pub const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS, usize); // 0b11
-
-    // This is how many bits hold the data and the slotnum:
-    pub const NUM_SLOTNUM_AND_DATA_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
-
-    pub const SLABNUM_BITS_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b11111
-
-    // This is how many bits to shift a slabnum to fit it into a slot/data address:
-    pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SLOTNUM_AND_DATA_BITS + NUM_SC_BITS; // 39
-
-    // Mask of the bits of the slabnum in a slot's or data byte's address:
-    pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_BITS_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b11111000000000000000000000000000000000000000
-
-    // Mask of the bits of the sizeclass in a slot's address:
-    pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SLOTNUM_AND_DATA_BITS; // 0b111110000000000000000000000000000000000
-
-    // The following constants are just for calculating lowest and highest addresses which are used
-    // for bounds checking, and also used to calculate the total virtual memory address space we
-    // need to reserve.
-    
-    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << (NUM_UNUSED_SCS + 1); // 8
-    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 6; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
-
-    pub const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
-
-    // The smalloc address of the slot with the lowest address is:
-    pub const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << NUM_SLOTNUM_AND_DATA_BITS; // 0b100000000000000000000000000000000000
-
-    // The smalloc address of the slot with the highest address is:
-    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
-
     pub struct SmallocInner {
         pub smbp: AtomicUsize,
         pub initlock: AtomicBool
@@ -240,7 +186,7 @@ pub mod i {
             // Okay now we know that it is a pointer into smalloc's region.
 
             // The sizeclass is encoded into the most-significant bits of the address:
-            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
             debug_assert!(sc >= NUM_UNUSED_SCS);
             debug_assert!(sc < NUM_SCS);
 
@@ -248,89 +194,36 @@ pub mod i {
             // by masking in the slabnum and sizeclass bits from the address and shifting them
             // right:
             const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
-            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SLOTNUM_AND_DATA_BITS - FLHWORD_SIZE_BITS);
+            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
             let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
-
-            #[cfg(target_os = "windows")]
-            use std::cmp::min;
-            #[cfg(target_os = "windows")]
-            // On windows we need one bit to indicate whether the slot has been COMMITted.
-            let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
-            #[cfg(not(target_os = "windows"))]
-            let sentinel_slotnum = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS - sc, u32);
+            let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
+            debug_assert!(newslotnum < sentinel_slotnum);
 
             loop {
-                // Load the value (current first entry slotnum) from the flh
+                // Load the value (current first entry slotnum and next-entry-touched bit) from the flh
                 let flhword = flh.load(Relaxed);
-                let curfirstentryslotnum = (flhword & FLHWORD_SLOTNUM_MASK) as u32;
-                debug_assert!(newslotnum != curfirstentryslotnum);
+
+                // The low-order 4-byte word is the slotnum and the touched-bit of the first entry
+                let curfirstentry = flhword as u32;
+
+                debug_assert!(newslotnum != curfirstentry & ENTRY_SLOTNUM_MASK);
                 // The curfirstentryslotnum can be the sentinel slotnum.
-                debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
-
-                #[cfg(target_os = "windows")]
-                let curcommitbit = flhword as u32 & ENTRY_COMMITTED_BIT;
-
-                // Encode the curfirstentryslotnum as the next-entry link for the new entry
-                let next_entry_link = Self::encode_next_entry_link(newslotnum, curfirstentryslotnum, sentinel_slotnum);
-                debug_assert!(curfirstentryslotnum == Self::decode_next_entry_link(newslotnum, next_entry_link, sentinel_slotnum));
+                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
 
                 // Write it into the new slot's link
-                #[cfg(target_os = "windows")]
-                unsafe { *(p_addr as *mut u32) = curcommitbit | next_entry_link };
+                unsafe { *(p_addr as *mut u32) = curfirstentry };
 
-                #[cfg(not(target_os = "windows"))]
-                unsafe { *(p_addr as *mut u32) = next_entry_link };
-
-                // Increment the push counter
-                let counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
-
-                // The new flhword is made up of the push counter and the newslotnum:
-
-                #[cfg(target_os = "windows")]
-                // We know the memory that just got freed has already been committed.
-                let newflhword = counter | ENTRY_COMMITTED_BIT as u64 | newslotnum as u64;
-
-                #[cfg(not(target_os = "windows"))]
-                let newflhword = counter | newslotnum as u64;
+                // The high-order 4-byte word is the push counter. Increment it.
+                let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
+                let newflhword = push_counter | ENTRY_NEXT_TOUCHED_BIT as u64 | newslotnum as u64;
 
                 // Compare and exchange
                 if flh.compare_exchange_weak(flhword, newflhword, Release, Relaxed).is_ok() {
                     break;
                 }
             }
-        }
-
-        #[cfg(any(target_os = "windows", doc))]
-        #[inline(always)]
-        /// Read the 4-byte next-entry code from this entry (if it was already committed), and
-        /// return (next_commit_bit, next_entry_code). If this entry wasn't committed, commit it and
-        /// return(0, 0).
-        fn read_entry(flhword: u64, entry_p: usize, sc: u8) -> (u32, u32) {
-            if unlikely((flhword as u32 & ENTRY_COMMITTED_BIT) == 0) {
-                use std::cmp::max;
-
-                // commit the larger of 1 slot and 1 page
-                let cbits = max(plat::p::SC_FOR_PAGE, sc);
-                if unlikely(entry_p.trailing_zeros() >= cbits as u32) {
-                    sys_commit(entry_p as *mut u8, 1 << cbits).unwrap();
-
-                    // if it was uncommitted then we don't need to read it -- we know the next entry code is 0.
-                    return (0, 0);
-                }
-            }
-
-            let cfe_v = unsafe { *(entry_p as *mut u32) };
-
-            return (cfe_v & ENTRY_COMMITTED_BIT, cfe_v & ENTRY_CODEWORD_MASK);
-        }
-
-        #[cfg(any(not(target_os = "windows"), doc))]
-        #[inline(always)]
-        /// Read the 4-byte next-entry code from this entry, and return (0, next_entry_code).
-        fn read_entry(_flhword: u64, entry_p: usize, _sc: u8) -> (u32, u32) {
-            (0, unsafe { *(entry_p as *mut u32) } & ENTRY_CODEWORD_MASK)
         }
 
         #[inline(always)]
@@ -340,13 +233,8 @@ pub mod i {
 
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
-
             let orig_slabnum = get_slabnum();
-
-            // If the slab is full or we hit multithreading contention, we'll switch to another
-            // slab.
             let mut slabnum = orig_slabnum;
-
             let mut a_slab_was_full = false;
 
             // If all slabs in the sizeclass are full, we'll switch to the next sizeclass.
@@ -362,53 +250,68 @@ pub mod i {
                 // Load the value from the flh
                 let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
                 let flhword = flh.load(Acquire);
-                let curfirstentryslotnum = (flhword & FLHWORD_SLOTNUM_MASK) as u32;
 
-                #[cfg(target_os = "windows")]
-                use std::cmp::min;
-                #[cfg(target_os = "windows")]
-                // On windows we need one bit to indicate whether the slot has been COMMITted.
-                let sentinel_slotnum = gen_mask!(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc), u32);
-                #[cfg(not(target_os = "windows"))]
-                let sentinel_slotnum = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS - sc, u32);
+                // The low-order 4-byte word is the slotnum and touched-bit of the first entry.
+                let curfirstentry = flhword as u32;
 
-                // curfirstentryslotnum can be the sentinel value.
-                debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
+                // The sentinel slotnum for this sizeclass:
+                let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
 
-                if likely(curfirstentryslotnum < sentinel_slotnum) {
+                // The curfirstentry slotnum can be the sentinel slotnum, but not larger.
+                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+
+                // If the curfirstentry next-slotnum is the sentinel slotnum, then the
+                // next-has-been-touched bit must be false. (You can't ever touch -- read or write
+                // the memory of -- the sentinel slot.)
+                debug_assert!(if curfirstentry & ENTRY_SLOTNUM_MASK == sentinel_slotnum { curfirstentry & ENTRY_NEXT_TOUCHED_BIT == 0 } else { true });
+
+                if likely(curfirstentry != sentinel_slotnum) {
                     // There is a slot available in the free list.
-                    
-                    // Read the bits from the first entry's link (to the second entry) and decode
-                    // them into a slot number. These bits might be invalid, if the flh has changed
-                    // since we read it above and another thread has started using this memory for
-                    // something else (e.g. user data or another linked list update). That's okay
-                    // because in that case our attempt to update the flh (since the flh must have
-                    // changed) below will fail, so the invalid bits will not get stored.
-                    let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SLOTNUM_AND_DATA_BITS) | (curfirstentryslotnum as usize) << sc;
+
+                    // Here's the pointer to the current first entry:
+                    let curfirstentryslotnum = curfirstentry & ENTRY_SLOTNUM_MASK;
+                    let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SN_D_T_BITS) | (curfirstentryslotnum as usize) << sc;
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
-                    let (next_entry_committed_bit, next_entry_code) = Self::read_entry(flhword, curfirstentry_p, sc);
+                    let next_entry = if likely((curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0) {
+                        // Read the bits from the first entry's space (which are about the second
+                        // entry). These bits might be invalid, if the flh has changed since we read
+                        // it above and another thread has started using this memory for something
+                        // else (e.g. user data or another linked list update). That's okay because
+                        // in that case our attempt to update the flh (since the flh must have
+                        // changed) below will fail, so information derived from the invalid bits
+                        // will not get stored.
+                        unsafe { *(curfirstentry_p as *mut u32) }
+                    } else {
+                        // If this entry has never been touched (read or written), then its
+                        // next-entry link is equal to its slotnum + 1 (with the touched bit unset).
+                        curfirstentryslotnum + 1
+                    };
 
-                    // Early-detect that this is invalid (it is user data) if it is > sentinel
-                    if unlikely(next_entry_code > sentinel_slotnum) {
-                        continue;
-                    }
-
-                    let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, next_entry_code, sentinel_slotnum);
-
-                    // Put the new first entry slot num in place of the old in our local (in a
-                    // register) copy of flhword, leaving the push-counter bits unchanged.
-                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry_committed_bit as u64 | newfirstentryslotnum as u64;
+                    // Put the new first entry (which is the old second entry) in place of the old
+                    // first entry (which is going to be the return value) in our local copy of
+                    // flhword, leaving the push-counter bits unchanged.
+                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry as u64;
 
                     // Compare and exchange
                     if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
-                        debug_assert!(newfirstentryslotnum != curfirstentryslotnum);
-                        debug_assert!(newfirstentryslotnum <= sentinel_slotnum);
-                        debug_assert!(Self::encode_next_entry_link(curfirstentryslotnum, newfirstentryslotnum, sentinel_slotnum) == next_entry_code);
+                        debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
+                        debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
 
                         if unlikely(slabnum != orig_slabnum) {
                             // The slabnum changed. Save the new slabnum for next time.
                             set_slab_num(slabnum);
+                        }
+
+                        #[cfg(any(target_os = "windows", doc))]
+                        {
+                            use std::cmp::max;
+
+                            // commit the larger of 1 slot and 1 page
+                            let cbits = max(plat::p::SC_FOR_PAGE, sc);
+                            if unlikely(curfirstentry_p.trailing_zeros() >= cbits as u32) {
+                                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
+                            }
                         }
 
                         break curfirstentry_p as *mut u8;
@@ -459,37 +362,71 @@ pub mod i {
         pub fn inner(&self) -> &SmallocInner {
             unsafe { &*self.inner.get() }
         }
-
-        #[inline(always)]
-        pub fn encode_next_entry_link(baseslotnum: u32, targslotnum: u32, sentinel_slotnum: u32) -> u32 {
-            debug_assert!(baseslotnum != targslotnum);
-            // The baseslotnum cannot be the sentinel slotnum.
-            debug_assert!(baseslotnum < sentinel_slotnum);
-            // The targslotnum can be the sentinel slotnum.
-            debug_assert!(targslotnum <= sentinel_slotnum);
-
-            targslotnum.wrapping_sub(baseslotnum).wrapping_sub(1) & sentinel_slotnum
-        }
-
-        #[inline(always)]
-        pub fn decode_next_entry_link(baseslotnum: u32, codeword: u32, sentinel_slotnum: u32) -> u32 {
-            // The baseslotnum cannot be the sentinel slot num.
-            debug_assert!(baseslotnum < sentinel_slotnum);
-
-            baseslotnum.wrapping_add(codeword).wrapping_add(1) & sentinel_slotnum
-        }
     }
+
+    // --- Fixed constants chosen for the design ---
+
+    // NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
+    // because that means there are 32 size classes, and the first one (that is used -- see below)
+    // has 2^32 slots. This is the largest number of slots that we can put their slot numbers into a
+    // 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more
+    // allocations of 1, 2, 3, or 4 bytes into each cache line.
+    pub const NUM_SC_BITS: u8 = 5;
+
+    // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
+    pub const NUM_SLABS_BITS: u8 = 5;
+
+    // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
+    // we re-use that unused space to hold flh's.
+    pub const NUM_UNUSED_SCS: u8 = 2;
+
+
+    // --- Constants determined by the constants above ---
+
+    // See the ASCII-art map in `README.md` for where these bits fit into addresses.
+
+    pub const NUM_SCS: u8 = 1 << NUM_SC_BITS; // 32
+
+    pub const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS, usize); // 0b11
+
+    // This is how many bits hold the data, the slotnum, and the next-touched-bit:
+    pub const NUM_SN_D_T_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
+
+    pub const SLABNUM_BITS_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b11111
+
+    // This is how many bits to shift a slabnum to fit it into a slot/data address:
+    pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SN_D_T_BITS + NUM_SC_BITS; // 39
+
+    // Mask of the bits of the slabnum in a slot's or data byte's address:
+    pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_BITS_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b11111000000000000000000000000000000000000000
+
+    // Mask of the bits of the sizeclass in a slot's address:
+    pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SN_D_T_BITS; // 0b111110000000000000000000000000000000000
+
+    // The following constants are just for calculating lowest and highest addresses which are used
+    // for bounds checking, and also used to calculate the total virtual memory address space we
+    // need to reserve.
+    
+    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << (NUM_UNUSED_SCS + 1); // 8
+    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 6; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
+
+    pub const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
+
+    // The smalloc address of the slot with the lowest address is:
+    pub const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << NUM_SN_D_T_BITS; // 0b100000000000000000000000000000000000
+
+    // The smalloc address of the slot with the highest address is:
+    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
 
     use crate::*;
 }
-
 
 pub use i::*;
 
 
 // ---- Constants having to do with the use of slot (and free list) pointers ----
 
-const SLOTNUM_AND_DATA_ADDR_MASK: u64 = gen_mask!(NUM_SLOTNUM_AND_DATA_BITS, u64); // 0b1111111111111111111111111111111111
+const SLOTNUM_AND_DATA_ADDR_MASK: u64 = gen_mask!(NUM_SN_D_T_BITS, u64); // 0b1111111111111111111111111111111111
 
 // ---- Constants having to do with the use of flh pointers ----
 
@@ -500,15 +437,12 @@ const FLHWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh words
 const FLHWORD_PUSH_COUNTER_MASK: u64 = gen_mask!(32, u64) << 32;
 const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
 
-#[cfg(target_os = "windows")]
-const FLHWORD_SLOTNUM_MASK: u64 = gen_mask!(31, u64);
-#[cfg(not(target_os = "windows"))]
-const FLHWORD_SLOTNUM_MASK: u64 = gen_mask!(32, u64);
+// This is how many bits hold the slotnum for the size class with the most slots (size class 2):
+const NUM_SN_BITS: u8 = NUM_SCS - 1; // 31 // We reserve 1 bit to indicate next-touched
 
-#[cfg(target_os = "windows")]
-const ENTRY_COMMITTED_BIT: u32 = 1 << 31;
+const ENTRY_NEXT_TOUCHED_BIT: u32 = 1 << 31;
 
-const ENTRY_CODEWORD_MASK: u32 = FLHWORD_SLOTNUM_MASK as u32;
+const ENTRY_SLOTNUM_MASK: u32 = gen_mask!(NUM_SN_BITS, u32);
 
 // ---- Constants for calculating the total virtual address space to reserve ----
 

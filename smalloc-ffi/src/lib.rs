@@ -30,7 +30,7 @@ fn classify_ptr(ptr: *mut c_void) -> PtrClass {
     debug_assert!(smbp != 0);
 
     if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
-        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+        let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
 
         debug_assert!(sc >= NUM_UNUSED_SCS);
         debug_assert!(sc < NUM_SCS);
@@ -47,7 +47,7 @@ fn classify_ptr(ptr: *mut c_void) -> PtrClass {
 fn ptr_to_sc(ptr: *mut c_void) -> u8 {
     debug_assert!(ptr.addr() >= SMALLOC.inner().smbp.load(Acquire) + LOWEST_SMALLOC_SLOT_ADDR && ptr.addr() <= SMALLOC.inner().smbp.load(Acquire) + HIGHEST_SMALLOC_SLOT_ADDR);
 
-    let sc = ((ptr.addr() & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS) as u8;
+    let sc = ((ptr.addr() & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
 
     debug_assert!(sc >= NUM_UNUSED_SCS);
     debug_assert!(sc < NUM_SCS);

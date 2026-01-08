@@ -18,17 +18,16 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
     // Step 0: reach into the slab's `flh` and set it to almost the max slot number.
     let first_i = numslots - 3;
-    debug_assert!(first_i <= u32::MAX as usize);
 
     let mut i = first_i;
     #[cfg(target_os = "windows")]
     {
         const FLHWORD_COMMITTED_BIT: u32 = 1 << 31;
-        sm.help_commit_slots(slabnum, sc, i as u32, 2); // last slot is sentinel so we aren't going to actually touch its memory
-        sm.help_set_flh_singlethreaded(sc, i as u32 | FLHWORD_COMMITTED_BIT, slabnum);
+        sm.help_commit_slots(slabnum, sc, i, 2); // last slot is sentinel so we aren't going to actually touch its memory
+        sm.help_set_flh_singlethreaded(sc, i | FLHWORD_COMMITTED_BIT, slabnum);
     }
     #[cfg(not(target_os = "windows"))]
-    sm.help_set_flh_singlethreaded(sc, i as u32, slabnum);
+    sm.help_set_flh_singlethreaded(sc, i, slabnum);
 
     // Step 1: allocate a slot and store it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -36,7 +35,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
     let (sc1, slabnum1, slotnum1) = sm.help_ptr_to_loc(p1);
     assert_eq!(sc1, sc, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}, SLABNUM_ALONE_MASK: {SLABNUM_BITS_ALONE_MASK:b}");
-    assert_eq!(slotnum1 as usize, i, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}");
+    assert_eq!(slotnum1, i, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}");
 
     i += 1;
 
@@ -47,7 +46,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
 
         let (scn, _slabnumn, slotnumn) = sm.help_ptr_to_loc(pt);
         assert_eq!(scn, sc);
-        assert_eq!(slotnumn as usize, i);
+        assert_eq!(slotnumn, i);
 
         i += 1;
     }
@@ -60,7 +59,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     // Assert some things about the two stored slot locations:
     assert_eq!(sc2, sc, "numslots: {numslots}, i: {i}");
     assert_eq!(slabnum1, slabnum2);
-    assert_eq!(slotnum2 as usize, numslots - 2);
+    assert_eq!(slotnum2, numslots - 2);
 
     // Step 4: allocate another slot and store it in local variables:
     let p3 = unsafe { sm.alloc(l) };
@@ -111,7 +110,7 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
+        sm.help_set_flh_singlethreaded(sc, numslots - 1, slabnum);
     }
 
     // Step 3: Allocate another slot and store it in local variables:
@@ -161,7 +160,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
+        sm.help_set_flh_singlethreaded(sc, numslots - 1, slabnum);
     }
 
     // Step 2: reach into each slab's `flh` of the *next* sizeclass and set it to the max slot
@@ -169,7 +168,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let sc_next = sc + 1;
     let numslots_next = help_numslots(sc_next);
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc_next, (numslots_next - 1) as u32, slabnum);
+        sm.help_set_flh_singlethreaded(sc_next, numslots_next - 1, slabnum);
     }
 
     // Step 3: Allocate another slot and store it in local variables:
@@ -219,7 +218,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     // Step 1: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
+        sm.help_set_flh_singlethreaded(sc, numslots - 1, slabnum);
     }
 
     // Step 2: Allocate another slot and store it in local variables:
@@ -252,7 +251,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     // Step 4: reach into each slab's `flh` and set it to the max slot number (which means the
     // free list is empty).
     for slabnum in 0..NUM_SLABS {
-        sm.help_set_flh_singlethreaded(sc, (numslots - 1) as u32, slabnum);
+        sm.help_set_flh_singlethreaded(sc, numslots - 1, slabnum);
     }
 
     // Step 5: Allocate another slot and store it in local variables:
@@ -337,7 +336,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 }
 
 fn highest_slotnum(sc: u8) -> u32 {
-    (1 << (NUM_SLOTNUM_AND_DATA_BITS - sc)) - 1
+    help_numslots(sc) - 1
 }
 
 nextest_unit_tests! {
@@ -547,31 +546,6 @@ nextest_unit_tests! {
         assert_eq!(sc1, sc);
     }
 
-    fn slotnum_encode_and_decode_roundtrip() {
-        for sc in NUM_UNUSED_SCS..NUM_SCS {
-            let numslots = help_numslots(sc);
-            assert!(numslots > 0, "sc: {sc}");
-            assert!(numslots <= 2usize.pow(32), "sc: {sc}");
-
-            let sentinel_slotnum = (numslots - 1) as u32;
-
-            let slotnums = [ 0, 1, 2, 3, 4, numslots.wrapping_sub(4), numslots.wrapping_sub(3), numslots.wrapping_sub(2), numslots.wrapping_sub(1) ];
-            for slotnum1 in slotnums {
-                assert!(slotnum1 < 2usize.pow(32));
-                let slotnum1 = slotnum1 as u32;
-                for slotnum2 in slotnums {
-                    assert!(slotnum2 < 2usize.pow(32));
-                    let slotnum2 = slotnum2 as u32;
-                    if slotnum1 < sentinel_slotnum as u32 && slotnum2 <= sentinel_slotnum && slotnum1 != slotnum2 {
-                        let ence = Smalloc::encode_next_entry_link(slotnum1, slotnum2, sentinel_slotnum);
-                        let dece = Smalloc::decode_next_entry_link(slotnum1, ence, sentinel_slotnum);
-                        assert_eq!(slotnum2, dece, "slotnum1: {slotnum1}, ence: {ence}, sc: {sc}");
-                    }
-                }
-            }
-        }
-    }
-
     fn a_few_allocs_and_a_dealloc_for_each_slab() {
         // Doesn't work for the largest size class (sc 31) because there aren't 3 slots.
         let sm = get_testsmalloc();
@@ -619,7 +593,7 @@ impl Smalloc {
         assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR));
 
         let slabnum = (p_addr & SLABNUM_BITS_ADDR_MASK) >> SLABNUM_ADDR_SHIFT_BITS;
-        let sc = (p_addr & SC_BITS_ADDR_MASK) >> NUM_SLOTNUM_AND_DATA_BITS;
+        let sc = (p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS;
         let slotnum = (p_addr & SLOTNUM_AND_DATA_ADDR_MASK as usize) >> sc;
         debug_assert!(slabnum < NUM_SLABS as usize);
 
@@ -628,14 +602,8 @@ impl Smalloc {
 
 }
 
-fn help_numslots(sc: u8) -> usize {
-    #[cfg(target_os = "windows")]
-    use std::cmp::min;
-    #[cfg(target_os = "windows")]
-    return help_pow2_usize(min(31, NUM_SLOTNUM_AND_DATA_BITS - sc));
-
-    #[cfg(not(target_os = "windows"))]
-    return help_pow2_usize(NUM_SLOTNUM_AND_DATA_BITS - sc);
+fn help_numslots(sc: u8) -> u32 {
+    1 << (NUM_SN_BITS - (sc - NUM_UNUSED_SCS))
 }
 
 fn help_slotsize(sc: u8) -> usize {
