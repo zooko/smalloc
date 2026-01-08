@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "bench"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "devutils",
  "libc",
@@ -14,6 +14,7 @@ dependencies = [
  "snmalloc-rs",
  "thousands",
  "tikv-jemallocator",
+ "windows-sys",
 ]
 
 [[package]]
@@ -43,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "devutils"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "smmalloc",
  "wyhash",
@@ -74,16 +75,17 @@ checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "find_max_vm_addresses_reservable"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "mach-sys",
  "rustix",
  "thousands",
+ "windows-sys",
 ]
 
 [[package]]
 name = "hellosmalloc"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "smmalloc",
 ]
@@ -181,18 +183,19 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "smalloc-ffi"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "smmalloc",
 ]
 
 [[package]]
 name = "smmalloc"
-version = "7.4.9"
+version = "7.5.0"
 dependencies = [
  "devutils",
  "mach-sys",
  "rustix",
+ "windows-sys",
 ]
 
 [[package]]
@@ -241,15 +244,15 @@ dependencies = [
 
 [[package]]
 name = "windows-link"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45e46c0661abb7180e7b9c281db115305d49ca1709ab8242adf09666d2173c65"
+checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 
 [[package]]
 name = "windows-sys"
-version = "0.61.0"
+version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e201184e40b2ede64bc2ea34968b28e33622acdbbf37104f0e4a33f7abe657aa"
+checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
