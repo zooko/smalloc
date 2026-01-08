@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "bench"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "devutils",
  "libc",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "devutils"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "smmalloc",
  "wyhash",
@@ -75,7 +75,7 @@ checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "find_max_vm_addresses_reservable"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "mach-sys",
  "rustix",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "hellosmalloc"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "smmalloc",
 ]
@@ -183,14 +183,14 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "smalloc-ffi"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "smmalloc",
 ]
 
 [[package]]
 name = "smmalloc"
-version = "7.5.0"
+version = "7.5.2"
 dependencies = [
  "devutils",
  "mach-sys",
