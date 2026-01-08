@@ -302,38 +302,35 @@ pub mod i {
             }
         }
 
+        #[cfg(any(target_os = "windows", doc))]
         #[inline(always)]
-        /// Read the 4-byte next-entry code from this entry. Return (commit_bit, next_entry_code)
+        /// Read the 4-byte next-entry code from this entry (if it was already committed), and
+        /// return (next_commit_bit, next_entry_code). If this entry wasn't committed, commit it and
+        /// return(0, 0).
         fn read_entry(flhword: u64, entry_p: usize, sc: u8) -> (u32, u32) {
-            #[cfg(target_os = "windows")]
-            {
-                if unlikely((flhword as u32 & ENTRY_COMMITTED_BIT) == 0) {
-                    //eprintln!("in ia, uncommitted: slabnum: {slabnum}, sc: {sc}, curfirstentryslotnum: {curfirstentryslotnum}");
-                    use std::cmp::max;
+            if unlikely((flhword as u32 & ENTRY_COMMITTED_BIT) == 0) {
+                use std::cmp::max;
 
-                    // commit the larger of 1 slot and 1 page
-                    let cbits = max(plat::p::SC_FOR_PAGE, sc);
-                    if unlikely(entry_p.trailing_zeros() >= cbits as u32) {
-                        //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}, cbits: {cbits}");
-                        sys_commit(entry_p as *mut u8, 1 << cbits).unwrap();
+                // commit the larger of 1 slot and 1 page
+                let cbits = max(plat::p::SC_FOR_PAGE, sc);
+                if unlikely(entry_p.trailing_zeros() >= cbits as u32) {
+                    sys_commit(entry_p as *mut u8, 1 << cbits).unwrap();
 
-                        // if it was uncommitted then we don't need to read it -- we know the next entry code is 0.
-                        //eprintln!("in read_entry, read of uncommitted flhword: {flhword:b}, entry_p: {entry_p:x}/{entry_p:b}, sc: {sc}");
-                        return (0, 0);
-                    }
+                    // if it was uncommitted then we don't need to read it -- we know the next entry code is 0.
+                    return (0, 0);
                 }
             }
 
-            //eprintln!("in inner_alloc, about to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
-
-            //eprintln!("in  inner_alloc, curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b} READ!");
             let cfe_v = unsafe { *(entry_p as *mut u32) };
 
-            #[cfg(target_os = "windows")]
             return (cfe_v & ENTRY_COMMITTED_BIT, cfe_v & ENTRY_CODEWORD_MASK);
+        }
 
-            #[cfg(not(target_os = "windows"))]
-            return (0, cfe_v & ENTRY_CODEWORD_MASK);
+        #[cfg(any(not(target_os = "windows"), doc))]
+        #[inline(always)]
+        /// Read the 4-byte next-entry code from this entry, and return (0, next_entry_code).
+        fn read_entry(_flhword: u64, entry_p: usize, _sc: u8) -> (u32, u32) {
+            (0, unsafe { *(entry_p as *mut u32) } & ENTRY_CODEWORD_MASK)
         }
 
         #[inline(always)]
@@ -388,18 +385,15 @@ pub mod i {
                     // because in that case our attempt to update the flh (since the flh must have
                     // changed) below will fail, so the invalid bits will not get stored.
                     let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SLOTNUM_AND_DATA_BITS) | (curfirstentryslotnum as usize) << sc;
-
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
                     let (next_entry_committed_bit, next_entry_code) = Self::read_entry(flhword, curfirstentry_p, sc);
 
                     // Early-detect that this is invalid (it is user data) if it is > sentinel
                     if unlikely(next_entry_code > sentinel_slotnum) {
-                        //eprintln!("in ia, early detect");
                         continue;
                     }
 
-                    //eprintln!("in inner_alloc, succeeded to read from curfirstentry_p: {curfirstentry_p:x}/{curfirstentry_p:b}");
                     let newfirstentryslotnum = Self::decode_next_entry_link(curfirstentryslotnum, next_entry_code, sentinel_slotnum);
 
                     // Put the new first entry slot num in place of the old in our local (in a
@@ -417,7 +411,6 @@ pub mod i {
                             set_slab_num(slabnum);
                         }
 
-                        //eprintln!("in ia, returning {curfirstentry_p:x}/{curfirstentry_p:b}");
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
