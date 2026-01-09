@@ -22,11 +22,8 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let mut i = first_i;
     #[cfg(target_os = "windows")]
     {
-        const FLHWORD_COMMITTED_BIT: u32 = 1 << 31;
         sm.help_commit_slots(slabnum, sc, i, 2); // last slot is sentinel so we aren't going to actually touch its memory
-        sm.help_set_flh_singlethreaded(sc, i | FLHWORD_COMMITTED_BIT, slabnum);
     }
-    #[cfg(not(target_os = "windows"))]
     sm.help_set_flh_singlethreaded(sc, i, slabnum);
 
     // Step 1: allocate a slot and store it in local variables:
@@ -578,7 +575,7 @@ impl Smalloc {
         //xxxeprintln!("in help_commit_slots, committing: slabnum: {slabnum}, sc: {sc}, firstslotnum: {firstslotnum}, numslots: {numslots}");
         let inner = self.inner();
         let smbp = inner.smbp.load(Acquire);
-        let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SLOTNUM_AND_DATA_BITS) | (firstslotnum as usize) << sc;
+        let curfirstentry_p = smbp | ((((slabnum as usize) << NUM_SC_BITS) | sc as usize) << NUM_SN_D_T_BITS) | (firstslotnum as usize) << sc;
 
         let commit_size = (1usize << sc) * numslots as usize;
         sys_commit(curfirstentry_p as *mut u8, commit_size).unwrap();

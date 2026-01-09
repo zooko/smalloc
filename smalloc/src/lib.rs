@@ -257,8 +257,8 @@ pub mod i {
                 debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
 
                 // If the curfirstentry next-slotnum is the sentinel slotnum, then the
-                // next-has-been-touched bit must be false. (You can't ever touch -- read or write
-                // the memory of -- the sentinel slot.)
+                // next-has-been-touched bit must be false. (You can't ever touch—read or
+                // write—the memory of the sentinel slot.)
                 debug_assert!(if curfirstentry & ENTRY_SLOTNUM_MASK == sentinel_slotnum { curfirstentry & ENTRY_NEXT_TOUCHED_BIT == 0 } else { true });
 
                 if likely(curfirstentry != sentinel_slotnum) {
@@ -281,6 +281,22 @@ pub mod i {
                     } else {
                         // If this entry has never been touched (read or written), then its
                         // next-entry link is equal to its slotnum + 1 (with the touched bit unset).
+
+                        #[cfg(any(target_os = "windows", doc))]
+                        {
+                            // And, we have to commit its page/slot before the CAS update to prepare
+                            // for this slot—or any subsequent slot beyond this one in this memory
+                            // page—getting accessed. (There was a bug in smalloc v7.5.2 when this
+                            // commit was after the CAS succeeded, and a *successor* slot got
+                            // accessed before the commit.)
+
+                            // commit the larger of 1 slot and 1 page
+                            let cbits = std::cmp::max(plat::p::SC_FOR_PAGE, sc);
+                            if unlikely(curfirstentry_p.trailing_zeros() >= cbits as u32) {
+                                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
+                            }
+                        }
+
                         curfirstentryslotnum + 1
                     };
 
@@ -297,17 +313,6 @@ pub mod i {
                         if unlikely(slabnum != orig_slabnum) {
                             // The slabnum changed. Save the new slabnum for next time.
                             set_slab_num(slabnum);
-                        }
-
-                        #[cfg(any(target_os = "windows", doc))]
-                        {
-                            use std::cmp::max;
-
-                            // commit the larger of 1 slot and 1 page
-                            let cbits = max(plat::p::SC_FOR_PAGE, sc);
-                            if unlikely(curfirstentry_p.trailing_zeros() >= cbits as u32) {
-                                sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
-                            }
                         }
 
                         break curfirstentry_p as *mut u8;
