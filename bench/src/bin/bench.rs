@@ -23,7 +23,7 @@ pub fn main() {
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
-    let num_batches = if thorough { 100 } else { 10 };
+    let num_batches = 80;
 
     println!("Using seed: {}", seed);
     

@@ -369,7 +369,7 @@ pub mod i {
 
     // NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
     // because that means there are 32 size classes, and the first one (that is used -- see below)
-    // has 2^32 slots. This is the largest number of slots that we can put their slot numbers into a
+    // has 2^31 slots. This is the largest number of slots that we can put their slot numbers into a
     // 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more
     // allocations of 1, 2, 3, or 4 bytes into each cache line.
     pub const NUM_SC_BITS: u8 = 5;
