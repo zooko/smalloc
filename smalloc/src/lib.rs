@@ -375,7 +375,7 @@ pub mod i {
     pub const NUM_SC_BITS: u8 = 5;
 
     // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
-    pub const NUM_SLABS_BITS: u8 = 5;
+    pub const NUM_SLABS_BITS: u8 = 6;
 
     // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
     // we re-use that unused space to hold flh's.
