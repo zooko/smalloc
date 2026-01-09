@@ -30,9 +30,7 @@ impl Smalloc {
     #[inline(always)]
     pub fn idempotent_init(&self) {
         let inner = self.inner();
-
         let smbpval = inner.smbp.load(Relaxed);
-
         if smbpval == 0 {
             // acquire the spin lock
             loop {
@@ -42,7 +40,6 @@ impl Smalloc {
             }
 
             let smbpval = inner.smbp.load(Relaxed);
-
             if smbpval == 0 {
                 let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
                 assert!(sysbp != 0);
@@ -79,7 +76,6 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             self.idempotent_init();
-
             self.inner_alloc(sc)
         }
     }
@@ -100,12 +96,10 @@ unsafe impl GlobalAlloc for Smalloc {
 
         // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
         // less than or equal to the highest slot pointer.
-
         assert!(p_addr >= smbp);
         assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
 
         // Okay now we know that it is a pointer into smalloc's region.
-
         let oldsize = layout.size();
         debug_assert!(oldsize > 0);
         let oldalignment = layout.align();
@@ -217,6 +211,8 @@ pub mod i {
 
                 // The high-order 4-byte word is the push counter. Increment it.
                 let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
+
+                // The new flh word is the push counter, the next-entry-touched-bit (set), and the next-entry slotnum.
                 let newflhword = push_counter | ENTRY_NEXT_TOUCHED_BIT as u64 | newslotnum as u64;
 
                 // Compare and exchange
