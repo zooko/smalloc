@@ -715,6 +715,8 @@ useful tool!
 * and cargo-mutants
 
 * Try "tarpaulin" again HT Sean Bowe
+* need some graphs
+* needs to be v 1.0 to excite Hacker News readers
 
 * If we could allocate even more virtual memory address space, `smalloc` could more scalable
   (i.e. have more large slots, more per-thread slabs, etc). And you could have more than one
