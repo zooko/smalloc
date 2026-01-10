@@ -53,14 +53,15 @@ impl fmt::Display for AllocFailed {
 #[cfg(any(target_os = "windows", doc))]
 pub mod p {
     use super::AllocFailed;
-    use windows_sys::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, MEM_RELEASE};
+    use windows_sys::Win32::System::Memory::{VirtualAlloc2, VirtualFree, MEM_RESERVE, PAGE_NOACCESS, MEM_RELEASE};
     use core::ffi::c_void;
+    use std::ptr::null_mut;
 
     #[allow(unsafe_code)]
     pub fn sys_alloc(reqsize: usize) -> Result<*mut u8, AllocFailed> {
         eprintln!("About to alloc {reqsize}");
         let p = unsafe {
-            VirtualAlloc(std::ptr::null(), reqsize, MEM_RESERVE, PAGE_READWRITE)
+            VirtualAlloc2(null_mut(), std::ptr::null(), reqsize, MEM_RESERVE, PAGE_NOACCESS, null_mut(), 0)
         };
 
         if !p.is_null() {
