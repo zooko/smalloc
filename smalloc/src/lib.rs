@@ -133,7 +133,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             // The "Growers" strategy.
-            let reqsc = if (plat::p::SC_FOR_PAGE..22).contains(&reqsc) { 22 } else { reqsc };
+            let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
             let newp = self.inner_alloc(reqsc);
             if unlikely(newp.is_null()) {
@@ -380,6 +380,10 @@ pub mod i {
     // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
     // we re-use that unused space to hold flh's.
     pub const NUM_UNUSED_SCS: u8 = 2;
+
+    // The size class to move "growers" to when they get reallocated to a size too large to pack
+    // more than one of them into a single memory page:
+    pub const GROWERS_SC: u8 = 22;
 
 
     // --- Constants determined by the constants above ---
