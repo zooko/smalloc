@@ -748,6 +748,8 @@ useful tool!
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
 
+* put smalloc into xous instead of its current libmalloc: https://github.com/betrusted-io/xous-core
+
 # Acknowledgments
 
 * Thanks to Andrew Reece and Sam Smith from Shielded Labs for some specific suggestions that I
