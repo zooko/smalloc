@@ -11,7 +11,9 @@ static SMALLOC: Smalloc = Smalloc::new();
 // Helper: Check if pointer belongs to smalloc
 // =============================================================================
 
-// It looks like this proposed new update to C standards (https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3621.txt) requires this behavior. Programs that expect glibc behavior already depend on this being returned from malloc(0).
+// It looks like this proposed new update to C standards
+// (https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3621.txt) requires this behavior. Programs
+// that expect glibc behavior already depend on this being returned from malloc(0).
 
 enum PtrClass {
     NullOrSentinel,
@@ -129,18 +131,8 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
                 return ptr;
             }
 
-            // The "Growers" strategy. Promote the new sizeclass to the next one up in this schedule:
-            #[allow(clippy::suspicious_else_formatting)]
-            #[cfg(feature = "growers")]
-            let reqsc =
-                if reqsc <= 6 { 6 } else
-                if reqsc <= 7 { 7 } else
-                if reqsc <= 12 { 12 } else
-                if reqsc <= 14 { 14 } else
-                if reqsc <= 16 { 16 } else
-                if reqsc <= 18 { 18 } else
-                if reqsc <= 21 { 21 }
-            else { reqsc };
+            // The "Growers" strategy.
+            let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
             let newp = smalloc_inner_alloc(reqsc);
 
@@ -462,5 +454,4 @@ use core::ffi::c_void;
 use std::hint::{likely, unlikely};
 use std::ptr::{null_mut, copy_nonoverlapping};
 use smalloc::i::*;
-use smalloc::Smalloc;
-
+use smalloc::{plat, Smalloc};

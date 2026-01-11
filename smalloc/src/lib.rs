@@ -423,6 +423,7 @@ pub mod i {
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
 
+    pub mod plat;
     use crate::*;
 }
 
@@ -521,8 +522,6 @@ const fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
 
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
-
-mod plat;
 
 #[cfg(test)]
 mod tests;
