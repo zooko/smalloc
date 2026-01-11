@@ -103,8 +103,7 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
         PtrClass::Foreign => {
             platform::call_prev_free(ptr);
         }
-        PtrClass::NullOrSentinel => {
-        }
+        PtrClass::NullOrSentinel => {}
     }
 }
 
@@ -132,8 +131,11 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
             }
 
             // The "Growers" strategy.
-            let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
-
+            let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) {
+                GROWERS_SC
+            } else {
+                reqsc
+            };
             let newp = smalloc_inner_alloc(reqsc);
 
             if likely(!newp.is_null()) {
@@ -277,8 +279,7 @@ pub unsafe extern "C" fn smalloc_free_aligned_sized(ptr: *mut c_void, alignment:
         PtrClass::Foreign => {
             platform::call_prev_free_aligned_sized(ptr, alignment, size);
         }
-        PtrClass::NullOrSentinel => {
-        }
+        PtrClass::NullOrSentinel => {}
     }
 }
 
@@ -294,8 +295,7 @@ pub unsafe extern "C" fn smalloc_free_sized(ptr: *mut c_void, size: usize) {
         PtrClass::Foreign => {
             platform::call_prev_free_sized(ptr, size);
         }
-        PtrClass::NullOrSentinel => {
-        }
+        PtrClass::NullOrSentinel => {}
     }
 }
 
@@ -424,6 +424,25 @@ mod platform {
 
     pub fn call_prev_reallocarray(_ptr: *mut c_void, _nmemb: usize, _size: usize) -> *mut c_void {
         panic!("call to memory management function that isn't supported by the macOS System library");
+    }
+}
+
+// =============================================================================
+// Windows platform module
+// =============================================================================
+
+#[cfg(target_os = "windows")]
+mod platform {
+    pub(crate) fn set_errno(value: i32) {
+        // Code written for the C standard may check errno. Code written for win32 may check the
+        // windows "Last Error".
+
+        unsafe extern "C" { fn _set_errno(value: i32) -> i32; }
+        unsafe { _set_errno(value); }
+
+        debug_assert!(value <= i32::MAX);
+        unsafe extern "system" { fn SetLastError(dwErrCode: u32); }
+        unsafe { SetLastError(value as u32); }
     }
 }
 
