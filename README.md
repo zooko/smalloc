@@ -86,7 +86,12 @@ There are two limitations:
    default allocator or to `mmap` in that case, but that would result in performance degradation and
    possibly in less predictable failure modes. I want smalloc to have consistent performance and
    failure modes so I choose to return a null pointer in that case.)
-   
+
+   (Other state of the art allocators have similar limitations, for example `rpmalloc` tops out at 8
+   MiB allocations according to https://github.com/mjansson/rpmalloc?tab=readme-ov-file, although I
+   suspect they fall back to mmap or the system allocator in that case rather than immediately
+   failing, so that you get a drop in performance and possibly later and different failures.)
+
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
 If you run into either of these limitations in practice, please open an issue on the `smalloc`
@@ -747,6 +752,10 @@ useful tool!
   the rewrite.)
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
+
+* port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
+
+* Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, provided by `smalloc`, getting passed to C++ `delete` or vice versa).
 
 * put smalloc into xous instead of its current libmalloc: https://github.com/betrusted-io/xous-core
 

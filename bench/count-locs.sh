@@ -3,7 +3,7 @@
 echo smalloc
 pushd smalloc/smalloc
 find . -name '*-noda.*' -print0 | xargs -0 rm
-for F in src/lib.rs src/plat/mod.rs; do F2="${F%.*}-noda.${F##*.}" ; grep -v debug_assert ${F} > ${F2} ; done
+for F in src/lib.rs src/i/plat.rs; do F2="${F%.*}-noda.${F##*.}" ; grep -v debug_assert ${F} > ${F2} ; done
 tokei `find . -name '*-noda.*'`
 find . -name '*-noda.*' -print0 | xargs -0 rm
 cd ..
