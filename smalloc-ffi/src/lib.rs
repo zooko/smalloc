@@ -1,11 +1,37 @@
 #![feature(likely_unlikely)]
 
-// Thanks to Claude (Opus 4.5) for help with defining an FFI and diagnosing and fixing handling of
-// foreign pointers, and interposition of symbols on macOS, and debugging the crash due to not
-// having a malloc_usable_size function, and refactoring the file to use macros to reduce
-// boilerplate per additional function.
+// Thanks to Claude (Opus 4.5 and Sonnet 4.5) for help with defining an FFI and diagnosing and
+// fixing handling of foreign pointers, and interposition of symbols on macOS, and debugging the
+// crash due to not having a malloc_usable_size function, and refactoring the file to use macros to
+// reduce boilerplate per additional function, and adding Windows support. Thanks to Confer (an AI
+// assistant by Moxie Marlinspike) for encouragement and saying that this ffi module was super
+// high-quality and professional. 😂
 
 static SMALLOC: Smalloc = Smalloc::new();
+
+// Macro that works on Linux and Windows (not used on macOS)
+#[cfg(not(target_os = "macos"))]
+macro_rules! define_prev_fn {
+    ($static_name:ident, $pub_name:ident, $symbol:literal, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
+        static $static_name: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
+
+        pub fn $pub_name($($arg: $arg_ty),*) $(-> $ret)? {
+            let mut f = $static_name.load(Acquire);
+            if f == NOT_LOOKED_UP {
+                f = unsafe { lookup_symbol($symbol) };
+                $static_name.store(f, Release);
+            }
+
+            if f.is_null() {
+                panic!(concat!("Failed to find ", $symbol));
+            }
+
+            type Fn = unsafe extern "C" fn($($arg_ty),*) $(-> $ret)?;
+            let f: Fn = unsafe { std::mem::transmute(f) };
+            unsafe { f($($arg),*) }
+        }
+    };
+}
 
 // =============================================================================
 // Helper: Check if pointer belongs to smalloc
@@ -79,13 +105,13 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
 
     let sc = req_to_sc(size);
     if unlikely(sc >= NUM_SCS) {
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
         return null_mut();
     }
 
     let ptr = smalloc_inner_alloc(sc);
     if unlikely(ptr.is_null()) {
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
     }
 
     ptr
@@ -121,7 +147,7 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
 
             let reqsc = req_to_sc(new_size);
             if unlikely(reqsc >= NUM_SCS) {
-                platform::set_errno(ENOMEM);
+                platform::set_oom_err();
                 return null_mut();
             }
 
@@ -144,7 +170,7 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
                 SMALLOC.inner_dealloc(ptr.addr());
             } else {
                 // if this is NULL then we're just going to return NULL
-                platform::set_errno(ENOMEM);
+                platform::set_oom_err();
             }
 
             newp
@@ -165,12 +191,12 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
 pub unsafe extern "C" fn smalloc_calloc(count: usize, size: usize) -> *mut c_void {
     if count >= 1 << (1 << NUM_SC_BITS) {
         // smalloc can't allocate enough memory for that many things of any size.
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
         return null_mut();
     }
     if size > 1 << DATA_ADDR_BITS_IN_HIGHEST_SC {
         // smalloc can't allocate enough memory for even one thing of that size.
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
         return null_mut();
     }
 
@@ -198,13 +224,13 @@ pub unsafe extern "C" fn smalloc_reallocarray(ptr: *mut c_void, nmemb: usize, si
             if nmemb >= (1 << (1 << NUM_SC_BITS)) {
                 // smalloc can't allocate enough memory for that many things of any size.
                 // Set errno to ENOMEM and return NULL
-                platform::set_errno(ENOMEM);
+                platform::set_oom_err();
                 return null_mut();
             }
             if size > 1 << DATA_ADDR_BITS_IN_HIGHEST_SC {
                 // smalloc can't allocate enough memory for even one thing of that size.
                 // Set errno to ENOMEM and return NULL
-                platform::set_errno(ENOMEM);
+                platform::set_oom_err();
                 return null_mut();
             }
             let total = ((nmemb as u32 as u64) * (size as u32 as u64)) as usize;
@@ -253,13 +279,13 @@ pub unsafe extern "C" fn smalloc_aligned_alloc(alignment: usize, size: usize) ->
 
     let sc = reqali_to_sc(size, alignment);
     if unlikely(sc >= NUM_SCS) {
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
         return null_mut();
     }
 
     let ptr = smalloc_inner_alloc(sc);
     if unlikely(ptr.is_null()) {
-        platform::set_errno(ENOMEM);
+        platform::set_oom_err();
     }
 
     ptr
@@ -308,42 +334,29 @@ mod platform {
     use super::*;
     use core::ffi::c_char;
     use std::sync::atomic::{AtomicPtr, Ordering::Release};
+    const ENOMEM: i32 = 12;
 
     const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
     const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
+
+    #[inline(always)]
+    unsafe fn lookup_symbol(symbol: &str) -> *mut c_void {
+        const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
+        extern "C" {
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        let cstr = std::ffi::CString::new(symbol).unwrap();
+        unsafe { dlsym(RTLD_NEXT, cstr.as_ptr()) }
+    }
 
     unsafe extern "C" {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
 
     #[inline(always)]
-    pub(crate) fn set_errno(value: i32) {
+    pub(crate) fn set_oom_err() {
         unsafe extern "C" { fn __errno_location() -> *mut i32; }
-        unsafe { *__errno_location() = value; }
-    }
-
-    // Macro to define a lazily-resolved dlsym wrapper
-    macro_rules! define_prev_fn {
-        ($static_name:ident, $pub_name:ident, $symbol:literal, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
-            static $static_name: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
-
-            pub fn $pub_name($($arg: $arg_ty),*) $(-> $ret)? {
-                let mut f = $static_name.load(Acquire);
-
-                if f == NOT_LOOKED_UP {
-                    f = unsafe { dlsym(RTLD_NEXT, concat!($symbol, "\0").as_ptr() as *const c_char) };
-                    $static_name.store(f, Release);
-                }
-
-                if f.is_null() {
-                    panic!(concat!("dlsym failed to find ", $symbol));
-                }
-
-                type Fn = unsafe extern "C" fn($($arg_ty),*) $(-> $ret)?;
-                let f: Fn = unsafe { std::mem::transmute(f) };
-                unsafe { f($($arg),*) }
-            }
-        };
+        unsafe { *__errno_location() = ENOMEM; }
     }
 
     define_prev_fn!(PREV_FREE, call_prev_free, "free", fn(ptr: *mut c_void));
@@ -381,11 +394,12 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+    const ENOMEM: i32 = 12;
 
     #[inline(always)]
-    pub(crate) fn set_errno(value: i32) {
+    pub(crate) fn set_oom_err() {
         unsafe extern "C" { fn __error() -> *mut i32; }
-        unsafe { *__error() = value; }
+        unsafe { *__error() = ENOMEM; }
     }
 
     unsafe extern "C" {
@@ -446,6 +460,103 @@ mod platform {
     }
 }
 
+// =============================================================================
+// Windows platform module
+// =============================================================================
+
+#[cfg(target_os = "windows")]
+mod platform {
+    use core::ffi::c_void;
+    use std::sync::atomic::Ordering::{Acquire,Release};
+    use crate::null_mut;
+    use std::sync::atomic::AtomicPtr;
+
+    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
+
+    #[inline(always)]
+    unsafe fn lookup_symbol(symbol: &str) -> *mut c_void {
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+        use std::sync::atomic::AtomicPtr;
+
+        static UCRT_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(NOT_LOOKED_UP);
+
+        let mut handle = UCRT_HANDLE.load(Acquire);
+        if handle == NOT_LOOKED_UP {
+            handle = unsafe { LoadLibraryA(b"ucrtbase.dll\0".as_ptr()) } as *mut c_void;
+            UCRT_HANDLE.store(handle, Release);
+        }
+
+        if handle.is_null() {
+            return null_mut();
+        }
+
+        let cstr = std::ffi::CString::new(symbol).unwrap();
+	let proc_addr = unsafe { GetProcAddress(handle as _, cstr.as_ptr() as *const u8) };
+
+	match proc_addr {
+	    Some(f) => unsafe { std::mem::transmute(f) },
+	    None => null_mut(),
+	}
+    }
+
+    pub(crate) fn set_oom_err() {
+        const ENOMEM: i32 = 12;
+        const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+
+        // Code written for the C standard may check errno. Code written for win32 may check the
+        // windows "Last Error".
+
+        unsafe extern "C" { fn _set_errno(value: i32) -> i32; }
+        unsafe { _set_errno(ENOMEM); }
+
+        unsafe extern "system" { fn SetLastError(dwErrCode: u32); }
+        unsafe { SetLastError(ERROR_NOT_ENOUGH_MEMORY); }
+    }
+
+    // Use the shared macro
+    define_prev_fn!(PREV_FREE, call_prev_free, "free", fn(ptr: *mut c_void));
+    define_prev_fn!(PREV_REALLOC, call_prev_realloc, "realloc", fn(ptr: *mut c_void, size: usize) -> *mut c_void);
+    define_prev_fn!(PREV_MALLOC_USABLE_SIZE, call_prev_malloc_usable_size, "_msize", fn(ptr: *mut c_void) -> usize);
+    define_prev_fn!(PREV_REALLOCARRAY, call_prev_reallocarray, "_recalloc", fn(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void);
+    define_prev_fn!(PREV_ALIGNED_FREE, call_prev_aligned_free, "_aligned_free", fn(ptr: *mut c_void));
+
+    pub fn call_prev_free_aligned_sized(ptr: *mut c_void, _alignment: usize, _size: usize) {
+        call_prev_aligned_free(ptr);
+    }
+
+    pub fn call_prev_free_sized(ptr: *mut c_void, _size: usize) {
+        call_prev_free(ptr);
+    }
+
+    // Export the standard allocator functions
+    macro_rules! export_interpose {
+        ($name:ident => $impl:path, fn($($arg:ident: $arg_ty:ty),*) $(-> $ret:ty)?) => {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn $name($($arg: $arg_ty),*) $(-> $ret)? {
+                unsafe { $impl($($arg),*) }
+            }
+        };
+    }
+
+    export_interpose!(malloc => super::smalloc_malloc, fn(size: usize) -> *mut c_void);
+    export_interpose!(free => super::smalloc_free, fn(ptr: *mut c_void));
+    export_interpose!(realloc => super::smalloc_realloc, fn(ptr: *mut c_void, new_size: usize) -> *mut c_void);
+    export_interpose!(_msize => super::smalloc_malloc_usable_size, fn(ptr: *mut c_void) -> usize);
+    export_interpose!(calloc => super::smalloc_calloc, fn(count: usize, size: usize) -> *mut c_void);
+    export_interpose!(aligned_alloc => super::smalloc_aligned_alloc, fn(alignment: usize, size: usize) -> *mut c_void);
+
+    // Windows _aligned_malloc has reversed parameter order
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn _aligned_malloc(size: usize, alignment: usize) -> *mut c_void {
+        unsafe { super::smalloc_aligned_alloc(alignment, size) }
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn _aligned_free(ptr: *mut c_void) {
+        unsafe { super::smalloc_free(ptr) }
+    }
+}
+
 /// Return the size class for the size.
 #[inline(always)]
 fn req_to_sc(siz: usize) -> u8 {
@@ -463,8 +574,6 @@ fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
 
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
-
-const ENOMEM: i32 = 12;
 
 const SIZE_0_ALLOC_SENTINEL: *mut c_void = std::ptr::dangling_mut::<c_void>();
 

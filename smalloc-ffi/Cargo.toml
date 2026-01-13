@@ -9,5 +9,8 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 smalloc = { path = "../smalloc", package = "smmalloc" }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_LibraryLoader"] }
+
 [features]
 growers = []
