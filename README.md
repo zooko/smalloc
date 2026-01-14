@@ -100,7 +100,7 @@ more about the user's needs in practice before changing the code to do so.
 
 # Usage in Rust Code
 
-Add `smalloc` to your Cargo.toml by executing `cargo add smalloc`, then add this to your code:
+Add `smalloc` to your Cargo.toml by executing `cargo add smmalloc --rename smalloc`, then add this to your code:
 
 ```
 use smalloc::Smalloc;
@@ -110,6 +110,10 @@ static ALLOC: Smalloc = Smalloc::new();
 
 That's it! There are no other features you could consider using, no other changes you need to make,
 no configuration options, no tuning options, no nothing.
+
+(Wait, why is the crate named `smmalloc` instead of `smalloc`? Because there was already a crate
+named `smalloc` on crates.io and I couldn't bear to stop calling this code `smalloc` myself, because
+I'm in love with it.)
 
 # Usage in C/C++/native code
 
