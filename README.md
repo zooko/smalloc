@@ -82,15 +82,18 @@ There are two limitations:
    512 MiB, plus at most 960 simultaneous allocations larger than 256 MiB, plus at most 1,984
    simultaneous allocations larger than 128 MiB and so on (see `Figure 1` for details). If all of
    smalloc's slots are exhausted so that it cannot deliver a requested allocation, then it will
-   return a null pointer. (It would be possible to make a variant of smalloc that falls back to the
-   default allocator or to `mmap` in that case, but that would result in performance degradation and
-   possibly in less predictable failure modes. I want smalloc to have consistent performance and
-   failure modes so I choose to return a null pointer in that case.)
+   return a null pointer.
+   
+   It would be possible to change smalloc to fall back to the default allocator or to `mmap` in that
+   case, but that would result in performance degradation and possibly in less predictable failure
+   modes. I want smalloc to have consistent performance and failure modes so I choose to return a
+   null pointer in that case.
 
-   (Other state of the art allocators have similar limitations, for example `rpmalloc` tops out at 8
+   Other state of the art allocators have similar limitations, for example `rpmalloc` tops out at 8
    MiB allocations according to https://github.com/mjansson/rpmalloc?tab=readme-ov-file, although I
    suspect they fall back to mmap or the system allocator in that case rather than immediately
-   failing, so that you get a drop in performance and possibly later and different failures.)
+   failing, so that instead of an immediate failure you get a drop in performance and possibly later
+   and different failures.
 
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
@@ -381,8 +384,7 @@ After:
 ### Lazy Initialization of Next-Entries (and Other Things)
 
 When popping a slot, you need to know if this is the first time it has ever been popped. If so, it
-doesn't contain a next-entry slot number. Instead its next-entry slot number will be the next slot
-number in the slab.
+doesn't contain a next-entry slot number. Instead its next-entry will be the next slot in the slab.
 
 So reserve one bit in the `flh` to indicate whether the entry that the `flh` points to has ever been
 popped. Likewise, reserve one bit in each next-pointer to indicate whether the entry that it points
