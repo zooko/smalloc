@@ -5,7 +5,7 @@
 etc.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 335 lines of Rust code! The other high-quality memory
+simpler. The current implementation is only 351 lines of Rust code! The other high-quality memory
 allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
@@ -155,7 +155,7 @@ This workspace contains six packages:
 
 Within the smalloc package, there are four files:
  * _smalloc/src/lib.rs_: the core memory allocator
- * _smalloc/src/plat/mod.rs_: interface to the operating system's `mmap` or equivalent system call
+ * _smalloc/src/i/plat/mod.rs_: interface to the operating system's `mmap` or equivalent system call
    to reserve virtual address space
 
 These two files contain the only source code you are relying on if you use smalloc as the global
@@ -271,13 +271,14 @@ in use (i.e. either they've never yet been `malloc()`'ed, or they've been `mallo
 subsequently `free()`'ed). When referring to a slot's fixed position within the slab, call that its
 "slot number", and when referring to a slot's position within the free list (which can change over
 time as slots get removed from and added to the free list), call that a "free list entry". A free
-list entry contains a pointer to the next free list entry (or a sentinel value if there is no next
-free list entry, i.e. this entry is the end of the free list).
+list entry contains the slot number of the next free list entry (or a sentinel value if there is no
+next free list entry, i.e. this entry is the end of the free list).
 
-For each slab there is one additional associated variable, which holds the pointer to the first free
-list entry (or the sentinel value if there are no entries in the list). This variable is called the
-"free-list head" and is abbreviated `flh`. The contents of the free list head is the only additional
-information you need to read or write beside the information present in the pointers themselves.
+For each slab there is one additional associated variable, which holds the slot number of the first
+free list entry (or the sentinel value if there are no entries in the list). This variable is called
+the "free-list head" and is abbreviated `flh`. The contents of the free list head is the only
+additional information you need to read or write beside the information present in the pointers
+themselves.
 
 That's it! Those are all the data elements in `smalloc`.
 
@@ -286,20 +287,16 @@ That's it! Those are all the data elements in `smalloc`.
 Here is a first pass describing simplified versions of the algorithms. After you learn these simple
 descriptions, keep reading for additional detail.
 
-The free list for each slab begins life fully populated -- its `flh` points to the first slot in its
-slab, the first slot points to the second slot, and so forth until the last slot, whose pointer is a
-sentinel value meaning that there are no more elements in the free list.
-
 * `malloc()`
 
 To allocate space, calculate the size class of the request. Now pick one of the slabs in that size
-class (see below for how). Pop the head element from the free list and return the pointer to that
+class (see below for how). Pop the head entry from the free list and return the pointer to that
 slot.
 
 * `free()`
 
-Push the slot to be freed (the slot whose first byte is pointed to by the pointer to be freed) onto
-the free list of its slab.
+Push the slot number of the slot to be freed -- the slot whose first byte is pointed to by the
+pointer to be freed -- onto the free list of its slab.
 
 * `realloc()`
 
@@ -312,57 +309,96 @@ That's it! You could stop reading here and you'd have a basic knowledge of the d
 
 ## The Free Lists in More Detail
 
-The `flh` for a given slab is either a sentinel value (meaning that the list is empty), or else it
-points to the slot which is the first entry in that slab's free list.
+The `flh` for a given slab is either the sentinel value (meaning that the list is empty), or else it
+contains the slot number of the slot which is the first entry in that slab's free list.
 
-To pop the head entry off of the free list, set the `flh` to point to the next (second) entry
-instead of the first entry.
+To pop the head entry off of the free list, set the `flh` to contain the slot number of the next
+(second) entry instead of the first entry.
 
-But where is the pointer to the next entry stored? The answer is: store the next-pointers in the
-same space where the data goes when the slot is in use! Each data slot is either currently freed,
-meaning you can use its space to hold the pointer to the next free list entry, or currently
-allocated, meaning it is not in the free list and doesn't have a next-pointer.
+But where is the slot number of the next free list entry stored? The answer is: in the same space
+where the data goes when the slot is in use! Each slot is either currently freed, meaning you can
+use its space to hold the slot number of the next free list entry, or currently allocated, meaning
+it is not in the free list and doesn't have any next free list entry.
 
 (This is also why not to use size class 0 -- 1-byte slots -- or size class 1 -- 2-byte slots:
-because you need 4 bytes in each slot to store the next-entry link.)
+because you need at least 4 bytes in each slot to store the slot number of the next entry.)
 
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
 colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
 
-So to satisfy a `malloc()` by popping the head slot from the free list, take the value from the
-`flh`, use that value as a pointer to a slot (which is the first entry in the free list), and then
-read the *contents* of that slot as the pointer to the next entry in the free list. Overwrite the
-value in `flh` with the pointer of that *next* entry and you're done popping the head of the free
-list.
+So to satisfy a `malloc()` by popping the first entry from the free list, read the value from the
+`flh`, which is the slot number of the first entry in the free list, and then read the *contents* of
+that slot to get the slot number of the next entry. Overwrite the value in `flh` with the slot
+number of that *next* entry and you're done popping the head of the free list.
 
+```text
+Figure 2: A free list pop
+
+Before:
+                                    .---------.     .---------.
+                                .-> | entry a | --> | entry b |
+                               /    '---------'     '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+
+After:
+                                    .---------.
+  return to caller:             .-> | entry b |
+        .---------.            /    '---------'
+        | entry a |        .-----.
+        '---------'        | flh |
+                           '-----'
+```
+    
 To push an slot onto the free list (in order to implement `free()`), you are given the pointer of
 the memory allocation to be freed. Calculate from that pointer the size class, slab number, and slot
-number. Set the contents of that slot to point to the free list entry that its `flh` currently
-points to. Now update the `flh` to point to the new slot. That slot is now the new head entry of the
-free list (and the previous first-entry in the free list is now its next-entry).
+number. Read the `flh` to get the slot number of the current first entry, and set the contents of
+*that* slot to contain the slot number of the slot to be pushed. Now update the `flh` to contain the
+slot number of the slot to be pushed. That slot is now the new head entry of the free list, and the
+previous first-entry in the free list is now its next-entry.
 
-### Encoding Slot Numbers In The Free List Entries
+```text
+Figure 3: A free list push
 
-When memory is first allocated all of its bits are `0`. Define an encoding from pointers to free
-list entries such that when all of the bits of the `flh` and the slots are `0`, then it is a
-completely populated free list -- the `flh` points to the first slot number as the first free list
-entry, the first free list entry points to the second slot number as the second free list entry, and
-so on until the last-numbered slot which points to nothing -- a sentinel value meaning "this points
-to no slot".
+Before:
+                                    .---------.
+  passed in by caller:          .-> | entry c |
+        .---------.            /    '---------'
+        | entry d |        .-----.
+        '---------'        | flh |
+                           '-----'
 
-Here's how that encoding works:
+After:
+                                    .---------.     .---------.
+                                .-> | entry d | --> | entry c |
+                               /    '---------'     '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+```
+    
+### Lazy Initialization of Next-Entries (and Other Things)
 
-The `flh` contains the slot number of the first free list entry. So, when it is all 0 bits, it is
-pointing to the slot with slot number 0.
+When popping a slot, you need to know if this is the first time it has ever been popped. If so, it
+doesn't contain a next-entry slot number. Instead its next-entry slot number will be the next slot
+number in the slab.
 
-To get the next-entry pointer of a slot, load 4 bytes from the slot, interpret them as a 32-bit
-unsigned integer, add it to the slot number of the slot, and add 1, mod the total number of slots in
-that slab.
+So reserve one bit in the `flh` to indicate whether the entry that the `flh` points to has ever been
+popped. Likewise, reserve one bit in each next-pointer to indicate whether the entry that it points
+to has ever been popped. (This means we have only 31 bits instead of 32 bits to encode the slot
+number for size class 2, reducing `smalloc` overall capacity by half.)
 
-This way, a slot that is initialized to all 0 bits, points to the next slot number as its next free
-list entry. The final slot in the slab, when it is all 0 bits, points to no next entry, because when
-its bytes are interpreted as a next-entry pointer, it equals the highest possible slot number, which
-is the "sentinel value" meaning no next entry.
+Now when popping a slot for the first time, there are two other things you need to do in addition to
+initializing its next-entry slot number:
+
+1. If the user code requested that the allocated memory be zeroed (`alloc_zeroed` in the Rust
+   GlobalAlloc trait, `calloc` in the C/Unix API, etc.), and this is *not* the first time this slot
+   has been popped, you need to write 0's into all of the slot's bytes.
+
+2. On Windows, you have to "commit" a memory page before reading or writing any of its bytes. So on
+   Windows, if this is the first time this slot has been popped, commit all of the memory pages that
+   this slot covers.
 
 ## Thread-Safe `flh` Updates
 
@@ -371,29 +407,29 @@ thread-safe updates to `flh`. Use a simple loop with atomic compare-and-exchange
 
 ### To pop an entry from the free list:
 
-1. Load the value from `flh` into a local variable/register, `firstslotnum`. This is the slot number
-   of the first entry in the free list.
-2. If it is the sentinel value, meaning that the free list is empty, return. (See below for how this
-   `malloc()` request will be handled in this case.)
-3. Load the value from first entry into a local variable/register, `nextslotnum`. This is the slot
-   number of the next entry in the free list (i.e. the second free-list entry), or a sentinel value
-   there is if none.
+1. Load the value from `flh` into a local variable/register, called `firstslotnum`. This is the slot
+   number of the first entry in the free list ("entry a" in `Figure 2`).
+2. If it is the sentinel value, meaning that the free list is empty, return. (See below about
+   "Handling Overflows" for how this `malloc()` request will be handled in this case.)
+3. Load the value from first entry into a local variable/register, called `nextslotnum`. This is the
+   slot number of the next entry in the free list (i.e. the second free-list entry, "entry b" in
+   `Figure 2`), or a sentinel value there is if none.
 4. Atomically compare-and-exchange the value from `nextslotnum` into `flh` if `flh` still contains
    the value from `firstslotnum`.
-5. If the compare-and-exchange failed (meaning the value of `flh` has changed since it was read in
-   step 1), jump to step 1.
+5. If the compare-and-exchange failed (meaning the value of `flh` has changed since you read it in
+   step 1), jump back to step 1.
 
 Now you've thread-safely popped the head of the free list into `firstslotnum`.
 
 ### To push an entry onto the free list, where `newslotnum` is the number of the slot to push:
 
-1. Load the value from `flh` into a local variable/register, `firstslotnum`.
-2. Store the value from `firstslotnum` (encoded as a next-entry pointer) into the slot with slot
-   number `newslotnum`.
+1. Load the value from `flh` (which is the slot number of "entry c" in `Figure 3`) into a local
+   variable/register, `firstslotnum`.
+2. Write that value into the slot with slot number `newslotnum` ("entry d").
 3. Atomically compare-and-exchange the value from `newslotnum` into `flh` if `flh` still contains
    the value from `firstslotnum`.
 4. If the compare-and-exchange failed (meaning that value of `flh` has changed since it was read in
-   step 1), jump to step 1.
+   step 1), jump back to step 1.
 
 Now you've thread-safely pushed `newslotnum` onto the free list.
 
@@ -402,16 +438,57 @@ Now you've thread-safely pushed `newslotnum` onto the free list.
 The test described above of whether the `flh` still contains its original value is actually not
 enough to guarantee correctness under multithreading. The problem is that step 4 of the pop
 algorithm above is assuming that if the `flh` still contains the original value, then it is valid to
-write `nextslotnum` into `flh`, but it is possible that a concurrent series of pops and pushes could
-result in the `flh` containing the original slotnum, but with that slot's next-entry slot pointing
-to a different entry than `nextslotnum`. The way this could happen is if the original value got
-popped off, then another pop occurred (removing `nextslotnum` from the free list entirely), then the
-original value got pushed back on. In that case the `flh` would contain the original value but with
-a different next-entry link. This is a kind of "ABA problem".
+write `nextslotnum` into `flh`, but it is possible that a series of pops and pushes happened on
+another thread between your thread's step 1 and step 4, that resulted in the `flh` still containing
+the original slotnum, but with that slot's next-entry pointing to a different slot than
+`nextslotnum`. The way this could happen is if the original value got popped off, then another pop
+occurred (removing `nextslotnum` from the free list entirely), then the original value got pushed
+back on. In that case the `flh` would contain the original slot number, but that slot would have a
+different next-entry.  This is a kind of "ABA problem".
 
-In order to prevent this, store a counter in the unused high-order bits of the flh word. Increment
+```text
+Figure 4: ABA problem
+
+Before:
+                                    .---------.     .---------.     .---------.
+                                .-> | entry a | --> | entry b | --> | entry c |
+                               /    '---------'     '---------'     '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+
+After first pop:
+                                    .---------.     .---------.
+                                .-> | entry b | --> | entry c |
+                               /    '---------'     '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+
+After second pop:
+                                    .---------.
+                                .-> | entry c |
+                               /    '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+
+After push of a:
+                                    .---------.     .---------.
+                                .-> | entry a | --> | entry c |
+                               /    '---------'     '---------'
+                           .-----.
+                           | flh |
+                           '-----'
+```
+    
+So to ensure that popping entry a should leave entry b as the new first entry, it is not enough to
+check that entry a is still the current first entry, you also have to check that this ABA sequence
+hasn't happened.
+
+In order to do this, store a counter in the unused high-order 32 bits of the flh word. Increment
 that counter each time you attempt a compare-and-exchange on a push (`free`). Now if there were any
-pushes concurrently completed between step 1 of the pop algorithm and step 4, the
+pushes concurrently completed between step 1 of the pop algorithm on this thread and step 4, the
 compare-and-exchange will fail.
 
 Now you know the entire data model and almost all of the algorithms for `smalloc`! Read on for a few
@@ -420,7 +497,7 @@ more details.
 ## Separate Threads Use Separate Slabs
 
 This is not necessary for correctness -- the algorithms described above are sufficient for
-correctness. This is just a performance optimization. Arrange it so that (under reasonable usage
+correctness. This is just a performance optimization. Arrange it so that (under typical usage
 patterns), each active thread will use a different slab from the other active threads. This will
 minimize `flh`-update collisions, and for slots small enough to pack into a cache line, this will
 tend to increase "true-sharing" -- cache-line-sharing between multiple allocations accessed from the
