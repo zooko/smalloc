@@ -23,11 +23,11 @@ pub fn main() {
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
-    let num_batches = 80;
+    let num_batches = 200;
 
     println!("Using seed: {}", seed);
     
-    const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 64;
+    const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 32;
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
     // for benchmarks that are going to re-use space
