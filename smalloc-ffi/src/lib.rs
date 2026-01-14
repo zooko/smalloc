@@ -85,9 +85,9 @@ fn ptr_to_sc(ptr: *mut c_void) -> u8 {
 }
 
 #[inline(always)]
-fn smalloc_inner_alloc(sc: u8) -> *mut c_void {
+fn smalloc_inner_alloc(sc: u8, zeromem: bool) -> *mut c_void {
     SMALLOC.idempotent_init();
-    SMALLOC.inner_alloc(sc) as *mut c_void
+    SMALLOC.inner_alloc(sc, zeromem) as *mut c_void
 }
 
 // =============================================================================
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
         return null_mut();
     }
 
-    let ptr = smalloc_inner_alloc(sc);
+    let ptr = smalloc_inner_alloc(sc, false);
     if unlikely(ptr.is_null()) {
         platform::set_oom_err();
     }
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
             } else {
                 reqsc
             };
-            let newp = smalloc_inner_alloc(reqsc);
+            let newp = smalloc_inner_alloc(reqsc, false);
 
             if likely(!newp.is_null()) {
                 let oldsize = 1 << oldsc;
@@ -202,14 +202,20 @@ pub unsafe extern "C" fn smalloc_calloc(count: usize, size: usize) -> *mut c_voi
 
     let total = ((count as u32 as u64) * (size as u32 as u64)) as usize;
 
-    let ptr = unsafe { smalloc_malloc(total) };
-
-    if likely(!ptr.is_null() && ptr != SIZE_0_ALLOC_SENTINEL) {
-        unsafe { std::ptr::write_bytes(ptr, 0, total) };
+    if unlikely(total == 0) {
+        return SIZE_0_ALLOC_SENTINEL;
     }
 
-    // If this is NULL or Sentinel then we just return it. smalloc_malloc() will have already set
-    // ENOMEM if it should have.
+    let sc = req_to_sc(total);
+    if unlikely(sc >= NUM_SCS) {
+        platform::set_oom_err();
+        return null_mut();
+    }
+
+    let ptr = smalloc_inner_alloc(sc, true);
+    if unlikely(ptr.is_null()) {
+        platform::set_oom_err();
+    }
 
     ptr
 }
@@ -283,7 +289,7 @@ pub unsafe extern "C" fn smalloc_aligned_alloc(alignment: usize, size: usize) ->
         return null_mut();
     }
 
-    let ptr = smalloc_inner_alloc(sc);
+    let ptr = smalloc_inner_alloc(sc, false);
     if unlikely(ptr.is_null()) {
         platform::set_oom_err();
     }
