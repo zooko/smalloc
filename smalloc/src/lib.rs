@@ -76,7 +76,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             self.idempotent_init();
-            self.inner_alloc(sc)
+            self.inner_alloc(sc, false)
         }
     }
 
@@ -85,6 +85,25 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(layout.align().is_power_of_two());
 
         self.inner_dealloc(ptr.addr());
+    }
+
+    #[inline(always)]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let reqsiz = layout.size();
+        let reqalign = layout.align();
+        debug_assert!(reqsiz > 0);
+        debug_assert!(reqalign > 0);
+        debug_assert!(reqalign.is_power_of_two());
+
+        let sc = reqali_to_sc(reqsiz, reqalign);
+
+        if unlikely(sc >= NUM_SCS) {
+            // This request exceeds the size of our largest sizeclass, so return null pointer.
+            null_mut()
+        } else {
+            self.idempotent_init();
+            self.inner_alloc(sc, true)
+        }
     }
 
     #[inline(always)]
@@ -135,7 +154,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // The "Growers" strategy.
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
-            let newp = self.inner_alloc(reqsc);
+            let newp = self.inner_alloc(reqsc, false);
             if unlikely(newp.is_null()) {
                 // smalloc slots must be exhausted
                 return newp;
@@ -222,8 +241,9 @@ pub mod i {
             }
         }
 
+        /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
         #[inline(always)]
-        pub fn inner_alloc(&self, orig_sc: u8) -> *mut u8 {
+        pub fn inner_alloc(&self, orig_sc: u8, zeromem: bool) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
             debug_assert!(orig_sc < NUM_SCS);
 
@@ -309,6 +329,12 @@ pub mod i {
                     if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
                         debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
                         debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+
+                        // Okay we've successfully allocated a slot! If `zeromem` is requested and
+                        // this slot has previously been touched then we have to zero its contents.
+                        if unlikely(zeromem) && unlikely((curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0) {
+                            unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
+                        }
 
                         if unlikely(slabnum != orig_slabnum) {
                             // The slabnum changed. Save the new slabnum for next time.

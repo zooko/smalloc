@@ -752,12 +752,18 @@ useful tool!
   the rewrite.)
 
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
+* Relatedly, when doing `zeromem=true`, i.e. for `calloc` and when the Windows Heap API's `HEAP_ZERO_MEMORY` flag is set, there is a size of allocation at which point it is actually more efficient to madvise the kernel to drop that page and give us fresh zero-backed pages than to memset all of the bytes. It remains an open question whether the runtime in the common case (a single simple comparison and a branch) and the code complexity are actually worth it.
+
 
 * port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
 
 * Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, provided by `smalloc`, getting passed to C++ `delete` or vice versa).
 
 * put smalloc into xous instead of its current libmalloc: https://github.com/betrusted-io/xous-core
+
+* run the rpmalloc benchmarks: https://github.com/mjansson/rpmalloc/blob/develop/BENCHMARKS.md
+
+* read this https://jahej.com/alt/2011_05_28_implementing-a-true-realloc-in-cpp.html
 
 # Acknowledgments
 
