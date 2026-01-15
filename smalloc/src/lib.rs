@@ -311,6 +311,7 @@ pub mod i {
                             // accessed before the commit.)
 
                             // commit the larger of 1 slot and 1 page
+                            let cbits = std::cmp::max(plat::p::SC_FOR_PAGE, sc);
                             if unlikely(curfirstentry_p.trailing_zeros() >= cbits as u32) {
                                 sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
                             }

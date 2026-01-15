@@ -20,7 +20,14 @@ echo CPU type: 2>&1 | tee $LOGF
 echo $CPUTYPE 2>&1 | tee $LOGF
 echo 2>&1 | tee $LOGF
 
-cargo build --release --package bench --features=mimalloc,rpmalloc,jemalloc,snmalloc 2>&1 | tee $LOGF
+if [ "x${OSTYPE}" = "xmsys" ]; then
+	# no jemalloc on windows
+	ALLOCATORS=mimalloc,rpmalloc,snmalloc
+else
+	ALLOCATORS=mimalloc,rpmalloc,jemalloc,snmalloc
+fi
+
+cargo build --release --package bench --features=$ALLOCATORS 2>&1 | tee $LOGF
 
 echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee $LOGF
 echo 2>&1 | tee $LOGF
