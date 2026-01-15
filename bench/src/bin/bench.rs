@@ -1,11 +1,20 @@
 #![feature(rustc_private)]
 #![allow(unused_imports)]
-#![feature(stmt_expr_attributes)]
 
 use bench::{st_bench, mt_bench, compare_st_bench, compare_mt_bench, compare_fh_bench, multithread_hotspot, multithread_free_hotspot, compare_hs_bench};
 use std::alloc::Layout;
 
 use devutils::*;
+
+#[cfg(target_os = "macos")]
+fn is_macos() -> bool {
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_macos() -> bool {
+    false
+}
 
 pub fn main() {
     let seed: u64 = std::env::args()
@@ -38,16 +47,6 @@ pub fn main() {
     // iters_many
     const ITERS_FEW: u64 = 2_000;
 
-    let is_macos: bool = 
-        #[cfg(target_os = "macos")]
-    {
-        true
-    };
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
-    };
-
     if compare {
         if thorough {
             // hs_bench simulates a somewhat plausible scenario, which is a worst-case-scenario for
@@ -60,19 +59,19 @@ pub fn main() {
             // hotspots/worst-case-scenarios.
 
             // These consistently crash the OS (!) on macOS Tahoe 26.2 on Apple M4 Max. :-(
-            if !is_macos {
+            if !is_macos() {
                 //dbg!();
                 compare_hs_bench!(one_ad, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, false);
                 //dbg!();
-                compare_hs_bench!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos); // This one reliably crashes the default allocator on Macos
+                compare_hs_bench!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
                 //dbg!();
-                compare_hs_bench!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos); // This one reliably crashes the default allocator on Macos
+                compare_hs_bench!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
                 //dbg!();
                 compare_hs_bench!(a, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, false);
                 //dbg!();
                 compare_hs_bench!(a, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, false);
                 //dbg!();
-                compare_hs_bench!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, is_macos); // This one reliably crashes the default allocator on Macos
+                compare_hs_bench!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
                 //dbg!();
             }
 
@@ -163,7 +162,7 @@ pub fn main() {
             sm.idempotent_init();
 
             // These consistently crash the OS (!) on macOS Tahoe 26.2 on Apple M4 Max. :-(
-            if !is_macos {
+            if !is_macos() {
                 //dbg!();
                 multithread_hotspot!(one_ad, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
                 //dbg!();
