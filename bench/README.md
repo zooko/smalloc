@@ -2,8 +2,8 @@
 
 This is the one of the main measurements that I was optimizing for.
 
- * smalloc core: 286
- * smalloc core + smalloc-ffi: 634
+ * smalloc core: 350
+ * smalloc core + smalloc-ffi: 784
  * rpmalloc: 2,509
  * glibc: 7,384
  * mimalloc: 9,949

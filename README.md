@@ -5,7 +5,7 @@
 etc.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 351 lines of Rust code! The other high-quality memory
+simpler. The current implementation is only 350 lines of Rust code! The other high-quality memory
 allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
@@ -847,6 +847,8 @@ useful tool!
 * run the rpmalloc benchmarks: https://github.com/mjansson/rpmalloc/blob/develop/BENCHMARKS.md
 
 * read this https://jahej.com/alt/2011_05_28_implementing-a-true-realloc-in-cpp.html
+
+* go back and *really* make it no_std this time
 
 # Acknowledgments
 
