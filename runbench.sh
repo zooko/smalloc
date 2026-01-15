@@ -8,13 +8,15 @@ fi
 
 CPUTYPE="${CPUTYPE//[^[:alnum:]]/}"
 
-echo CPU type:
-echo $CPUTYPE
-echo
+LOGF=bench/results/cargo-bench.output.${CPUTYPE}.txt
 
-cargo build --release --package bench --features=mimalloc,rpmalloc,jemalloc,snmalloc
+echo CPU type: 2>&1 | tee $LOGF
+echo $CPUTYPE 2>&1 | tee $LOGF
+echo 2>&1 | tee $LOGF
 
-echo "# ./target/release/bench --compare 2>&1 | tee bench/results/cargo-bench.output.${CPUTYPE}.txt"
-echo
+cargo build --release --package bench --features=mimalloc,rpmalloc,jemalloc,snmalloc 2>&1 | tee $LOGF
 
-./target/release/bench --compare 2>&1 | tee bench/results/cargo-bench.output.${CPUTYPE}.txt
+echo "# ./target/release/bench --compare" 2>&1 | tee $LOGF
+echo 2>&1 | tee $LOGF
+
+./target/release/bench --compare 2>&1 | tee $LOGF

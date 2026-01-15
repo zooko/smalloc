@@ -104,9 +104,9 @@ where
 
 #[macro_export]
     macro_rules! multithread_hotspot {
-    ($f:expr, $threads:expr, $iters:expr, $num_batches:expr, $al:expr, $l:expr) => {{
-        let name = format!("hs-{}-{}", stringify!($f), $threads);
-        $crate::multithread_hotspot_inner($f, $threads, $iters, $num_batches, &name, $al, $l)
+    ($f:expr, $hotthreads:expr, $coolthreadsperhotthread:expr, $iters:expr, $num_batches:expr, $al:expr, $l:expr) => {{
+        let name = format!("hs-{}_{}-{}", stringify!($f), $coolthreadsperhotthread, $hotthreads);
+        $crate::multithread_hotspot_inner($f, $hotthreads, $coolthreadsperhotthread, $iters, $num_batches, &name, $al, $l)
     }};
 }
 
@@ -206,38 +206,36 @@ where
 /// iters_pbpht: iters per batch per hot thread
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
-pub fn multithread_hotspot_inner<T, F>(f: F, hotspot_threads: u32, iters_pbpht: u64, num_batches: u16, name: &str, al: &T, l: Layout) -> Nanoseconds
+#[allow(clippy::too_many_arguments)]
+pub fn multithread_hotspot_inner<T, F>(f: F, hot_threads: u32, cool_threads_per_hot_thread: u32, iters_pbpht: u64, num_batches: u16, name: &str, al: &T, l: Layout) -> Nanoseconds
 where
     T: GlobalAlloc + Send + Sync,
     F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
-    // If you want to stress test smalloc, it is best for this to equal 2^NUM_SLABS_BITS.
-    const NUM_SLABS: usize = 32;
+    let hot_threads = hot_threads as usize;
+    let cool_threads_per_hot_thread: usize = cool_threads_per_hot_thread as usize;
 
-    let hotspot_threads_usize = hotspot_threads as usize;
-    let cool_threads_per_round: usize = NUM_SLABS - 1;
-
-    // One hot thread per 63 cool threads
-    let total_threads: usize = hotspot_threads_usize * (1 + cool_threads_per_round);
+    // One hot thread per X cool threads
+    let total_threads: usize = hot_threads * (1 + cool_threads_per_hot_thread);
 
     let mut results_ns = Vec::with_capacity(num_batches as usize);
 
     for _batch in 0..num_batches {
-        let hot_done_barriers: Vec<Barrier> = (0..hotspot_threads_usize)
+        let hot_done_barriers: Vec<Barrier> = (0..hot_threads)
             .map(|_| Barrier::new(2))
             .collect();
 
-        let cool_done_barriers: Vec<Barrier> = (0..hotspot_threads_usize)
-            .map(|_| Barrier::new(cool_threads_per_round + 1))
+        let cool_done_barriers: Vec<Barrier> = (0..hot_threads)
+            .map(|_| Barrier::new(cool_threads_per_hot_thread + 1))
             .collect();
 
         let setup_complete_barrier = Barrier::new(total_threads + 1);
-        let hot_start_barrier = Barrier::new(hotspot_threads_usize + 1);
-        let hot_finish_barrier = Barrier::new(hotspot_threads_usize + 1);
+        let hot_start_barrier = Barrier::new(hot_threads + 1);
+        let hot_finish_barrier = Barrier::new(hot_threads + 1);
         let final_barrier = Barrier::new(total_threads + 1);
 
         let batch_ns = thread::scope(|s| {
-            for round in 0..hotspot_threads_usize {
+            for round in 0..hot_threads {
                 // Extract references before spawning
                 let hot_barrier = &hot_done_barriers[round];
                 let cool_barrier = &cool_done_barriers[round];
@@ -264,7 +262,7 @@ where
                 hot_barrier.wait();
 
                 // Spawn cool threads
-                for _ in 0..cool_threads_per_round {
+                for _ in 0..cool_threads_per_hot_thread {
                     s.spawn(|| {
                         let _ptr = unsafe { al.alloc(l) }; // this gets leaked oh well
                         cool_barrier.wait();
@@ -297,7 +295,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_pbpht);
-    println!("name: {name:>16}, threads: {hotspot_threads_usize:>5}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {hot_threads:>5}, coolts: {cool_threads_per_hot_thread:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
 
     median_ns
 }
@@ -332,7 +330,7 @@ macro_rules! st_bench {
 macro_rules! compare_st_bench_impl {
     // Entry point
     (
-        $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
+        $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -341,12 +339,12 @@ macro_rules! compare_st_bench_impl {
         let mut results = Vec::new();
 
         // default alloc
-        {
+        if !$skip_default {
             let short = $crate::short_name($def_display);
             let name = format!("{}_st_{}-1", short, stringify!($func));
             let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
             results.push(($def_display, ns));
-        }
+        };
 
         // optional allocs
         $(
@@ -372,8 +370,8 @@ macro_rules! compare_st_bench_impl {
 
 #[macro_export]
 macro_rules! compare_st_bench {
-    ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
-        $crate::with_all_allocators!(compare_st_bench_impl; $func, $iters_per_batch, $num_batches, $seed)
+    ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr) => {
+        $crate::with_all_allocators!(compare_st_bench_impl; $func, $iters_per_batch, $num_batches, $seed, $skip_default)
     };
 }
 
@@ -398,7 +396,7 @@ macro_rules! mt_bench {
 macro_rules! compare_mt_bench_impl {
     // Entry point
     (
-        $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
+        $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -407,12 +405,12 @@ macro_rules! compare_mt_bench_impl {
         let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
 
         // default alloc
-        {
+        if !$skip_default {
             let short = $crate::short_name($def_display);
             let name = format!("{}_mt_{}-{}", short, stringify!($func), $threads);
             let ns = $crate::multithread_bench($func, $threads, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
             results.push(($def_display, ns));
-        }
+        };
 
         // optional allocs
         $(
@@ -438,8 +436,8 @@ macro_rules! compare_mt_bench_impl {
 
 #[macro_export]
 macro_rules! compare_mt_bench {
-    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
-        $crate::with_all_allocators!(compare_mt_bench_impl; $func, $threads, $iters_per_batch, $num_batches, $seed)
+    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr) => {
+        $crate::with_all_allocators!(compare_mt_bench_impl; $func, $threads, $iters_per_batch, $num_batches, $seed, $skip_default)
     };
 }
 
@@ -447,7 +445,7 @@ macro_rules! compare_mt_bench {
 macro_rules! compare_fh_bench_impl {
     // Entry point
     (
-        $threads:expr, $iters:expr, $num_batches:expr, $l:expr ;
+        $threads:expr, $iters:expr, $num_batches:expr, $l:expr, $skip_default:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -456,12 +454,12 @@ macro_rules! compare_fh_bench_impl {
         let mut results = Vec::new();
 
         // default alloc
-        {
+        if !$skip_default {
             let short = $crate::short_name($def_display);
             let name = format!("{}_fh-{}", short, $threads);
             let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &$def_instance, $l);
             results.push(($def_display, ns));
-        }
+        };
 
         // optional allocs
         $(
@@ -487,8 +485,8 @@ macro_rules! compare_fh_bench_impl {
 
 #[macro_export]
 macro_rules! compare_fh_bench {
-    ($threads:expr, $iters:expr, $num_batches:expr, $l:expr) => {
-        $crate::with_all_allocators!(compare_fh_bench_impl; $threads, $iters, $num_batches, $l)
+    ($threads:expr, $iters:expr, $num_batches:expr, $l:expr, $skip_default:expr) => {
+        $crate::with_all_allocators!(compare_fh_bench_impl; $threads, $iters, $num_batches, $l, $skip_default)
     };
 }
 
@@ -500,7 +498,7 @@ macro_rules! compare_fh_bench {
 macro_rules! compare_hs_bench_impl {
     // Entry point - receives allocators from with_all_allocators!
     (
-        $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr;
+        $func:path, $hotthreads:expr, $coolthreadsperhotthread:expr, $iters_per_batch:expr, $num_batches:expr, $skip_default:expr;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -510,12 +508,12 @@ macro_rules! compare_hs_bench_impl {
         let mut results = Vec::new();
 
         // default alloc
-        {
+        if !$skip_default {
             let short = $crate::short_name($def_display);
             let name = format!("{}_hs-{}", short, stringify!($func));
-            let ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, &$def_instance, l);
+            let ns = $crate::multithread_hotspot_inner($func, $hotthreads, $coolthreadsperhotthread, $iters_per_batch, $num_batches, &name, &$def_instance, l);
             results.push(($def_display, ns));
-        }
+        };
 
         // optional allocs
         $(
@@ -523,7 +521,7 @@ macro_rules! compare_hs_bench_impl {
             {
                 let short = $crate::short_name($opt_display);
                 let name = format!("{}_hs-{}", short, stringify!($func));
-                let ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, &$opt_instance, l);
+                let ns = $crate::multithread_hotspot_inner($func, $hotthreads, $coolthreadsperhotthread, $iters_per_batch, $num_batches, &name, &$opt_instance, l);
                 results.push(($opt_display, ns));
             }
         )*
@@ -532,7 +530,7 @@ macro_rules! compare_hs_bench_impl {
         {
             let short = $crate::short_name($cand_display);
             let name = format!("{}_hs-{}", short, stringify!($func));
-            let candidate_ns = $crate::multithread_hotspot_inner($func, $threads, $iters_per_batch, $num_batches, &name, $cand_instance, l);
+            let candidate_ns = $crate::multithread_hotspot_inner($func, $hotthreads, $coolthreadsperhotthread, $iters_per_batch, $num_batches, &name, $cand_instance, l);
             $crate::print_comparisons(candidate_ns, &results);
         }
     }};
@@ -540,8 +538,8 @@ macro_rules! compare_hs_bench_impl {
 
 #[macro_export]
 macro_rules! compare_hs_bench {
-    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr) => {
-        $crate::with_all_allocators!(compare_hs_bench_impl; $func, $threads, $iters_per_batch, $num_batches)
+    ($func:path, $hotthreads:expr, $coolthreadsperhotthread:expr, $iters_per_batch:expr, $num_batches:expr, $skip_default:expr) => {
+        $crate::with_all_allocators!(compare_hs_bench_impl; $func, $hotthreads, $coolthreadsperhotthread, $iters_per_batch, $num_batches, $skip_default)
     };
 }
 
