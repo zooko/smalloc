@@ -1,7 +1,8 @@
 #![feature(likely_unlikely)]
 
 // Thanks to Claude Sonnet 4.5 for writing the initial version of this whole file for me, and
-// updating it together with me. As well as assisting on ideation about how to do this.
+// updating it together with me. As well as assisting on ideation and research about how to
+// interpose the Windows heap API.
 
 //! Windows Heap API interposition layer for smalloc
 //! 
@@ -40,19 +41,18 @@ type HANDLE = *mut c_void;
 static SMALLOC: Smalloc = Smalloc::new();
 
 // Sentinel value to identify smalloc's interposed process heap
-// "SMAL" in ASCII hex - chosen to be an invalid pointer
-const SMALLOC_HEAP_HANDLE: HANDLE = 0x534D414C as HANDLE;
-
-// Error codes
-const ENOMEM: i32 = 12;
-const EINVAL: i32 = 22;
+const SMALLOC_HEAP_HANDLE: HANDLE = 0x00000001 as HANDLE;
 
 // Heap flags
 const HEAP_ZERO_MEMORY: u32 = 0x00000008;
 const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x00000010;
+const HEAP_GENERATE_EXCEPTIONS: u32 = 0x00000004;
 
-// Size-0 allocation sentinel. (The official Windows
-// docs)(https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc) are
+// Windows exception status codes
+const STATUS_NO_MEMORY: u32 = 0xC0000017;
+
+// Size-0 allocation sentinel. The official [Windows
+// docs](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc) are
 // silent on the question of what `HeapAlloc` will do if you request 0 bytes. Experimentation show
 // me that `HeapAlloc(..., 0)` on Windows 11 returns a non-null pointer that can be freed but that
 // is reported as pointing to an allocation of 0 bytes by `HeapSize`. So, our implementation of
@@ -60,20 +60,21 @@ const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x00000010;
 // written to the C-API requires it.)
 const SIZE_0_ALLOC_SENTINEL: *mut c_void = core::ptr::dangling_mut::<c_void>();
 
-// =============================================================================
-// Pointer classification
-// =============================================================================
-
 enum PtrClass {
-    NullOrSentinel,
+    Null,
+    Sentinel,
     Smalloc,
     Foreign,
 }
 
 #[inline(always)]
 fn classify_ptr(ptr: *mut c_void) -> PtrClass {
-    if unlikely(ptr.is_null() || ptr == SIZE_0_ALLOC_SENTINEL) {
-        return PtrClass::NullOrSentinel;
+    if unlikely(ptr.is_null()) {
+        return PtrClass::Null;
+    }
+
+    if ptr == SIZE_0_ALLOC_SENTINEL {
+        return PtrClass::Sentinel;
     }
 
     let p_addr = ptr.addr();
@@ -102,6 +103,7 @@ fn ptr_to_sc(ptr: *mut c_void) -> u8 {
     debug_assert!(sc >= NUM_UNUSED_SCS);
     debug_assert!(sc < NUM_SCS);
     debug_assert!(p_addr.trailing_zeros() >= sc as u32);
+
     sc
 }
 
@@ -110,19 +112,13 @@ fn is_smalloc_heap(h_heap: HANDLE) -> bool {
     h_heap == SMALLOC_HEAP_HANDLE
 }
 
-// gen_mask macro for readability
-macro_rules! gen_mask { ($bits:expr, $ty:ty) => { ((!0 as $ty) >> (<$ty>::BITS - ($bits) as u32)) }; }
+// Windows HeapAlloc guarantees 8-byte alignment
+const UNUSED_SC_MASK: usize = 0b111;
 
-// Windows HeapAlloc guarantees 8-byte alignment of returned pointers, even if the requested size is
-// smaller than 8 bytes. So we have to skip using size class 2 (which has 4-byte slots), in addition
-// to the way we already skip sizes classes 0 and 1.
-const UNUSED_SC_MASK: usize = gen_mask!(3, usize);
-
-/// Windows HeapAlloc guarantees 8-byte alignment minimum
 #[inline(always)]
 fn req_to_sc(siz: usize) -> u8 {
     debug_assert!(siz > 0);
-    (((effective_size - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+    (((siz - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
 }
 
 #[inline(always)]
@@ -131,17 +127,41 @@ fn smalloc_inner_alloc(sc: u8, zeromem: bool) -> *mut c_void {
     SMALLOC.inner_alloc(sc, zeromem) as *mut c_void
 }
 
+#[inline(always)]
+unsafe fn raise_oom_if_needed(dw_flags: u32) {
+    if unlikely(dw_flags & HEAP_GENERATE_EXCEPTIONS != 0) {
+        extern "system" {
+            fn RaiseException(
+                dwExceptionCode: u32,
+                dwExceptionFlags: u32,
+                nNumberOfArguments: u32,
+                lpArguments: *const usize,
+            );
+        }
+        unsafe {
+            RaiseException(
+                STATUS_NO_MEMORY,
+                0, // EXCEPTION_NONCONTINUABLE
+                0,
+                null_mut(),
+            );
+        }
+    }
+}
+
 mod platform {
     use super::*;
 
-    // Import original system Heap API functions that smalloc needs to use.
-    // These are exported by our DEF file as "System<FunctionName>"
+    // Import original system Heap API functions that smalloc needs to use. These are exported by
+    // our DEF file as "System<FunctionName>"
     extern "system" {
         fn SystemGetProcessHeap() -> HANDLE;
         fn SystemGetProcessHeaps(NumberOfHeaps: u32, ProcessHeaps: *mut HANDLE) -> u32;
+        fn SystemHeapAlloc(hHeap: HANDLE, dwFlags: u32, dwBytes: usize) -> *mut c_void;
         fn SystemHeapFree(hHeap: HANDLE, dwFlags: u32, lpMem: *mut c_void) -> i32;
         fn SystemHeapReAlloc(hHeap: HANDLE, dwFlags: u32, lpMem: *mut c_void, dwBytes: usize) -> *mut c_void;
         fn SystemHeapSize(hHeap: HANDLE, dwFlags: u32, lpMem: *const c_void) -> usize;
+        fn SetLastError(dwErrCode: u32);
     }
 
     #[inline(always)]
@@ -150,8 +170,13 @@ mod platform {
     }
 
     #[inline(always)]
-    pub(crate) fn SystemGetProcessHeaps(NumberOfHeaps: u32, ProcessHeaps: *mut HANDLE) -> u32 {
-        unsafe { SystemGetProcessHeaps(NumberOfHeaps, HANDLE) }
+    pub(crate) fn call_system_GetProcessHeaps(number_of_heaps: u32, process_heaps: *mut HANDLE) -> u32 {
+        unsafe { SystemGetProcessHeaps(number_of_heaps, process_heaps) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn call_system_HeapAlloc(h_heap: HANDLE, dw_flags: u32, dw_bytes: usize) -> *mut c_void {
+        unsafe { SystemHeapAlloc(h_heap, dw_flags, dw_bytes) }
     }
 
     #[inline(always)]
@@ -168,13 +193,18 @@ mod platform {
     pub(crate) fn call_system_HeapSize(h_heap: HANDLE, dw_flags: u32, lp_mem: *const c_void) -> usize {
         unsafe { SystemHeapSize(h_heap, dw_flags, lp_mem) }
     }
+
+    #[inline(always)]
+    pub(crate) fn set_last_error(error_code: u32) {
+        unsafe { SetLastError(error_code) };
+    }
 }
 
 /// Returns a handle to the default process heap (smalloc)
 /// 
 /// # Safety
 /// Same requirements as Windows API GetProcessHeap
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_GetProcessHeap() -> HANDLE {
     SMALLOC_HEAP_HANDLE
 }
@@ -184,25 +214,32 @@ pub unsafe extern "system" fn smalloc_GetProcessHeap() -> HANDLE {
 /// 
 /// # Safety
 /// Same requirements as Windows API GetProcessHeaps
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_GetProcessHeaps(
-    NumberOfHeaps: u32,
-    ProcessHeaps: *mut HANDLE,
+    number_of_heaps: u32,
+    process_heaps: *mut HANDLE,
 ) -> u32 {
-    let res = SystemGetProcessHeaps(NumberOfHeaps, ProcessHeaps);
+    let res = platform::call_system_GetProcessHeaps(number_of_heaps, process_heaps);
 
-    // xxx Hey Claude, please iterate this list of heaps and if any one of them is the underlying
-    // system default heap (i.e. the handle is the same as is returned from SystemGetProcessHeap())
-    // then replace it with our smalloc default heap sentinel.
+    if !process_heaps.is_null() && res > 0 {
+        let system_default = platform::call_system_GetProcessHeap();
+        let heaps = unsafe { core::slice::from_raw_parts_mut(process_heaps, res as usize) };
+
+        for heap in heaps.iter_mut() {
+            if *heap == system_default {
+                *heap = SMALLOC_HEAP_HANDLE;
+            }
+        }
+    }
 
     res
 }
 
-/// Allocates a block of memory from smalloc's heap
+/// Allocates a block of memory from a heap
 /// 
 /// # Safety
 /// Same requirements as Windows API HeapAlloc
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_HeapAlloc(
     h_heap: HANDLE,
     dw_flags: u32,
@@ -216,21 +253,18 @@ pub unsafe extern "system" fn smalloc_HeapAlloc(
         let sc = req_to_sc(dw_bytes);
 
         if unlikely(sc >= NUM_SCS) {
-            // xxx hey Claude, please check if the HEAP_GENERATE_EXECPTIONS flag is present in the dw_flags and if so raise a C++ exception of the right type here.
+            unsafe { raise_oom_if_needed(dw_flags) };
             return null_mut();
         }
 
-        let ptr = if unlikely(dw_flags & HEAP_ZERO_MEMORY != 0) {
-            smalloc_inner_alloc(sc, true);
-        } else {
-            smalloc_inner(sc, true);
-        };
+        let ptr = smalloc_inner_alloc(sc, dw_flags & HEAP_ZERO_MEMORY != 0);
 
-        // xxx hey Claude, please check if the HEAP_GENERATE_EXECPTIONS flag is present in the dw_flags and if so raise a C++ exception of the right type here, if ptr is null.
+        if unlikely(ptr.is_null()) {
+            unsafe { raise_oom_if_needed(dw_flags) };
+        }
 
         ptr
     } else {
-        // Foreign heap - delegate to original system implementation
         platform::call_system_HeapAlloc(h_heap, dw_flags, dw_bytes)
     }
 }
@@ -239,28 +273,27 @@ pub unsafe extern "system" fn smalloc_HeapAlloc(
 /// 
 /// # Safety
 /// Same requirements as Windows API HeapFree
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_HeapFree(
     h_heap: HANDLE,
     dw_flags: u32,
     lp_mem: *mut c_void,
 ) -> i32 {
     if likely(is_smalloc_heap(h_heap)) {
-        match classify_ptr(lp_mem) {
-            PtrClass::Smalloc => {
-                SMALLOC.inner_dealloc(lp_mem.addr());
-                1 // TRUE
-            }
-            PtrClass::Foreign => {
-                // xxx Hey Claude, there is no way HeapFree can be called passing the smalloc heap handle and a foreign lp_mem. Please add a debug_assert at the beginning of this function that if h_heap is smalloc's heap then lp_mem must be a smalloc pointer or a NullOrSentinel. And then figure out what to do with this branch of the match. Maybe mark it as unreachable? Or, perhaps a little cleaner, use some kind of if else statement instead of the match expression to branch between Smalloc ptr and NullOrSentinel ptr. If you do the later then you can also mark the Smalloc Ptr branch as likely().
-                // Pointer from original system heap
-                let system_heap = platform::call_system_GetProcessHeap();
-                platform::call_system_HeapFree(system_heap, dw_flags, lp_mem)
-            }
-            PtrClass::NullOrSentinel => 1, // TRUE (freeing null succeeds)
+        let ptr_class = classify_ptr(lp_mem);
+
+        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
+
+        if likely(matches!(ptr_class, PtrClass::Smalloc)) {
+            // Smalloc pointer
+            SMALLOC.inner_dealloc(lp_mem.addr());
         }
+
+        // Null or sentinel - freeing succeeds
+        1
     } else {
-        // Foreign heap handle - forward to original system
+        // Foreign heap - delegate to original system
         platform::call_system_HeapFree(h_heap, dw_flags, lp_mem)
     }
 }
@@ -269,7 +302,7 @@ pub unsafe extern "system" fn smalloc_HeapFree(
 /// 
 /// # Safety
 /// Same requirements as Windows API HeapReAlloc
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_HeapReAlloc(
     h_heap: HANDLE,
     dw_flags: u32,
@@ -277,84 +310,64 @@ pub unsafe extern "system" fn smalloc_HeapReAlloc(
     dw_bytes: usize,
 ) -> *mut c_void {
     if is_smalloc_heap(h_heap) {
-        match classify_ptr(lp_mem) {
-            PtrClass::NullOrSentinel => {
-                // Behave like HeapAlloc
-                unsafe { smalloc_HeapAlloc(h_heap, dw_flags, dw_bytes) }
-            }
-            PtrClass::Smalloc => {
-                if unlikely(dw_bytes == 0) {
-                    SMALLOC.inner_dealloc(lp_mem.addr());
-                    return SIZE_0_ALLOC_SENTINEL;
-                }
+        let ptr_class = classify_ptr(lp_mem);
 
-                let reqsc = req_to_sc(dw_bytes);
+        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
 
-                if unlikely(reqsc >= NUM_SCS) {
-                    platform::set_last_error(8);
-                    return null_mut();
-                }
-
-                let oldsc = ptr_to_sc(lp_mem);
-
-                if unlikely((dw_flags & HEAP_ZERO_MEMORY != 0) && (reqsc >= oldsc)) {
-                    // xxx we cannot zero out the (possible) new bytes as required by the Windows
-                    // API because we don't know the exact size of the original allocation -- only
-                    // that it fit into the old slot.
-
-                    // xxx Claude, please confirm that you understand this dilemma, and please
-                    // search for evidence about whether any code actually depends on the guarantee
-                    // of the Windows API that the new bytes will be zeroed. For example, user code
-                    // could realloc an existing allocation to a larger size, and then use a
-                    // `strcmp` style function that relies on the first byte in the extended space
-                    // being zero. Therefore, I see no way around it but we're going to have to
-                    // fail-stop here. `smalloc` cannot safely implement `HeapReAlloc` with the
-                    // `HEAP_ZERO_MEMORY` flag when the size grows.
-
-                    // xxx Claude, please raise a C++ exception of type `STATUS_NO_MEMORY`, if
-                    // `HEAP_GENERATE_EXCEPTIONS` is on, or else return NULL.
-                    return null_mut();
-                }
-
-                // If fits in current slot, just return it
-                if unlikely(reqsc <= oldsc) {
-                    return lp_mem;
-                }
-
-                // Need larger slot
-                if unlikely(dw_flags & HEAP_REALLOC_IN_PLACE_ONLY) {
-                    // xxx Claude, please raise a C++ exception of type `STATUS_NO_MEMORY` if `HEAP_GENERATE_EXCEPTIONS` is on.
-                    return null_mut();
-                }
-
-                let new_ptr = smalloc_inner_alloc(reqsc, dw_flags & HEAP_ZERO_MEMORY != 0);
-
-                if unlikely(new_ptr.is_null()) {
-                    // xxx Claude, please raise a C++ exception of type `STATUS_NO_MEMORY` if `HEAP_GENERATE_EXCEPTIONS` is on.
-                    return null_mut();
-                }
-
-                // Copy the old data
-                let old_size = 1 << oldsc;
-                unsafe { core::ptr::copy_nonoverlapping(lp_mem, new_ptr, old_size) };
-
-                // Free old slot
-                SMALLOC.inner_dealloc(lp_mem.addr());
-
-                new_ptr
-            }
-            // xxx Claude: please change this to either an "unreachable", or replace this match
-            // entirely with an if then else (with a likely annotation). Because there cannot be
-            // Foreign pointers in the smalloc heap. Also please add a debug_assert! right after the
-            // classify_ptr asserting that it is not a foreign pointer in a smalloc heap.
-            PtrClass::Foreign => {
-                // Foreign pointer - delegate to original system
-                let system_heap = platform::call_system_GetProcessHeap();
-                platform::call_system_HeapReAlloc(system_heap, dw_flags, lp_mem, dw_bytes)
-            }
+        if unlikely(matches!(ptr_class, PtrClass::NullOrSentinel)) {
+            // Behave like HeapAlloc
+            return unsafe { smalloc_HeapAlloc(h_heap, dw_flags, dw_bytes) };
         }
+
+        // From here on, lp_mem is a valid smalloc pointer
+        if unlikely(dw_bytes == 0) {
+            SMALLOC.inner_dealloc(lp_mem.addr());
+            return SIZE_0_ALLOC_SENTINEL;
+        }
+
+        let reqsc = req_to_sc(dw_bytes);
+
+        if unlikely(reqsc >= NUM_SCS) {
+            unsafe { raise_oom_if_needed(dw_flags) };
+            return null_mut();
+        }
+
+        let oldsc = ptr_to_sc(lp_mem);
+
+        // We cannot implement HEAP_ZERO_MEMORY with a bigger or equal slot size, because we don't
+        // know the exact old allocation size, only that it fit in its old slot. The Windows API
+        // does not document any way for us to return an error or raise an exception that indicates
+        // this problem, either, so we'll have to panic.
+        assert!(dw_flags & HEAP_ZERO_MEMORY == 0 || reqsc < oldsc);
+
+        // If fits in current slot, just return it
+        if unlikely(reqsc <= oldsc) {
+            return lp_mem;
+        }
+
+        // Need larger slot - check HEAP_REALLOC_IN_PLACE_ONLY
+        if unlikely(dw_flags & HEAP_REALLOC_IN_PLACE_ONLY != 0) {
+            unsafe { raise_oom_if_needed(dw_flags) };
+            return null_mut();
+        }
+
+        // If we reached this line then the HEAP_ZERO_MEMORY flag must be off.
+        let new_ptr = smalloc_inner_alloc(reqsc, false);
+
+        if unlikely(new_ptr.is_null()) {
+            unsafe { raise_oom_if_needed(dw_flags) };
+            return null_mut();
+        }
+
+        // Copy the old data
+        unsafe { core::ptr::copy_nonoverlapping(lp_mem, new_ptr, 1 << oldsc) };
+
+        // Free old slot
+        SMALLOC.inner_dealloc(lp_mem.addr());
+
+        new_ptr
     } else {
-        // Foreign heap - delegate entirely to original system
         platform::call_system_HeapReAlloc(h_heap, dw_flags, lp_mem, dw_bytes)
     }
 }
@@ -363,58 +376,30 @@ pub unsafe extern "system" fn smalloc_HeapReAlloc(
 /// 
 /// # Safety
 /// Same requirements as Windows API HeapSize
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn smalloc_HeapSize(
     h_heap: HANDLE,
     dw_flags: u32,
     lp_mem: *const c_void,
 ) -> usize {
     if is_smalloc_heap(h_heap) {
-        match classify_ptr(lp_mem as *mut c_void) {
-            PtrClass::Smalloc => {
-                let sc = ptr_to_sc(lp_mem as *mut c_void);
-                1 << sc
-            }
-            PtrClass::Foreign => {
-                let system_heap = platform::call_system_GetProcessHeap();
-                platform::call_system_HeapSize(system_heap, dw_flags, lp_mem)
-            }
-            // xxx Claude, please do the same transformation -- if it is a smalloc heap and a foreign pointer then this is an assertion failure in debug mode (using debug_assert!) and underfined behavior in release mode. (I don't believe it will ever be the case in practice.) And, either replace this match arm with unreachable or -- probably better -- replace the match expression with an if/then (with likely).
-            PtrClass::NullOrSentinel => {
-                platform::set_last_error(87); // ERROR_INVALID_PARAMETER
-                usize::MAX // Indicates error
-            }
+        let ptr_class = classify_ptr(lp_mem);
+
+        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
+
+        if likely(matches!(ptr_class, PtrClass::Smalloc)) {
+            let sc = ptr_to_sc(lp_mem as *mut c_void);
+            1 << sc
+        } else {
+            // If the user passes a NULL pointer to HeapSize, the system implementation aborts. So
+            // we'll do that, too.
+            assert!(!lp_mem.is_null());
+
+            // This must be a smalloc sentinel pointer.
+            0
         }
     } else {
         platform::call_system_HeapSize(h_heap, dw_flags, lp_mem)
-    }
-}
-
-/// Creates a private heap (cannot be smalloc - delegate to system)
-/// 
-/// # Safety
-/// Same requirements as Windows API HeapCreate
-#[no_mangle]
-pub unsafe extern "system" fn smalloc_HeapCreate(
-    fl_options: u32,
-    dw_initial_size: usize,
-    dw_maximum_size: usize,
-) -> HANDLE {
-    platform::call_system_HeapCreate(fl_options, dw_initial_size, dw_maximum_size)
-}
-
-/// Destroys a private heap
-/// 
-/// # Safety
-/// Same requirements as Windows API HeapDestroy
-#[no_mangle]
-pub unsafe extern "system" fn smalloc_HeapDestroy(h_heap: HANDLE) -> i32 {
-    if is_smalloc_heap(h_heap) {
-        // Cannot destroy the process default heap
-        platform::set_last_error(87); // ERROR_INVALID_PARAMETER
-        0 // FALSE
-    } else {
-        // Foreign heap - delegate to original system
-        platform::call_system_HeapDestroy(h_heap)
     }
 }

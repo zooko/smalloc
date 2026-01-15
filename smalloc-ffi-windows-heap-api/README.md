@@ -1,3 +1,6 @@
+Document warning about incompatibility of smalloc-ffi-windows-heap-api with `HeapReAlloc` with
+`HEAP_ZERO_MEMORY`. This could be a significant limitation for some user code.
+
 * go back and prune out unused System* functions that smalloc doesn't need to use after all
 
 MUST implement (for correctness & safety):
