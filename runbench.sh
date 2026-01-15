@@ -8,7 +8,13 @@ fi
 
 CPUTYPE="${CPUTYPE//[^[:alnum:]]/}"
 
-LOGF=bench/results/cargo-bench.output.${CPUTYPE}.txt
+ARGS=$*
+
+ARGSSTR="${ARGS//[^[:alnum:]]/}"
+
+LOGF=bench/results/cargo-bench.output.${CPUTYPE}.${ARGSSTR}.txt
+
+echo "# Saving output into log file named \"${LOGF}\" ..."
 
 echo CPU type: 2>&1 | tee $LOGF
 echo $CPUTYPE 2>&1 | tee $LOGF
@@ -16,7 +22,7 @@ echo 2>&1 | tee $LOGF
 
 cargo build --release --package bench --features=mimalloc,rpmalloc,jemalloc,snmalloc 2>&1 | tee $LOGF
 
-echo "# ./target/release/bench --compare" 2>&1 | tee $LOGF
+echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee $LOGF
 echo 2>&1 | tee $LOGF
 
-./target/release/bench --compare 2>&1 | tee $LOGF
+./target/release/bench --compare ${ARGS} 2>&1 | tee $LOGF
