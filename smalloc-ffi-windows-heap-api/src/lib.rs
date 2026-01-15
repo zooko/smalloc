@@ -283,7 +283,7 @@ pub unsafe extern "system" fn smalloc_HeapFree(
         let ptr_class = classify_ptr(lp_mem);
 
         // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
-        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::Null | PtrClass::Sentinel));
 
         if likely(matches!(ptr_class, PtrClass::Smalloc)) {
             // Smalloc pointer
@@ -310,21 +310,12 @@ pub unsafe extern "system" fn smalloc_HeapReAlloc(
     dw_bytes: usize,
 ) -> *mut c_void {
     if is_smalloc_heap(h_heap) {
-        let ptr_class = classify_ptr(lp_mem);
-
-        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
-        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
-
-        if unlikely(matches!(ptr_class, PtrClass::NullOrSentinel)) {
-            // Behave like HeapAlloc
-            return unsafe { smalloc_HeapAlloc(h_heap, dw_flags, dw_bytes) };
-        }
-
-        // From here on, lp_mem is a valid smalloc pointer
-        if unlikely(dw_bytes == 0) {
-            SMALLOC.inner_dealloc(lp_mem.addr());
-            return SIZE_0_ALLOC_SENTINEL;
-        }
+        match classify_ptr(lp_mem) {
+            PtrClass::Smalloc => {
+                if unlikely(dw_bytes == 0) {
+                    SMALLOC.inner_dealloc(lp_mem.addr());
+                    return SIZE_0_ALLOC_SENTINEL;
+                }
 
         let reqsc = req_to_sc(dw_bytes);
 
@@ -367,6 +358,14 @@ pub unsafe extern "system" fn smalloc_HeapReAlloc(
         SMALLOC.inner_dealloc(lp_mem.addr());
 
         new_ptr
+            }
+
+        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::Null | PtrClass::Sentinel));
+
+        if unlikely(matches!(ptr_class, PtrClass::Null | PtrClass::Sentinel)) {
+            return unsafe { smalloc_HeapAlloc(h_heap, dw_flags, dw_bytes) };
+        }
     } else {
         platform::call_system_HeapReAlloc(h_heap, dw_flags, lp_mem, dw_bytes)
     }
