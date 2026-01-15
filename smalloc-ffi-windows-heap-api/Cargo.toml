@@ -1,0 +1,14 @@
+[package]
+name = "smalloc-ffi-windows-heap-api"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+name = "kernel32"  # Output will be kernel32.dll
+
+[dependencies]
+smalloc = { path = "../smalloc", package = "smmalloc" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Memory"] }
