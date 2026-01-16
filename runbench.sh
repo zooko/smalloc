@@ -11,10 +11,10 @@ CPUTYPE="${CPUTYPE//[^[:alnum:]]/}"
 OSTYPESTR="${OSTYPE//[^[:alnum:]]/}"
 
 ARGS=$*
-
 ARGSSTR="${ARGS//[^[:alnum:]]/}"
 
-FNAME="cargo-bench.result.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt"
+BNAME="cargo-bench"
+FNAME="${BNAME}.result.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt"
 TMPF="tmp/${FNAME}"
 RESF="bench/results/${FNAME}"
 
@@ -23,17 +23,17 @@ echo "# Saving result into a tmp file (in ./tmp) which will be moved to \"${RESF
 rm -f $TMPF
 mkdir -p tmp
 
-git log -1 | head -1 2>&1 | tee -a $TMPF
 echo "# git log -1 | head -1" 2>&1 | tee -a $TMPF
+git log -1 | head -1 2>&1 | tee -a $TMPF
 echo 2>&1 | tee -a $TMPF
 
-echo "[ -z \"\$(git status --porcelain)\" ] && echo \"Clean\" || echo \"Uncommitted changes\"" 2>&1 | tee -a $TMPF
-[ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" 2>&1 | tee -a $TMPF
+echo "( [ -z \"\$(git status --porcelain)\" ] && echo \"Clean\" || echo \"Uncommitted changes\" )" 2>&1 | tee -a $TMPF
+( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" ) 2>&1 | tee -a $TMPF
 echo 2>&1 | tee -a $TMPF
 
-echo CPU type: 2>&1 | tee $TMPF
-echo $CPUTYPE 2>&1 | tee $TMPF
-echo 2>&1 | tee $TMPF
+echo CPU type: 2>&1 | tee -a $TMPF
+echo $CPUTYPE 2>&1 | tee -a $TMPF
+echo 2>&1 | tee -a $TMPF
 
 echo OS type: 2>&1 | tee -a $TMPF
 echo $OSTYPE 2>&1 | tee -a $TMPF
