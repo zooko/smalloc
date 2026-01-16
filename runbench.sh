@@ -53,4 +53,4 @@ echo 2>&1 | tee -a $TMPF
 
 ./target/release/bench --compare ${ARGS} 2>&1 | tee -a $TMPF
 
-mv --force "${TMPF}" "${RESF}"
+mv -f "${TMPF}" "${RESF}"
