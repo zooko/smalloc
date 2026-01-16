@@ -14,7 +14,7 @@ ARGS=$*
 
 ARGSSTR="${ARGS//[^[:alnum:]]/}"
 
-RESF=bench/results/cargo-bench.output.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt
+RESF=bench/results/cargo-bench.result.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt
 
 echo "# Saving result into a file named \"${RESF}\" ..."
 
