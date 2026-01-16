@@ -16,6 +16,16 @@ fn is_macos() -> bool {
     false
 }
 
+#[cfg(target_os = "windows")]
+fn is_windows() -> bool {
+    true
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_windows() -> bool {
+    false
+}
+
 pub fn main() {
     let seed: u64 = std::env::args()
         .find_map(|arg| arg.strip_prefix("--seed=").map(|s| s.to_string()))
@@ -63,16 +73,23 @@ pub fn main() {
                 //dbg!();
                 compare_hs_bench!(one_ad, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, false);
                 //dbg!();
-                compare_hs_bench!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
-                //dbg!();
-                compare_hs_bench!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
-                //dbg!();
+
+                // Windows ran out of resources (i.e. threads) running these:
+                if !is_windows() {
+                    compare_hs_bench!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
+                    //dbg!();
+                    compare_hs_bench!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
+                    //dbg!();
+                }
                 compare_hs_bench!(a, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, false);
                 //dbg!();
-                compare_hs_bench!(a, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, false);
-                //dbg!();
-                compare_hs_bench!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
-                //dbg!();
+                // Windows ran out of resources (i.e. threads) running these:
+                if !is_windows() {
+                    compare_hs_bench!(a, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, false);
+                    //dbg!();
+                    compare_hs_bench!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, is_macos()); // This one reliably crashes the default allocator on Macos
+                    //dbg!();
+                }
             }
 
             // multithread_free_hotspot simulates a somewhat plausible worst-case-scenario, which is
