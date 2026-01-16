@@ -21,6 +21,7 @@ RESF="bench/results/${FNAME}"
 echo "# Saving result into a tmp file (in ./tmp) which will be moved to \"${RESF}\" when complete..."
 
 rm -f $TMPF
+mkdir -p tmp
 
 git log -1 | head -1 2>&1 | tee -a $TMPF
 echo "# git log -1 | head -1" 2>&1 | tee -a $TMPF
