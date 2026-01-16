@@ -8,17 +8,33 @@ fi
 
 CPUTYPE="${CPUTYPE//[^[:alnum:]]/}"
 
+OSTYPESTR="${OSTYPE//[^[:alnum:]]/}"
+
 ARGS=$*
 
 ARGSSTR="${ARGS//[^[:alnum:]]/}"
 
-LOGF=bench/results/cargo-bench.output.${CPUTYPE}.${ARGSSTR}.txt
+RESF=bench/results/cargo-bench.output.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt
 
-echo "# Saving output into log file named \"${LOGF}\" ..."
+echo "# Saving result into a file named \"${RESF}\" ..."
 
-echo CPU type: 2>&1 | tee $LOGF
-echo $CPUTYPE 2>&1 | tee $LOGF
-echo 2>&1 | tee $LOGF
+rm -f $RESF
+
+git log -1 | head -1 2>&1 | tee -a $RESF
+echo "# git log -1 | head -1" 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
+
+echo "[ -z \"\$(git status --porcelain)\" ] && echo \"Clean\" || echo \"Uncommitted changes\"" 2>&1 | tee -a $RESF
+[ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
+
+echo CPU type: 2>&1 | tee $RESF
+echo $CPUTYPE 2>&1 | tee $RESF
+echo 2>&1 | tee $RESF
+
+echo OS type: 2>&1 | tee -a $RESF
+echo $OSTYPE 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
 	# no jemalloc on windows
@@ -27,9 +43,9 @@ else
 	ALLOCATORS=mimalloc,rpmalloc,jemalloc,snmalloc
 fi
 
-cargo build --release --package bench --features=$ALLOCATORS 2>&1 | tee $LOGF
+cargo --locked build --release --package bench --features=$ALLOCATORS 2>&1 | tee -a $RESF
 
-echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee $LOGF
-echo 2>&1 | tee $LOGF
+echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
-./target/release/bench --compare ${ARGS} 2>&1 | tee $LOGF
+./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
