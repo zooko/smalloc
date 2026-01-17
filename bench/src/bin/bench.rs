@@ -45,6 +45,11 @@ pub fn main() {
 
     let num_batches = 20;
 
+    // We can do more iters without making the user wait in singlethreaded benchmarks because
+    // they're so fast.
+    let num_st_batches = 40;
+
+
     println!("Using seed: {}", seed);
     
     const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 64;
@@ -52,6 +57,10 @@ pub fn main() {
 
     // for benchmarks that are going to re-use space
     let iters_many = 20_000;
+
+    // We can do more iters without making the user wait in singlethreaded benchmarks because
+    // they're so fast.
+    let iters_st_many = 50_000;
 
     // for benchmarks that are not going to re-use space, so they'll run out of space if we do
     // iters_many
@@ -114,27 +123,27 @@ pub fn main() {
         
         compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        compare_st_bench!(adrww, iters_many, num_batches, seed);
+        compare_st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        compare_st_bench!(adr, iters_many, num_batches, seed);
+        compare_st_bench!(adr, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        compare_st_bench!(adww, iters_many, num_batches, seed);
+        compare_st_bench!(adww, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        compare_st_bench!(ad, iters_many, num_batches, seed);
+        compare_st_bench!(ad, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
-        compare_st_bench!(aww, ITERS_FEW, num_batches, seed);
+        compare_st_bench!(aww, ITERS_FEW, num_st_batches, seed);
 
         compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
-        compare_st_bench!(a, ITERS_FEW, num_batches, seed);
+        compare_st_bench!(a, ITERS_FEW, num_st_batches, seed);
     } else {
         if thorough {
             let l = Layout::from_size_align(32, 1).unwrap();
@@ -170,26 +179,26 @@ pub fn main() {
         
         mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        st_bench!(adrww, iters_many, num_batches, seed);
+        st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
         mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        st_bench!(adr, iters_many, num_batches, seed);
+        st_bench!(adr, iters_st_many, num_st_batches, seed);
 
         mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        st_bench!(adww, iters_many, num_batches, seed);
+        st_bench!(adww, iters_st_many, num_st_batches, seed);
 
         mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
-        st_bench!(ad, iters_many, num_batches, seed);
+        st_bench!(ad, iters_st_many, num_st_batches, seed);
 
         mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
-        st_bench!(aww, ITERS_FEW, num_batches, seed);
+        st_bench!(aww, ITERS_FEW, num_st_batches, seed);
 
         mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
-        st_bench!(a, ITERS_FEW, num_batches, seed);
+        st_bench!(a, ITERS_FEW, num_st_batches, seed);
     }
 }
