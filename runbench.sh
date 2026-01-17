@@ -39,13 +39,13 @@ echo $OSTYPE 2>&1 | tee -a $RESF
 echo 2>&1 | tee -a $RESF
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
-	# no jemalloc on windows
-	ALLOCATORS=mimalloc,rpmalloc,snmalloc
+	# no jemalloc or snmalloc on windows
+	ALLOCATORS=mimalloc,rpmalloc
 else
 	ALLOCATORS=mimalloc,rpmalloc,jemalloc,snmalloc
 fi
 
-cargo --locked build --release --package bench --features=$ALLOCATORS 2>&1 | tee -a $RESF &&
+cargo --locked build --release --package bench --features=$ALLOCATORS &&
 
 echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $RESF &&
 echo 2>&1 | tee -a $RESF &&
