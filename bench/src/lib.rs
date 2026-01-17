@@ -18,9 +18,9 @@ macro_rules! with_all_allocators {
                 "default", $crate::GlobalAllocWrap;
                 @candidate "smalloc", devutils::get_devsmalloc!();
                 @optional_allocators
-                    #[cfg(feature = "mimalloc")] "mimalloc", mimalloc::MiMalloc;
                     #[cfg(feature = "jemalloc")] "jemalloc", tikv_jemallocator::Jemalloc;
                     #[cfg(feature = "snmalloc")] "snmalloc", snmalloc_rs::SnMalloc;
+                    #[cfg(feature = "mimalloc")] "mimalloc", mimalloc::MiMalloc;
                     #[cfg(feature = "rpmalloc")] "rpmalloc", rpmalloc::RpMalloc;
         )
     };
@@ -345,33 +345,37 @@ macro_rules! compare_st_bench_impl {
                 ($def_display, $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed))
             });
 
-            // Spawn candidate (smalloc) thread
+            // Spawn smalloc thread
             let candidate_handle = s.spawn(move || {
                 let short = $crate::short_name($cand_display);
                 let name = format!("{}_st_{}-1", short, stringify!($func));
                 $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, $cand_instance, $seed)
             });
 
-            // Collect default result first
-            results.push(default_handle.join().unwrap());
-
-            // Spawn and join each optional allocator sequentially (but still parallel with smalloc)
+            // Collect all optional allocator handles into a Vec
+            let mut opt_handles = Vec::new();
             $(
                 #[cfg($opt_cfg)]
                 {
-                    let handle = s.spawn(move || {
+                    let opt_handle = s.spawn(move || {
                         let short = $crate::short_name($opt_display);
                         let name = format!("{}_st_{}-1", short, stringify!($func));
                         ($opt_display, $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$opt_instance, $seed))
                     });
-                    results.push(handle.join().unwrap());
+                    opt_handles.push(opt_handle);
                 }
             )*
+
+            // NOW JOIN IN ORDER
+            results.push(default_handle.join().unwrap());
+
+            for handle in opt_handles {
+                results.push(handle.join().unwrap());
+            }
 
             candidate_handle.join().unwrap()
         });
 
-        // Print comparisons after all benchmarks complete
         $crate::print_comparisons(candidate_ns, &results);
     }};
 }
