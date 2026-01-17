@@ -1,0 +1,19 @@
+# git log -1 | head -1
+commit 4602c00900a29de647d71f41736088fc28f345c4
+
+( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" )
+Clean
+
+CPU type:
+IntelRXeonRGold6152CPU210GHz
+
+OS type:
+linux-gnu
+
+Engine               Version  Geometric mean of speed ratios  Benchmark count
+------               -------  ------------------------------  ---------------
+rust/regex-snmalloc  1.12.2   1.02                            52
+rust/regex-jemalloc  1.12.2   1.04                            52
+rust/regex-mimalloc  1.12.2   1.06                            52
+rust/regex-smalloc   1.12.2   1.06                            52
+rust/regex           1.12.2   1.14                            52
