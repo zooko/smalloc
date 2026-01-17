@@ -1,0 +1,159 @@
+# git log -1 | head -1
+commit 92aa5e9e813915f353702fd30c68ea686a5a2bab
+
+( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" )
+Uncommitted changes
+
+CPU type:
+AMDRyzen93900X12CoreProcessor
+
+OS type:
+msys
+
+# ./target/release/bench --compare 
+
+Using seed: 0
+name:   de_mt_adrww-64, threads:    64, iters:     20000, ns:     53,956,500, ns/i:     2,697.8
+name:   mi_mt_adrww-64, threads:    64, iters:     20000, ns:      5,801,300, ns/i:       290.0
+name:   rp_mt_adrww-64, threads:    64, iters:     20000, ns:      4,945,400, ns/i:       247.2
+name:   sm_mt_adrww-64, threads:    64, iters:     20000, ns:      4,584,600, ns/i:       229.2
+smalloc diff from  default:  -92%
+smalloc diff from mimalloc:  -21%
+smalloc diff from rpmalloc:   -7%
+
+name:  de_mt_adrww-128, threads:   128, iters:     20000, ns:    144,233,400, ns/i:     7,211.6
+name:  mi_mt_adrww-128, threads:   128, iters:     20000, ns:     10,857,400, ns/i:       542.8
+name:  rp_mt_adrww-128, threads:   128, iters:     20000, ns:      9,239,600, ns/i:       461.9
+name:  sm_mt_adrww-128, threads:   128, iters:     20000, ns:      8,594,000, ns/i:       429.7
+smalloc diff from  default:  -94%
+smalloc diff from mimalloc:  -21%
+smalloc diff from rpmalloc:   -7%
+
+name:    sm_st_adrww-1, threads:     1, iters:     50000, ns:      1,077,300, ns/i:        21.5
+name:    rp_st_adrww-1, threads:     1, iters:     50000, ns:      1,419,100, ns/i:        28.3
+name:    mi_st_adrww-1, threads:     1, iters:     50000, ns:      1,619,100, ns/i:        32.3
+name:    de_st_adrww-1, threads:     1, iters:     50000, ns:      3,588,600, ns/i:        71.7
+smalloc diff from  default:  -70%
+smalloc diff from mimalloc:  -33%
+smalloc diff from rpmalloc:  -24%
+
+name:     de_mt_adr-64, threads:    64, iters:     20000, ns:     46,613,100, ns/i:     2,330.6
+name:     mi_mt_adr-64, threads:    64, iters:     20000, ns:      5,085,800, ns/i:       254.2
+name:     rp_mt_adr-64, threads:    64, iters:     20000, ns:      4,187,500, ns/i:       209.3
+name:     sm_mt_adr-64, threads:    64, iters:     20000, ns:      4,075,900, ns/i:       203.7
+smalloc diff from  default:  -91%
+smalloc diff from mimalloc:  -20%
+smalloc diff from rpmalloc:   -3%
+
+name:    de_mt_adr-128, threads:   128, iters:     20000, ns:    147,040,100, ns/i:     7,352.0
+name:    mi_mt_adr-128, threads:   128, iters:     20000, ns:      9,876,700, ns/i:       493.8
+name:    rp_mt_adr-128, threads:   128, iters:     20000, ns:      8,060,100, ns/i:       403.0
+name:    sm_mt_adr-128, threads:   128, iters:     20000, ns:      7,844,400, ns/i:       392.2
+smalloc diff from  default:  -95%
+smalloc diff from mimalloc:  -21%
+smalloc diff from rpmalloc:   -3%
+
+name:      sm_st_adr-1, threads:     1, iters:     50000, ns:        526,300, ns/i:        10.5
+name:      rp_st_adr-1, threads:     1, iters:     50000, ns:        743,100, ns/i:        14.8
+name:      mi_st_adr-1, threads:     1, iters:     50000, ns:        847,300, ns/i:        16.9
+name:      de_st_adr-1, threads:     1, iters:     50000, ns:      3,232,000, ns/i:        64.6
+smalloc diff from  default:  -84%
+smalloc diff from mimalloc:  -38%
+smalloc diff from rpmalloc:  -29%
+
+name:    de_mt_adww-64, threads:    64, iters:     20000, ns:     37,794,400, ns/i:     1,889.7
+name:    mi_mt_adww-64, threads:    64, iters:     20000, ns:      5,350,000, ns/i:       267.5
+name:    rp_mt_adww-64, threads:    64, iters:     20000, ns:      4,656,800, ns/i:       232.8
+name:    sm_mt_adww-64, threads:    64, iters:     20000, ns:      4,423,900, ns/i:       221.1
+smalloc diff from  default:  -88%
+smalloc diff from mimalloc:  -17%
+smalloc diff from rpmalloc:   -5%
+
+name:   de_mt_adww-128, threads:   128, iters:     20000, ns:    132,530,700, ns/i:     6,626.5
+name:   mi_mt_adww-128, threads:   128, iters:     20000, ns:     10,235,500, ns/i:       511.7
+name:   rp_mt_adww-128, threads:   128, iters:     20000, ns:      9,075,000, ns/i:       453.7
+name:   sm_mt_adww-128, threads:   128, iters:     20000, ns:      8,568,600, ns/i:       428.4
+smalloc diff from  default:  -94%
+smalloc diff from mimalloc:  -16%
+smalloc diff from rpmalloc:   -6%
+
+name:     sm_st_adww-1, threads:     1, iters:     50000, ns:      1,026,900, ns/i:        20.5
+name:     mi_st_adww-1, threads:     1, iters:     50000, ns:      1,143,800, ns/i:        22.8
+name:     rp_st_adww-1, threads:     1, iters:     50000, ns:      1,149,800, ns/i:        22.9
+name:     de_st_adww-1, threads:     1, iters:     50000, ns:      2,873,300, ns/i:        57.4
+smalloc diff from  default:  -64%
+smalloc diff from mimalloc:  -10%
+smalloc diff from rpmalloc:  -11%
+
+name:      de_mt_ad-64, threads:    64, iters:     20000, ns:     39,795,800, ns/i:     1,989.7
+name:      mi_mt_ad-64, threads:    64, iters:     20000, ns:      4,990,700, ns/i:       249.5
+name:      rp_mt_ad-64, threads:    64, iters:     20000, ns:      4,343,800, ns/i:       217.1
+name:      sm_mt_ad-64, threads:    64, iters:     20000, ns:      4,005,300, ns/i:       200.2
+smalloc diff from  default:  -90%
+smalloc diff from mimalloc:  -20%
+smalloc diff from rpmalloc:   -8%
+
+name:     de_mt_ad-128, threads:   128, iters:     20000, ns:    134,421,400, ns/i:     6,721.0
+name:     mi_mt_ad-128, threads:   128, iters:     20000, ns:      9,468,700, ns/i:       473.4
+name:     rp_mt_ad-128, threads:   128, iters:     20000, ns:      8,415,900, ns/i:       420.7
+name:     sm_mt_ad-128, threads:   128, iters:     20000, ns:      7,630,100, ns/i:       381.5
+smalloc diff from  default:  -94%
+smalloc diff from mimalloc:  -19%
+smalloc diff from rpmalloc:   -9%
+
+name:       sm_st_ad-1, threads:     1, iters:     50000, ns:        540,000, ns/i:        10.8
+name:       mi_st_ad-1, threads:     1, iters:     50000, ns:        679,600, ns/i:        13.5
+name:       rp_st_ad-1, threads:     1, iters:     50000, ns:        680,200, ns/i:        13.6
+name:       de_st_ad-1, threads:     1, iters:     50000, ns:      2,589,300, ns/i:        51.7
+smalloc diff from  default:  -79%
+smalloc diff from mimalloc:  -21%
+smalloc diff from rpmalloc:  -21%
+
+name:     de_mt_aww-64, threads:    64, iters:      2000, ns:     22,341,800, ns/i:    11,170.9
+name:     mi_mt_aww-64, threads:    64, iters:      2000, ns:      4,398,700, ns/i:     2,199.3
+name:     rp_mt_aww-64, threads:    64, iters:      2000, ns:      4,615,500, ns/i:     2,307.7
+name:     sm_mt_aww-64, threads:    64, iters:      2000, ns:      3,801,100, ns/i:     1,900.5
+smalloc diff from  default:  -83%
+smalloc diff from mimalloc:  -14%
+smalloc diff from rpmalloc:  -18%
+
+name:    de_mt_aww-128, threads:   128, iters:      2000, ns:     80,234,900, ns/i:    40,117.4
+name:    mi_mt_aww-128, threads:   128, iters:      2000, ns:      8,641,300, ns/i:     4,320.6
+name:    rp_mt_aww-128, threads:   128, iters:      2000, ns:     18,562,900, ns/i:     9,281.4
+name:    sm_mt_aww-128, threads:   128, iters:      2000, ns:      7,556,800, ns/i:     3,778.4
+smalloc diff from  default:  -91%
+smalloc diff from mimalloc:  -13%
+smalloc diff from rpmalloc:  -59%
+
+name:      sm_st_aww-1, threads:     1, iters:      2000, ns:         31,100, ns/i:        15.5
+name:      mi_st_aww-1, threads:     1, iters:      2000, ns:         29,600, ns/i:        14.8
+name:      rp_st_aww-1, threads:     1, iters:      2000, ns:         28,200, ns/i:        14.1
+name:      de_st_aww-1, threads:     1, iters:      2000, ns:        306,900, ns/i:       153.4
+smalloc diff from  default:  -90%
+smalloc diff from mimalloc:   +5%
+smalloc diff from rpmalloc:  +10%
+
+name:       de_mt_a-64, threads:    64, iters:      2000, ns:     41,354,300, ns/i:    20,677.1
+name:       mi_mt_a-64, threads:    64, iters:      2000, ns:      4,463,800, ns/i:     2,231.9
+name:       rp_mt_a-64, threads:    64, iters:      2000, ns:      3,866,000, ns/i:     1,933.0
+name:       sm_mt_a-64, threads:    64, iters:      2000, ns:      3,749,800, ns/i:     1,874.9
+smalloc diff from  default:  -91%
+smalloc diff from mimalloc:  -16%
+smalloc diff from rpmalloc:   -3%
+
+name:      de_mt_a-128, threads:   128, iters:      2000, ns:     99,492,800, ns/i:    49,746.4
+name:      mi_mt_a-128, threads:   128, iters:      2000, ns:      8,736,600, ns/i:     4,368.3
+name:      rp_mt_a-128, threads:   128, iters:      2000, ns:     10,557,600, ns/i:     5,278.8
+name:      sm_mt_a-128, threads:   128, iters:      2000, ns:      7,451,700, ns/i:     3,725.8
+smalloc diff from  default:  -93%
+smalloc diff from mimalloc:  -15%
+smalloc diff from rpmalloc:  -29%
+
+name:        rp_st_a-1, threads:     1, iters:      2000, ns:         17,100, ns/i:         8.5
+name:        mi_st_a-1, threads:     1, iters:      2000, ns:         19,500, ns/i:         9.7
+name:        sm_st_a-1, threads:     1, iters:      2000, ns:         22,400, ns/i:        11.2
+name:        de_st_a-1, threads:     1, iters:      2000, ns:        314,800, ns/i:       157.4
+smalloc diff from  default:  -93%
+smalloc diff from mimalloc:  +15%
+smalloc diff from rpmalloc:  +31%
+
