@@ -12,7 +12,7 @@ thousands = "0.2"
 # For benchmarking other allocators:
 mimalloc = { version = "*", features = ["v3"], optional = true }
 tikv-jemallocator = { version = "0.6", optional = true }
-snmalloc-rs = { version = "0.3", features = ["build_cc"], optional = true }
+snmalloc-rs = { version = "0.3", optional = true }
 rpmalloc = { version = "0.2", optional = true }
 
 [target.'cfg(target_os="windows")'.dependencies]
