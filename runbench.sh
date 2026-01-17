@@ -1,7 +1,7 @@
 # CPU type on linuxy
 CPUTYPE=`grep "model name" /proc/cpuinfo 2>/dev/null | uniq | cut -d':' -f2-`
 
-if [ "x${CPUTYPE}" = "x" ] ; then
+if [ -z "${CPUTYPE}" ] ; then
     # CPU type on macos
     CPUTYPE=`sysctl -n machdep.cpu.brand_string 2>/dev/null`
 fi
@@ -54,3 +54,5 @@ echo 2>&1 | tee -a $TMPF
 ./target/release/bench --compare ${ARGS} 2>&1 | tee -a $TMPF
 
 mv -f "${TMPF}" "${RESF}"
+
+echo "# Results are in \"${RESF}\" ."
