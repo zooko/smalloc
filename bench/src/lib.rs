@@ -63,7 +63,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
 
     median_ns
 }
@@ -97,7 +97,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
 
     median_ns
 }
@@ -186,7 +186,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(tot_iters_pb as u64);
-    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
 
     median_ns
 }
@@ -295,7 +295,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_pbpht);
-    println!("name: {name:>16}, threads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>10}");
+    println!("name: {name:>16}, threads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
 
     median_ns
 }
