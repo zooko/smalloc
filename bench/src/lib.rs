@@ -328,7 +328,6 @@ macro_rules! st_bench {
 
 #[macro_export]
 macro_rules! compare_st_bench_impl {
-    // Entry point
     (
         $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
         @allocators
@@ -336,34 +335,54 @@ macro_rules! compare_st_bench_impl {
             @candidate $cand_display:expr, $cand_instance:expr;
             @optional_allocators $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
     ) => {{
-        let mut results = Vec::new();
+        use std::thread;
+        use std::sync::{Arc, Mutex};
 
-        // Run default allocator benchmark
-        {
-            let short = $crate::short_name($def_display);
-            let name = format!("{}_st_{}-1", short, stringify!($func));
-            let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
-            results.push(($def_display, ns));
-        }
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let candidate_ns = Arc::new(Mutex::new(None));
 
-        // Run optional allocators
-        $(
-            #[cfg($opt_cfg)]
+        thread::scope(|s| {
+            // Default allocator thread
             {
-                let short = $crate::short_name($opt_display);
-                let name = format!("{}_st_{}-1", short, stringify!($func));
-                let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$opt_instance, $seed);
-                results.push(($opt_display, ns));
+                let results = Arc::clone(&results);
+                s.spawn(move || {
+                    let short = $crate::short_name($def_display);
+                    let name = format!("{}_st_{}-1", short, stringify!($func));
+                    let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
+                    results.lock().unwrap().push(($def_display, ns));
+                });
             }
-        )*
 
-        // Run candidate allocator (smalloc) and compare
-        {
-            let short = $crate::short_name($cand_display);
-            let name = format!("{}_st_{}-1", short, stringify!($func));
-            let candidate_ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, $cand_instance, $seed);
-            $crate::print_comparisons(candidate_ns, &results);
-        }
+            // Optional allocator threads
+            $(
+                #[cfg($opt_cfg)]
+                {
+                    let results = Arc::clone(&results);
+                    s.spawn(move || {
+                        let short = $crate::short_name($opt_display);
+                        let name = format!("{}_st_{}-1", short, stringify!($func));
+                        let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$opt_instance, $seed);
+                        results.lock().unwrap().push(($opt_display, ns));
+                    });
+                }
+            )*
+
+            // Candidate (smalloc) thread
+            {
+                let candidate_ns_ref = Arc::clone(&candidate_ns);
+                s.spawn(move || {
+                    let short = $crate::short_name($cand_display);
+                    let name = format!("{}_st_{}-1", short, stringify!($func));
+                    let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, $cand_instance, $seed);
+                    *candidate_ns_ref.lock().unwrap() = Some(ns);
+                });
+            }
+        }); // All threads join here
+
+        // Print comparisons after all benchmarks complete
+        let candidate_ns = candidate_ns.lock().unwrap().unwrap();
+        let results = results.lock().unwrap();
+        $crate::print_comparisons(candidate_ns, &results);
     }};
 }
 
