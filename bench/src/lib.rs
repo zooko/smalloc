@@ -330,7 +330,7 @@ macro_rules! st_bench {
 macro_rules! compare_st_bench_impl {
     // Entry point
     (
-        $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr ;
+        $func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -339,7 +339,7 @@ macro_rules! compare_st_bench_impl {
         let mut results = Vec::new();
 
         // Run default allocator benchmark
-        if !$skip_default {
+        {
             let short = $crate::short_name($def_display);
             let name = format!("{}_st_{}-1", short, stringify!($func));
             let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
@@ -369,8 +369,8 @@ macro_rules! compare_st_bench_impl {
 
 #[macro_export]
 macro_rules! compare_st_bench {
-    ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr) => {
-        $crate::with_all_allocators!(compare_st_bench_impl; $func, $iters_per_batch, $num_batches, $seed, $skip_default)
+    ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
+        $crate::with_all_allocators!(compare_st_bench_impl; $func, $iters_per_batch, $num_batches, $seed)
     };
 }
 
@@ -395,7 +395,7 @@ macro_rules! mt_bench {
 macro_rules! compare_mt_bench_impl {
     // Entry point
     (
-        $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr ;
+        $func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -404,7 +404,7 @@ macro_rules! compare_mt_bench_impl {
         let mut results: Vec<(&str, $crate::Nanoseconds)> = Vec::new();
 
         // Run default allocator
-        if !$skip_default {
+        {
             let short = $crate::short_name($def_display);
             let name = format!("{}_mt_{}-{}", short, stringify!($func), $threads);
             let ns = $crate::multithread_bench($func, $threads, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
@@ -434,15 +434,15 @@ macro_rules! compare_mt_bench_impl {
 
 #[macro_export]
 macro_rules! compare_mt_bench {
-    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr, $skip_default:expr) => {
-        $crate::with_all_allocators!(compare_mt_bench_impl; $func, $threads, $iters_per_batch, $num_batches, $seed, $skip_default)
+    ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {
+        $crate::with_all_allocators!(compare_mt_bench_impl; $func, $threads, $iters_per_batch, $num_batches, $seed)
     };
 }
 
 #[macro_export]
 macro_rules! compare_fh_bench_impl {
     (
-        $threads:expr, $iters:expr, $num_batches:expr, $l:expr, $skip_default:expr ;
+        $threads:expr, $iters:expr, $num_batches:expr, $l:expr ;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -451,7 +451,7 @@ macro_rules! compare_fh_bench_impl {
         let mut results = Vec::new();
 
         // Run default allocator
-        if !$skip_default {
+        {
             let short = $crate::short_name($def_display);
             let name = format!("{}_fh-{}", short, $threads);
             let ns = $crate::multithread_free_hotspot_inner($threads, $iters, $num_batches, &name, &$def_instance, $l);
@@ -481,8 +481,8 @@ macro_rules! compare_fh_bench_impl {
 
 #[macro_export]
 macro_rules! compare_fh_bench {
-    ($threads:expr, $iters:expr, $num_batches:expr, $l:expr, $skip_default:expr) => {
-        $crate::with_all_allocators!(compare_fh_bench_impl; $threads, $iters, $num_batches, $l, $skip_default)
+    ($threads:expr, $iters:expr, $num_batches:expr, $l:expr) => {
+        $crate::with_all_allocators!(compare_fh_bench_impl; $threads, $iters, $num_batches, $l)
     };
 }
 
@@ -493,7 +493,7 @@ macro_rules! compare_fh_bench {
 #[macro_export]
 macro_rules! compare_hs_bench_impl {
     (
-        $func:path, $hot_threads:expr, $cool_per_hot:expr, $iters_per_batch:expr, $num_batches:expr, $skip_default:expr;
+        $func:path, $hot_threads:expr, $cool_per_hot:expr, $iters_per_batch:expr, $num_batches:expr;
         @allocators
             $def_display:expr, $def_instance:expr;
             @candidate $cand_display:expr, $cand_instance:expr;
@@ -503,7 +503,7 @@ macro_rules! compare_hs_bench_impl {
         let mut results = Vec::new();
 
         // Run default allocator
-        if !$skip_default {
+        {
             let short = $crate::short_name($def_display);
             let name = format!("{}_hs-{}", short, stringify!($func));
             let ns = $crate::multithread_hotspot_inner($func, $hot_threads, $cool_per_hot, $iters_per_batch, $num_batches, &name, &$def_instance, l);
@@ -533,8 +533,8 @@ macro_rules! compare_hs_bench_impl {
 
 #[macro_export]
 macro_rules! compare_hs_bench {
-    ($func:path, $hot_threads:expr, $cool_per_hot:expr, $iters_per_batch:expr, $num_batches:expr, $skip_default:expr) => {
-        $crate::with_all_allocators!(compare_hs_bench_impl; $func, $hot_threads, $cool_per_hot, $iters_per_batch, $num_batches, $skip_default)
+    ($func:path, $hot_threads:expr, $cool_per_hot:expr, $iters_per_batch:expr, $num_batches:expr) => {
+        $crate::with_all_allocators!(compare_hs_bench_impl; $func, $hot_threads, $cool_per_hot, $iters_per_batch, $num_batches)
     };
 }
 
