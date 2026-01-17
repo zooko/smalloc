@@ -1,5 +1,5 @@
 # git log -1 | head -1
-commit 2c27c6bd7844e22e80ecf605ed8213b105aae274
+commit 910ee42e0cf99966d3e4fb695f6130e3da1d9310
 
 ( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" )
 Clean
@@ -13,8 +13,8 @@ darwin25
 Engine               Version  Geometric mean of speed ratios  Benchmark count
 ------               -------  ------------------------------  ---------------
 rust/regex-snmalloc  1.12.2   1.01                            52
-rust/regex-smalloc   1.12.2   1.02                            52
 rust/regex-rpmalloc  1.12.2   1.02                            52
+rust/regex-smalloc   1.12.2   1.03                            52
 rust/regex-mimalloc  1.12.2   1.03                            52
 rust/regex-jemalloc  1.12.2   1.07                            52
 rust/regex           1.12.2   1.09                            52
