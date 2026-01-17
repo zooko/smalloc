@@ -89,11 +89,14 @@ There are two limitations:
    modes. I want smalloc to have consistent performance and failure modes so I choose to return a
    null pointer in that case.
 
-   Other state of the art allocators have similar limitations, for example `rpmalloc` tops out at 8
-   MiB allocations according to https://github.com/mjansson/rpmalloc?tab=readme-ov-file, although I
-   suspect they fall back to mmap or the system allocator in that case rather than immediately
-   failing, so that instead of an immediate failure you get a drop in performance and possibly later
-   and different failures.
+   Some other state of the art allocators have similar limitations, for example `rpmalloc` tops out
+   at 8 MiB allocations according to https://github.com/mjansson/rpmalloc?tab=readme-ov-file,
+   although I suspect they fall back to mmap or the system allocator in that case rather than
+   immediately failing, so that instead of an immediate failure you get a drop in performance and
+   possibly later and different failures.
+   
+   According [to this post](https://lobste.rs/s/ubcsl9/smalloc_simple_memory_allocator#c_hfdd0f) by
+   David Chisnall, `snmalloc` does _not_ impose such limitations.
 
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
@@ -849,6 +852,11 @@ useful tool!
 * read this https://jahej.com/alt/2011_05_28_implementing-a-true-realloc-in-cpp.html
 
 * go back and *really* make it no_std this time
+
+* Fun things that to learn about:
+  * https://codeberg.org/ziglang/zig/src/commit/0.15.2/lib/std/heap/SmpAllocator.zig -- even fewer lines of code than smalloc!
+  * https://github.com/GJDuck/GC -- uses large amount of vm addresses (3 TiB)
+  * https://ckirsch.github.io/publications/conferences/OOPSLA15-Scalloc.pdf / https://github.com/cksystemsgroup/scalloc?tab=readme-ov-file -- using the "sparsely-used virtual memory" approach
 
 # Acknowledgments
 

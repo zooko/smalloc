@@ -15,29 +15,28 @@ ARGSSTR="${ARGS//[^[:alnum:]]/}"
 
 BNAME="cargo-bench"
 FNAME="${BNAME}.result.${CPUTYPE}.${OSTYPESTR}.${ARGSSTR}.txt"
-TMPF="tmp/${FNAME}"
-RESF="bench/results/${FNAME}"
+RESF="tmp/${FNAME}"
 
-echo "# Saving result into a tmp file (in ./tmp) which will be moved to \"${RESF}\" when complete..."
+echo "# Saving result into \"${RESF}\""
 
-rm -f $TMPF
+rm -f $RESF
 mkdir -p tmp
 
-echo "# git log -1 | head -1" 2>&1 | tee -a $TMPF
-git log -1 | head -1 2>&1 | tee -a $TMPF
-echo 2>&1 | tee -a $TMPF
+echo "# git log -1 | head -1" 2>&1 | tee -a $RESF
+git log -1 | head -1 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
-echo "( [ -z \"\$(git status --porcelain)\" ] && echo \"Clean\" || echo \"Uncommitted changes\" )" 2>&1 | tee -a $TMPF
-( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" ) 2>&1 | tee -a $TMPF
-echo 2>&1 | tee -a $TMPF
+echo "( [ -z \"\$(git status --porcelain)\" ] && echo \"Clean\" || echo \"Uncommitted changes\" )" 2>&1 | tee -a $RESF
+( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" ) 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
-echo CPU type: 2>&1 | tee -a $TMPF
-echo $CPUTYPE 2>&1 | tee -a $TMPF
-echo 2>&1 | tee -a $TMPF
+echo CPU type: 2>&1 | tee -a $RESF
+echo $CPUTYPE 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
-echo OS type: 2>&1 | tee -a $TMPF
-echo $OSTYPE 2>&1 | tee -a $TMPF
-echo 2>&1 | tee -a $TMPF
+echo OS type: 2>&1 | tee -a $RESF
+echo $OSTYPE 2>&1 | tee -a $RESF
+echo 2>&1 | tee -a $RESF
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
 	# no jemalloc on windows
@@ -46,13 +45,11 @@ else
 	ALLOCATORS=mimalloc,rpmalloc,jemalloc,snmalloc
 fi
 
-cargo --locked build --release --package bench --features=$ALLOCATORS 2>&1 | tee -a $TMPF
+cargo --locked build --release --package bench --features=$ALLOCATORS 2>&1 | tee -a $RESF &&
 
-echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $TMPF
-echo 2>&1 | tee -a $TMPF
+echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $RESF &&
+echo 2>&1 | tee -a $RESF &&
 
-./target/release/bench --compare ${ARGS} 2>&1 | tee -a $TMPF
-
-mv -f "${TMPF}" "${RESF}"
+./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF &&
 
 echo "# Results are in \"${RESF}\" ."
