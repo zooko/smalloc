@@ -2,8 +2,8 @@
 
 This is the one of the main measurements that I was optimizing for.
 
- * smalloc core: 350
- * smalloc core + smalloc-ffi: 784
+ * smalloc core: 351
+ * smalloc core + smalloc-ffi: 785
  * rpmalloc: 2,509
  * glibc: 7,384
  * mimalloc: 9,949
@@ -17,29 +17,13 @@ debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
 # Smalloc's bench tool
 
 `smalloc` comes with a "micro-benchmarking" tool, used to measure `smalloc`'s performance at a low
-level, which can also compare to low-level measurements of other allocators. Build it with
+level, which can also compare to low-level measurements of other allocators. Run it with
 
 ```
-cargo build --release --package bench
+./runbench.sh
 ```
 
-Run it with 
-
-```
-./target/release/bench
-```
-
-You can optionally add the `--thorough` flag for benchmarking more "edge cases" and doing more
-iterations to try to get more statistically reliable results.
-
-You can also optionally add the `--compare` flag to compare smalloc's performance against the
-default allocator and -- if they have been built into `bench` -- `mimalloc`, `rpmalloc`, `snmalloc`,
-and `jemalloc`.
-
-To build one or more of those other allocators into `bench`, add this to the `cargo build` command
-line: `--features mimalloc,rpmalloc,snmalloc,jemalloc`.
-
-There is an example output in [results/cargo-bench.output.txt](results/cargo-bench.output.txt).
+There is an example output in [bench/results/cargo-bench.result.AppleM4Max.darwin25..txt](bench/results/cargo-bench.result.AppleM4Max.darwin25..txt).
 
 # Benchmarking user code with different allocators
 
@@ -50,20 +34,20 @@ jemalloc.
 ## Rust simd-json
 
 Get this fork of the Rust simd-json repo: https://github.com/zooko/simd-json and run the
-[bench-allocators.sh](https://github.com/zooko/simd-json/blob/26a671f60228123cb5b6dd1a8da136dff6523244/bench-allocators.sh)
-script. [Example output](results/simd-json.output.txt).
+[bench-allocators.sh](https://github.com/zooko/simd-json/blob/main/bench-allocators.sh)
+script. [Example output](bench/results/simd-json.result.AppleM4Max.darwin25..txt).
 
 ## Rust rebar
 
 Get this fork of the Rust rebar repo: https://github.com/zooko/rebar and run the
-[bench-allocators.sh](https://github.com/zooko/rebar/blob/7c3b699226a4170d8d817f83a4711d8e3bed4fe9/bench-allocators.sh)
-script. [Example output](results/simd-json.output.txt).
+[bench-allocators.sh](https://github.com/zooko/rebar/blob/master/bench-allocators.sh)
+script. [Example output](bench/results/rebar.bench-allocators.result.AppleM4Max.darwin25..txt).
 
 ## mimalloc-bench
 
 Get this fork of the mimalloc-bench repo: https://github.com/zooko/mimalloc-bench and run the
-[bench-allocators.sh](https://github.com/zooko/mimalloc-bench/blob/10fe6ba9546be3fb97bd5b71990bb1dc34b58f8a/bench-allocators.sh)
-script. (Only works on Linux.) [Example output](results/mimalloc-bench.output.txt)
+[bench-allocators.sh](https://github.com/zooko/mimalloc-bench/blob/master/bench-allocators.sh)
+script. (Only works on Linux.) [Example output](bench/results/mimalloc-bench.output.txt)
 
 ## Your Code Here
 

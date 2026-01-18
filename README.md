@@ -5,7 +5,7 @@
 etc.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 350 lines of Rust code! The other high-quality memory
+simpler. The current implementation is only 351 lines of Rust code! The other high-quality memory
 allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
@@ -26,52 +26,35 @@ the default memory allocator, `jemalloc`, `snmalloc`, `mimalloc`, and `rpmalloc`
 Here are two data points to demonstrate that `smalloc` is sometimes faster than the
 alternatives. See the [./bench/results/](./bench/results/) directory for more results.
 
-From `smalloc`'s bench tool:
+Results from `smalloc`'s bench tool:
 
 ```text
-name:    de_mt_aww-128, threads:   128, iters:      2000, ns:      3,225,583, ns/i:    1,612.7
-name:    mi_mt_aww-128, threads:   128, iters:      2000, ns:      4,519,834, ns/i:    2,259.9
-name:    je_mt_aww-128, threads:   128, iters:      2000, ns:     94,163,709, ns/i:   47,081.8
-name:    sn_mt_aww-128, threads:   128, iters:      2000, ns:      9,790,209, ns/i:    4,895.1
-name:    rp_mt_aww-128, threads:   128, iters:      2000, ns:      6,507,084, ns/i:    3,253.5
-name:    sm_mt_aww-128, threads:   128, iters:      2000, ns:      1,333,375, ns/i:      666.6
-smalloc diff from  default:  -59%
-smalloc diff from mimalloc:  -70%
-smalloc diff from jemalloc:  -99%
-smalloc diff from snmalloc:  -86%
-smalloc diff from rpmalloc:  -80%
+name:     de_mt_aww-64, threads:    64, iters:      2000, ns:      1,807,708, ns/i:       903.8
+name:     je_mt_aww-64, threads:    64, iters:      2000, ns:     31,078,666, ns/i:    15,539.3
+name:     sn_mt_aww-64, threads:    64, iters:      2000, ns:      3,027,291, ns/i:     1,513.6
+name:     mi_mt_aww-64, threads:    64, iters:      2000, ns:      3,470,084, ns/i:     1,735.0
+name:     rp_mt_aww-64, threads:    64, iters:      2000, ns:      1,806,917, ns/i:       903.4
+name:     sm_mt_aww-64, threads:    64, iters:      2000, ns:        781,416, ns/i:       390.7
+smalloc diff from  default:  -57%
+smalloc diff from jemalloc:  -97%
+smalloc diff from snmalloc:  -74%
+smalloc diff from mimalloc:  -77%
+smalloc diff from rpmalloc:  -57%
 ```
 
-From `simd-json`'s benchmarks:
+([source](bench/results/cargo-bench.result.AppleM4Max.darwin25..txt))
+
+Results from `simd-json`'s benchmarks:
 
 ```text
 test                                                                            default                jemalloc                snmalloc                mimalloc                rpmalloc                 smalloc
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-apache_builds/simd_json::to_borrowed_value                            78.11 µs (  0.0%)       79.62 µs ( +1.9%)       74.65 µs ( -4.4%)       65.89 µs (-15.6%)       66.54 µs (-14.8%)       63.38 µs (-18.9%)
-apache_builds/simd_json::to_borrowed_value_with_buffers               75.90 µs (  0.0%)       77.88 µs ( +2.6%)       65.53 µs (-13.7%)       64.15 µs (-15.5%)       65.98 µs (-13.1%)       63.87 µs (-15.9%)
-apache_builds/simd_json::to_owned_value                              159.17 µs (  0.0%)      152.74 µs ( -4.0%)       96.61 µs (-39.3%)      108.59 µs (-31.8%)       96.32 µs (-39.5%)       94.93 µs (-40.4%)
-canada/simd_json::to_borrowed_value                                    3.81 ms (  0.0%)        4.10 ms ( +7.6%)        3.65 ms ( -4.1%)        3.09 ms (-18.8%)        3.15 ms (-17.3%)        2.75 ms (-27.7%)
-canada/simd_json::to_borrowed_value_with_buffers                       3.78 ms (  0.0%)        3.93 ms ( +4.1%)        3.09 ms (-18.3%)        3.07 ms (-18.9%)        3.11 ms (-17.7%)        2.75 ms (-27.3%)
-canada/simd_json::to_owned_value                                       3.84 ms (  0.0%)        4.05 ms ( +5.6%)        3.63 ms ( -5.4%)        3.09 ms (-19.5%)        3.11 ms (-19.0%)        2.72 ms (-29.2%)
-citm_catalog/simd_json::to_borrowed_value                              1.14 ms (  0.0%)        1.18 ms ( +3.6%)        1.18 ms ( +4.0%)      874.97 µs (-23.0%)      868.74 µs (-23.5%)      850.68 µs (-25.1%)
-citm_catalog/simd_json::to_borrowed_value_with_buffers                 1.11 ms (  0.0%)        1.14 ms ( +2.3%)      972.11 µs (-12.7%)      867.43 µs (-22.1%)      861.65 µs (-22.6%)      842.02 µs (-24.4%)
-citm_catalog/simd_json::to_owned_value                                 1.47 ms (  0.0%)        1.50 ms ( +2.0%)        1.34 ms ( -8.6%)        1.10 ms (-25.3%)      992.06 µs (-32.4%)      943.12 µs (-35.7%)
-event_stacktrace_10kb/simd_json::to_borrowed_value                     2.70 µs (  0.0%)        2.67 µs ( -1.1%)        2.82 µs ( +4.4%)        2.51 µs ( -6.9%)        2.73 µs ( +1.3%)        2.58 µs ( -4.4%)
-event_stacktrace_10kb/simd_json::to_borrowed_value_with_buffers        2.46 µs (  0.0%)        2.56 µs ( +4.1%)        2.47 µs ( +0.5%)        2.39 µs ( -2.8%)        2.52 µs ( +2.7%)        2.49 µs ( +1.2%)
-event_stacktrace_10kb/simd_json::to_owned_value                        3.14 µs (  0.0%)        3.05 µs ( -2.8%)        3.09 µs ( -1.6%)        2.91 µs ( -7.4%)        3.06 µs ( -2.3%)        2.84 µs ( -9.4%)
-github_events/simd_json::to_borrowed_value                            34.94 µs (  0.0%)       33.81 µs ( -3.2%)       31.01 µs (-11.2%)       29.90 µs (-14.4%)       29.85 µs (-14.6%)       30.47 µs (-12.8%)
-github_events/simd_json::to_borrowed_value_with_buffers               32.68 µs (  0.0%)       32.18 µs ( -1.5%)       29.82 µs ( -8.8%)       29.43 µs ( -9.9%)       29.75 µs ( -9.0%)       29.94 µs ( -8.4%)
-github_events/simd_json::to_owned_value                               59.66 µs (  0.0%)       56.36 µs ( -5.5%)       40.11 µs (-32.8%)       44.54 µs (-25.3%)       40.50 µs (-32.1%)       40.12 µs (-32.7%)
-log/simd_json::to_borrowed_value                                       1.41 µs (  0.0%)        1.28 µs ( -9.3%)        1.36 µs ( -3.9%)        1.28 µs ( -9.1%)        1.27 µs ( -9.8%)        1.28 µs ( -9.5%)
-log/simd_json::to_borrowed_value_with_buffers                          1.24 µs (  0.0%)        1.20 µs ( -3.5%)        1.25 µs ( +0.4%)        1.18 µs ( -4.8%)        1.18 µs ( -5.1%)        1.24 µs ( -0.0%)
-log/simd_json::to_owned_value                                          2.43 µs (  0.0%)        1.93 µs (-20.7%)        1.72 µs (-29.2%)        1.93 µs (-20.6%)        1.73 µs (-28.9%)        1.63 µs (-33.1%)
-twitter/simd_json::to_borrowed_value                                 420.87 µs (  0.0%)      400.49 µs ( -4.8%)      502.22 µs (+19.3%)      377.67 µs (-10.3%)      367.41 µs (-12.7%)      366.36 µs (-13.0%)
-twitter/simd_json::to_borrowed_value_with_buffers                    410.19 µs (  0.0%)      393.72 µs ( -4.0%)      440.66 µs ( +7.4%)      372.68 µs ( -9.1%)      365.49 µs (-10.9%)      363.89 µs (-11.3%)
-twitter/simd_json::to_owned_value                                    697.05 µs (  0.0%)      648.76 µs ( -6.9%)      584.61 µs (-16.1%)      512.20 µs (-26.5%)      461.02 µs (-33.9%)      462.87 µs (-33.6%)
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-NORMALIZED (100s baseline work)                                      2100.0 s  (      )      2066.4 s  (      )      1926.0 s  (      )      1762.3 s  (      )      1744.9 s  (      )      1688.4 s  (      )
-RELATIVE TO BASELINE                                                           ( +0.0%)                ( -1.6%)                ( -8.3%)                (-16.1%)                (-16.9%)                (-19.6%)
+...
+NORMALIZED (100s baseline work)                                      2100.0 s  (      )      2096.4 s  (      )      1944.6 s  (      )      1778.1 s  (      )      1756.2 s  (      )      1711.9 s  (      )
+RELATIVE TO BASELINE                                                           ( +0.0%)                ( -0.2%)                ( -7.4%)                (-15.3%)                (-16.4%)                (-18.5%)
 ```
+
+([source](bench/results/simd-json.result.AppleM4Max.darwin25..txt))
 
 # Limitations
 
