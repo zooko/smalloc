@@ -335,47 +335,48 @@ macro_rules! compare_st_bench_impl {
         @candidate $cand_display:expr, $cand_instance:expr;
         @optional_allocators $( #[cfg($opt_cfg:meta)] $opt_display:expr, $opt_instance:expr; )*
     ) => {{
-        let mut results = Vec::new();
+        use std::sync::{Arc, Mutex};
+        let results: Arc<Mutex<Vec<(&str, $crate::Nanoseconds)>>> = Arc::new(Mutex::new(Vec::new()));
+        let candidate_ns: Arc<Mutex<Option<$crate::Nanoseconds>>> = Arc::new(Mutex::new(None));
 
-        let candidate_ns = std::thread::scope(|s| {
+        std::thread::scope(|s| {
             // Spawn default allocator thread
-            let default_handle = s.spawn(move || {
+            let local_results = Arc::clone(&results);
+            s.spawn(move || {
                 let short = $crate::short_name($def_display);
                 let name = format!("{}_st_{}-1", short, stringify!($func));
-                ($def_display, $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed))
+                let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$def_instance, $seed);
+                local_results.lock().unwrap().push(($def_display, ns));
             });
 
             // Spawn smalloc thread
-            let candidate_handle = s.spawn(move || {
-                let short = $crate::short_name($cand_display);
-                let name = format!("{}_st_{}-1", short, stringify!($func));
-                $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, $cand_instance, $seed)
-            });
+            {
+                let candidate_ns_ref = Arc::clone(&candidate_ns);
+                s.spawn(move || {
+                    let short = $crate::short_name($cand_display);
+                    let name = format!("{}_st_{}-1", short, stringify!($func));
+                    let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, $cand_instance, $seed);
+                    *candidate_ns_ref.lock().unwrap() = Some(ns);
+                });
+            }
 
-            // Collect all optional allocator handles into a Vec
-            let mut opt_handles = Vec::new();
+            // Optional allocator threads
             $(
                 #[cfg($opt_cfg)]
                 {
-                    let opt_handle = s.spawn(move || {
+                    let local_results = Arc::clone(&results);
+                    s.spawn(move || {
                         let short = $crate::short_name($opt_display);
                         let name = format!("{}_st_{}-1", short, stringify!($func));
-                        ($opt_display, $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$opt_instance, $seed))
+                        let ns = $crate::singlethread_bench($func, $iters_per_batch, $num_batches, &name, &$opt_instance, $seed);
+                        local_results.lock().unwrap().push(($opt_display, ns));
                     });
-                    opt_handles.push(opt_handle);
                 }
             )*
+        }); // All threads join here
 
-            // NOW JOIN IN ORDER
-            results.push(default_handle.join().unwrap());
-
-            for handle in opt_handles {
-                results.push(handle.join().unwrap());
-            }
-
-            candidate_handle.join().unwrap()
-        });
-
+        let candidate_ns = candidate_ns.lock().unwrap().unwrap();
+        let results = results.lock().unwrap();
         $crate::print_comparisons(candidate_ns, &results);
     }};
 }
