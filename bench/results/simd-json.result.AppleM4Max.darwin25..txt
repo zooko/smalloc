@@ -1,0 +1,38 @@
+# git log -1 | head -1
+commit 62de31008d9e8b47d1bba6a08c98201b50bbc381
+
+( [ -z "$(git status --porcelain)" ] && echo "Clean" || echo "Uncommitted changes" )
+Clean
+
+CPU type:
+AppleM4Max
+
+OS type:
+darwin25
+
+test                                                                            default                jemalloc                snmalloc                mimalloc                rpmalloc                 smalloc
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+apache_builds/simd_json::to_borrowed_value                            75.25 µs (  0.0%)       80.50 µs ( +7.0%)       74.51 µs ( -1.0%)       65.72 µs (-12.7%)       66.64 µs (-11.4%)       65.09 µs (-13.5%)
+apache_builds/simd_json::to_borrowed_value_with_buffers               74.03 µs (  0.0%)       78.92 µs ( +6.6%)       65.70 µs (-11.3%)       65.46 µs (-11.6%)       66.16 µs (-10.6%)       64.55 µs (-12.8%)
+apache_builds/simd_json::to_owned_value                              154.32 µs (  0.0%)      154.75 µs ( +0.3%)       96.69 µs (-37.3%)      109.01 µs (-29.4%)       96.47 µs (-37.5%)       96.25 µs (-37.6%)
+canada/simd_json::to_borrowed_value                                    3.78 ms (  0.0%)        4.21 ms (+11.4%)        3.64 ms ( -3.8%)        3.09 ms (-18.2%)        3.15 ms (-16.6%)        2.77 ms (-26.8%)
+canada/simd_json::to_borrowed_value_with_buffers                       3.75 ms (  0.0%)        3.97 ms ( +5.8%)        3.09 ms (-17.8%)        3.07 ms (-18.3%)        3.11 ms (-17.1%)        2.76 ms (-26.5%)
+canada/simd_json::to_owned_value                                       3.82 ms (  0.0%)        4.09 ms ( +7.1%)        3.62 ms ( -5.3%)        3.09 ms (-19.2%)        3.11 ms (-18.7%)        2.72 ms (-28.9%)
+citm_catalog/simd_json::to_borrowed_value                              1.13 ms (  0.0%)        1.20 ms ( +5.7%)        1.22 ms ( +7.6%)      876.03 µs (-22.7%)      869.88 µs (-23.2%)      843.41 µs (-25.5%)
+citm_catalog/simd_json::to_borrowed_value_with_buffers                 1.11 ms (  0.0%)        1.16 ms ( +3.8%)      969.90 µs (-12.9%)      871.36 µs (-21.7%)      862.34 µs (-22.6%)      863.39 µs (-22.5%)
+citm_catalog/simd_json::to_owned_value                                 1.47 ms (  0.0%)        1.51 ms ( +2.7%)        1.29 ms (-12.6%)        1.09 ms (-25.6%)      993.00 µs (-32.5%)      947.18 µs (-35.6%)
+event_stacktrace_10kb/simd_json::to_borrowed_value                     2.68 µs (  0.0%)        2.66 µs ( -0.8%)        2.85 µs ( +6.4%)        2.51 µs ( -6.1%)        2.74 µs ( +2.2%)        2.64 µs ( -1.3%)
+event_stacktrace_10kb/simd_json::to_borrowed_value_with_buffers        2.43 µs (  0.0%)        2.57 µs ( +5.4%)        2.46 µs ( +1.0%)        2.39 µs ( -1.7%)        2.52 µs ( +3.7%)        2.56 µs ( +5.1%)
+event_stacktrace_10kb/simd_json::to_owned_value                        3.15 µs (  0.0%)        3.06 µs ( -3.1%)        3.08 µs ( -2.4%)        2.90 µs ( -8.2%)        3.07 µs ( -2.8%)        2.88 µs ( -8.7%)
+github_events/simd_json::to_borrowed_value                            34.87 µs (  0.0%)       33.91 µs ( -2.8%)       31.00 µs (-11.1%)       30.26 µs (-13.2%)       29.89 µs (-14.3%)       30.28 µs (-13.1%)
+github_events/simd_json::to_borrowed_value_with_buffers               32.68 µs (  0.0%)       32.35 µs ( -1.0%)       29.76 µs ( -8.9%)       29.71 µs ( -9.1%)       29.84 µs ( -8.7%)       31.21 µs ( -4.5%)
+github_events/simd_json::to_owned_value                               60.59 µs (  0.0%)       56.88 µs ( -6.1%)       40.07 µs (-33.9%)       44.66 µs (-26.3%)       40.51 µs (-33.2%)       39.48 µs (-34.8%)
+log/simd_json::to_borrowed_value                                       1.40 µs (  0.0%)        1.29 µs ( -8.2%)        1.36 µs ( -3.3%)        1.28 µs ( -8.7%)        1.27 µs ( -9.4%)        1.28 µs ( -8.9%)
+log/simd_json::to_borrowed_value_with_buffers                          1.24 µs (  0.0%)        1.21 µs ( -2.6%)        1.25 µs ( +0.8%)        1.18 µs ( -4.5%)        1.18 µs ( -4.9%)        1.25 µs ( +0.5%)
+log/simd_json::to_owned_value                                          2.45 µs (  0.0%)        1.93 µs (-21.1%)        1.73 µs (-29.5%)        1.94 µs (-20.6%)        1.73 µs (-29.4%)        1.63 µs (-33.3%)
+twitter/simd_json::to_borrowed_value                                 420.86 µs (  0.0%)      403.42 µs ( -4.1%)      536.31 µs (+27.4%)      380.50 µs ( -9.6%)      368.54 µs (-12.4%)      365.39 µs (-13.2%)
+twitter/simd_json::to_borrowed_value_with_buffers                    410.68 µs (  0.0%)      395.94 µs ( -3.6%)      439.76 µs ( +7.1%)      375.67 µs ( -8.5%)      366.53 µs (-10.8%)      367.07 µs (-10.6%)
+twitter/simd_json::to_owned_value                                    694.15 µs (  0.0%)      652.51 µs ( -6.0%)      591.15 µs (-14.8%)      513.09 µs (-26.1%)      460.77 µs (-33.6%)      447.71 µs (-35.5%)
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+NORMALIZED (100s baseline work)                                      2100.0 s  (      )      2096.4 s  (      )      1944.6 s  (      )      1778.1 s  (      )      1756.2 s  (      )      1711.9 s  (      )
+RELATIVE TO BASELINE                                                           ( +0.0%)                ( -0.2%)                ( -7.4%)                (-15.3%)                (-16.4%)                (-18.5%)
