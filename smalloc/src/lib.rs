@@ -336,23 +336,18 @@ pub mod i {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
-                        if unlikely(slabnum != orig_slabnum) {
-                            // The slabnum changed. Save the new slabnum for next time.
-                            set_slab_num(slabnum);
-                        }
-
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
                         // slab in the same size class.
-                        slabnum = failover_slabnum(slabnum);
+                        slabnum = (slabnum + SLAB_FAILOVER_NUM) & SLABNUM_BITS_ALONE_MASK;
                     }
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                     // different slab in the same size class.
 
-                    slabnum = failover_slabnum(slabnum);
+                    slabnum = (slabnum + SLAB_FAILOVER_NUM) & SLABNUM_BITS_ALONE_MASK;
 
                     if likely(slabnum != orig_slabnum) {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
@@ -456,15 +451,22 @@ pub mod i {
 pub use i::*;
 
 
-// ---- Constants having to do with the use of slot (and free list) pointers ----
+// ---- Constant having to do with slab failover ----
+
+// Which next-slab do we try in case of update collision or slab exhaustion? It needs to be
+// relatively prime to 64 so it will cycle through all slabs before returning to the first one, and
+// it should be far from 1 since the next few threads will be using the next few slabs.
+const SLAB_FAILOVER_NUM: u8 = (1u8 << NUM_SLABS_BITS) / 3; // 21
+
+// ---- Constant having to do with slot (and free list) pointers ----
 
 const SLOTNUM_AND_DATA_ADDR_MASK: u64 = gen_mask!(NUM_SN_D_T_BITS, u64); // 0b1111111111111111111111111111111111
 
-// ---- Constants having to do with the use of flh pointers ----
+// ---- Constant having to do with flh pointers ----
 
 const FLHWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh words
 
-// ---- Constants having to do with the use of flh words and free list entries ----
+// ---- Constants having to do with flh words and free list entries ----
 
 const FLHWORD_PUSH_COUNTER_MASK: u64 = gen_mask!(32, u64) << 32;
 const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
@@ -510,24 +512,6 @@ fn get_slabnum() -> u8 {
             slabnum as u8
         }
     })
-}
-
-#[inline(always)]
-fn set_slab_num(slabnum: u8) {
-    SLABNUM.with(|cell| {
-        cell.set(slabnum as u16);
-    });
-}
-
-/// Pick a new slab to fail over to. This is used in two cases in `inner_alloc()`: a. when a slab is
-/// full, and b. when there is a multithreading collision on the flh.
-///
-/// Which new slab to fail over to? Not one of the very next ones, because threads that subsequently
-/// first-allocated will be using those. And, make sure it is co-prime to NUM_SLABS so that we'll
-/// visit all slabs before returning to our original one.
-#[inline(always)]
-fn failover_slabnum(slabnum: u8) -> u8 {
-    (slabnum + 7) & SLABNUM_BITS_ALONE_MASK
 }
 
 unsafe impl Sync for Smalloc {}
