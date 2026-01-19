@@ -47,7 +47,8 @@ script. [Example output](results/rebar.bench-allocators.result.AppleM4Max.darwin
 
 Get this fork of the mimalloc-bench repo: https://github.com/zooko/mimalloc-bench and run the
 [bench-allocators.sh](https://github.com/zooko/mimalloc-bench/blob/master/bench-allocators.sh)
-script. (Only works on Linux.) [Example output](results/mimalloc-bench.output.txt)
+script. (Only works on Linux.) [Example
+output](results/mimalloc-bench.result.IntelRXeonRGold6152CPU210GHz.linuxgnu..txt)
 
 ## Your Code Here
 
