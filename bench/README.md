@@ -1,19 +1,3 @@
-# Count Lines of Code
-
-This is the one of the main measurements that I was optimizing for.
-
- * smalloc core: 351
- * smalloc core + smalloc-ffi: 785
- * rpmalloc: 2,509
- * glibc: 7,384
- * mimalloc: 9,949
- * snmalloc: 12,728
- * jemalloc: 25,713
-
-To count lines of code in various memory allocators using my methodology (mostly just excluding
-debug asserts), run [count-locs.sh](count-locs.sh). See an example output in
-[results/count-locs.output.txt](results/count-locs.output.txt).
-
 # Smalloc's bench tool
 
 `smalloc` comes with a "micro-benchmarking" tool, used to measure `smalloc`'s performance at a low
@@ -25,31 +9,32 @@ level, which can also compare to low-level measurements of other allocators. Run
 
 There is an example output in [results/cargo-bench.result.AppleM4Max.darwin25..txt](results/cargo-bench.result.AppleM4Max.darwin25..txt).
 
-# Benchmarking user code with different allocators
+# Count Lines of Code
 
-Here are some ways to benchmark smalloc to see the effect it has on performance of various
-codebases, and also to compare it to the default allocator, mimalloc, rpmalloc, snmalloc, and
-jemalloc.
+This is the one of the measurements that I was optimizing for.
 
-## Rust simd-json
+```text
+Allocator              Lines of Code
+----------------------------------------
+glibc                          7,384
+jemalloc                      25,713
+snmalloc                      12,728
+mimalloc                      10,042
+rpmalloc                       2,509
+smalloc                          351
+smalloc + ffi                    785
+```
 
-Get this fork of the Rust simd-json repo: https://github.com/zooko/simd-json and run the
-[bench-allocators.sh](https://github.com/zooko/simd-json/blob/main/bench-allocators.sh)
-script. [Example output](results/simd-json.result.AppleM4Max.darwin25..txt).
-
-## Rust rebar
-
-Get this fork of the Rust rebar repo: https://github.com/zooko/rebar and run the
-[bench-allocators.sh](https://github.com/zooko/rebar/blob/master/bench-allocators.sh)
-script. [Example output](results/rebar.bench-allocators.result.AppleM4Max.darwin25..txt).
-
-## mimalloc-bench
-
-Get this fork of the mimalloc-bench repo: https://github.com/zooko/mimalloc-bench and run the
-[bench-allocators.sh](https://github.com/zooko/mimalloc-bench/blob/master/bench-allocators.sh)
-script. (Only works on Linux.) [Example
-output](results/mimalloc-bench.result.IntelRXeonRGold6152CPU210GHz.linuxgnu..txt)
+To count lines of code in various memory allocators using this methodology (mostly just excluding
+debug asserts), use http://github.com/zooko/bench-allocators/ , which also produces colorful graphs
+of allocator performance in a couple of workloads.
 
 ## Your Code Here
 
-Make a script that runs benchmarks against your codebase like these and submit a pull request!
+Make a script that runs benchmarks against your codebase, possibly following the examples of
+https://github.com/zooko/rebar/blob/83f8713590c9f426303abccc8efb3c370cfe5441/bench-allocators.sh and
+https://github.com/zooko/simd-json/blob/365e8a6a7824e66b895c173d9afe1e8127b22ad7/bench-allocators.sh
+(if your code is in Rust) or
+https://github.com/zooko/mimalloc-bench/blob/1a88cbd77a7e7d21248b33d5d0b31d925bbcd64c/bench-allocators.sh
+(if your code is in C/C++/Zig/etc) and publish them and let me know by opening an issue or a
+pull-request against this file!

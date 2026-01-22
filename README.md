@@ -1,11 +1,10 @@
 # smalloc -- a simple memory allocator
 
-`smalloc` is suitable as a drop-in replacement for `ptmalloc2` (the glibc memory allocator),
-`libmalloc` (the Macos userspace memory allocator), `jemalloc`, `mimalloc`, `snmalloc`, `rpmalloc`,
-etc.
+`smalloc` is suitable as a drop-in replacement for the glibc memory allocator, `jemalloc`,
+`mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features (see below).
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 351 lines of Rust code! The other high-quality memory
+simpler. The current implementation is only 351 lines of Rust code. The other high-quality memory
 allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
@@ -20,13 +19,10 @@ management bugs.
 
 # Performance
 
-See [./bench/README.md](./bench/README.md) for various ways to benchmark `smalloc` and compare it to
-the default memory allocator, `jemalloc`, `snmalloc`, `mimalloc`, and `rpmalloc`.
+See [./bench/README.md](./bench/README.md) for benchmarks of the default/system memory allocator,
+`smalloc`, `jemalloc`, `snmalloc`, `mimalloc`, and `rpmalloc`.
 
-Here are two data points to demonstrate that `smalloc` is sometimes faster than the
-alternatives. See the [./bench/results/](./bench/results/) directory for more results.
-
-Results from `smalloc`'s bench tool:
+Example result to demonstrate that `smalloc` is sometimes more efficient than the alternatives:
 
 ```text
 name:     de_mt_aww-64, threads:    64, iters:      2000, ns:      1,807,708, ns/i:       903.8
@@ -44,18 +40,6 @@ smalloc diff from rpmalloc:  -57%
 
 ([source](bench/results/cargo-bench.result.AppleM4Max.darwin25..txt))
 
-Results from `simd-json`'s benchmarks:
-
-```text
-test                                                                            default                jemalloc                snmalloc                mimalloc                rpmalloc                 smalloc
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-...
-NORMALIZED (100s baseline work)                                      2100.0 s  (      )      2096.4 s  (      )      1944.6 s  (      )      1778.1 s  (      )      1756.2 s  (      )      1711.9 s  (      )
-RELATIVE TO BASELINE                                                           ( +0.0%)                ( -0.2%)                ( -7.4%)                (-15.3%)                (-16.4%)                (-18.5%)
-```
-
-([source](bench/results/simd-json.result.AppleM4Max.darwin25..txt))
-
 # Limitations
 
 There are two limitations:
@@ -71,15 +55,6 @@ There are two limitations:
    case, but that would result in performance degradation and possibly in less predictable failure
    modes. I want smalloc to have consistent performance and failure modes so I choose to return a
    null pointer in that case.
-
-   Some other state of the art allocators have similar limitations, for example `rpmalloc` tops out
-   at 8 MiB allocations according to https://github.com/mjansson/rpmalloc?tab=readme-ov-file,
-   although I suspect they fall back to mmap or the system allocator in that case rather than
-   immediately failing, so that instead of an immediate failure you get a drop in performance and
-   possibly later and different failures.
-   
-   According [to this post](https://lobste.rs/s/ubcsl9/smalloc_simple_memory_allocator#c_hfdd0f) by
-   David Chisnall, `snmalloc` does _not_ impose such limitations.
 
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
@@ -508,15 +483,14 @@ that many slots from that slab currently allocated.
 Or, suppose the user calls `malloc()` and you encounter a free-list-head update collision, i.e. you
 reach step 5 of the thread-safe algorithm for popping an entry from the free list (above).
 
-In either of these cases, try allocating from a different slab in the same size class. If it
-succeeds, update your thread's `SLABNUM` to point to this new slab. If this attempt, too, fails, for
-either of those two reasons, then try yet another different slab in the same size class. If you've
-tried every slab in this size class, and they've all failed (whether due to that slab being
-exhausted or due to encountering an `flh` update collision when trying to pop from that slab's free
-list), then *if* at least one slab was exhausted, move to the next bigger size class and continue
-trying. (Thanks to Nate Wilcox -- also my colleague at Shielded Labs -- for suggesting this
-technique to me.) On the other hand, if none of the slabs were exhausted, then continue cycling
-through them trying to allocate from one of them.
+In either of these cases, try allocating from a different slab in the same size class. If this
+attempt, too, fails, for either of those two reasons, then try yet another different slab in the
+same size class. If you've tried every slab in this size class, and they've all failed (whether due
+to that slab being exhausted or due to encountering an `flh` update collision when trying to pop
+from that slab's free list), then *if* at least one slab was exhausted, move to the next bigger size
+class and continue trying. (Thanks to Nate Wilcox -- also my colleague at Shielded Labs -- for
+suggesting this technique to me.) On the other hand, if none of the slabs were exhausted, then
+continue cycling through them trying to allocate from one of them.
 
 ## Realloc Growers
 
@@ -934,7 +908,7 @@ each of them.)
 
 ## License
 
-You may use `smalloc` under the terms of any of these four licences:
+You may use `smalloc` under the terms of any of these four Free and Open Source Software licences:
 
 * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)

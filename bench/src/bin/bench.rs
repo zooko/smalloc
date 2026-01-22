@@ -122,27 +122,21 @@ pub fn main() {
         }
         
         compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         compare_st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         compare_st_bench!(adr, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         compare_st_bench!(adww, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         compare_st_bench!(ad, iters_st_many, num_st_batches, seed);
 
         compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
         compare_st_bench!(aww, ITERS_FEW, num_st_batches, seed);
 
         compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
         compare_st_bench!(a, ITERS_FEW, num_st_batches, seed);
     } else {
         if thorough {
@@ -178,27 +172,21 @@ pub fn main() {
         }
         
         mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
         mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         st_bench!(adr, iters_st_many, num_st_batches, seed);
 
         mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         st_bench!(adww, iters_st_many, num_st_batches, seed);
 
         mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, iters_many, num_batches, seed);
         st_bench!(ad, iters_st_many, num_st_batches, seed);
 
         mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
         st_bench!(aww, ITERS_FEW, num_st_batches, seed);
 
         mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS * 2, ITERS_FEW, num_batches, seed);
         st_bench!(a, ITERS_FEW, num_st_batches, seed);
     }
 }
