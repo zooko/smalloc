@@ -1,3 +1,9 @@
+
+use crate::Smalloc;
+use std::sync::atomic::Ordering::Relaxed;
+use crate::*;
+use std::alloc::{Layout, GlobalAlloc};
+
 /// If we've allocated all the slots from a slab, the next allocation of that sizeclass comes
 /// from a different slab of the same sizeclass. This test doesn't work for the largest
 /// sizeclass simply because the test assumes you can allocate 2 slots...
@@ -336,6 +342,7 @@ fn highest_slotnum(sc: u8) -> u32 {
     help_numslots(sc) - 1
 }
 
+use std::cmp::max;
 nextest_unit_tests! {
     fn test_reqali_to_sc() {
         let test_cases = [
@@ -670,9 +677,3 @@ macro_rules! nextest_unit_tests {
         )*
     };
 }
-
-use crate::Smalloc;
-use std::sync::atomic::Ordering::Relaxed;
-use crate::*;
-use std::alloc::{Layout, GlobalAlloc};
-use std::cmp::max;

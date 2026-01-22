@@ -1,4 +1,7 @@
-cargo-features = ["profile-rustflags"]
+# This is an unstable feature. Leaving it commented-out in case someone wants to use it in their
+# local build that uses nightly, or in case we can start using it again in the glorious future when
+# Rust stable supports it.
+# cargo-features = ["profile-rustflags"]
 
 [workspace]
 members = ["smalloc", "smalloc-ffi", "hellosmalloc", "bench", "find_max_vm_addresses_reservable"]
@@ -25,7 +28,9 @@ codegen-units = 1
 lto = "fat"
 debug-assertions = false
 overflow-checks = false
-rustflags = ["-C", "target-cpu=native"]
+
+# See comment above about profile-rustflags
+# rustflags = ["-C", "target-cpu=native"]
 
 [profile.profiling]
 inherits = "release"
@@ -33,4 +38,7 @@ debug = 2
 opt-level = 2
 lto = "thin"
 codegen-units = 16
-rustflags = ["-C", "force-frame-pointers=yes", "-C", "target-cpu=native"]
+
+# See comment above about profile-rustflags
+# rustflags = ["-C", "force-frame-pointers=yes", "-C", "target-cpu=native"]
+

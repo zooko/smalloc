@@ -28,9 +28,9 @@ mkdir -p tmp
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
     # no jemalloc or snmalloc on windows
-    ALLOCATORS="mimalloc rpmalloc smalloc"
+    ALLOCATORS="mimalloc,rpmalloc"
 else
-    ALLOCATORS="jemalloc snmalloc mimalloc rpmalloc smalloc"
+    ALLOCATORS="jemalloc,snmalloc,mimalloc,rpmalloc"
 fi
 
 set -e
@@ -38,16 +38,16 @@ set -e
 cargo --locked build --release --package bench --features=$ALLOCATORS &&
 
 # Run benchmarks
-./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF &&
+./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
 
 # Generate comparison with metadata passed as arguments
-./sumstats.py tmp/default $ALLOCATORS \
-    --commit "$GITCOMMIT" \
-    --git-status "$GITCLEANSTATUS" \
-    --cpu "$CPUTYPE" \
-    --os "$OSTYPE" \
-    --graph "$GRAPHF" \
-    2>&1 | tee -a $RESF
+# ./sumstats.py default $ALLOCATORS \
+#     --commit "$GITCOMMIT" \
+#     --git-status "$GITCLEANSTATUS" \
+#     --cpu "$CPUTYPE" \
+#     --os "$OSTYPE" \
+#     --graph "$GRAPHF" \
+#     2>&1 | tee -a $RESF
 
-echo "# Results are in \"${RESF}\" ."
-echo "# Graph is in \"${GRAPHF}\" ."
+# echo "# Results are in \"${RESF}\" ."
+# echo "# Graph is in \"${GRAPHF}\" ."

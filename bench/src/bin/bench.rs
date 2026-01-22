@@ -1,4 +1,3 @@
-#![feature(rustc_private)]
 #![allow(unused_imports)]
 
 use bench::{st_bench, mt_bench, compare_st_bench, compare_mt_bench, compare_fh_bench, multithread_hotspot, multithread_free_hotspot, compare_hs_bench};

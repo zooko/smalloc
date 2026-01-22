@@ -1,5 +1,3 @@
-#![feature(likely_unlikely)]
-
 // Table of contents of this file:
 //
 // * Public structs and methods
@@ -11,6 +9,16 @@
 //     - Constants having to do with the use of flh words
 //     - Constants for calculating the total virtual address space to reserve
 //xxx update this ToC
+
+use core::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, AtomicBool};
+use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use core::cell::{Cell, UnsafeCell};
+use core::alloc::{GlobalAlloc, Layout};
+use core::ptr::{copy_nonoverlapping, null_mut};
+use plat::p::sys_alloc;
+
+#[cfg(any(target_os = "windows", doc))]
+use plat::p::sys_commit;
 
 
 // --- Public structs and methods ---
@@ -179,6 +187,9 @@ macro_rules! gen_mask { ($bits:expr, $ty:ty) => { ((!0 as $ty) >> (<$ty>::BITS -
 
 #[doc(hidden)]
 pub mod i {
+    use crate::*;
+    pub mod plat;
+
     // Everything in this `i` ("internal") module is for the use of the smalloc core lib (this file)
     // and for the use of the smalloc-ffi package.
 
@@ -444,8 +455,19 @@ pub mod i {
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
 
-    pub mod plat;
-    use crate::*;
+    // Gating this on a feature named "nightly" is commented out because the resulting optimization
+    // is probably not worth the code and build-system complexity.  #[cfg(feature = "nightly")] pub
+    // use
+
+    // core::intrinsics::{likely, unlikely};
+    // 
+    // #[cfg(not(feature = "nightly"))]
+    #[inline(always)]
+    pub const fn likely(b: bool) -> bool { b }
+
+    // #[cfg(not(feature = "nightly"))]
+    #[inline(always)]
+    pub const fn unlikely(b: bool) -> bool { b }
 }
 
 pub use i::*;
@@ -535,14 +557,3 @@ const fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
 
 #[cfg(test)]
 mod tests;
-
-use core::hint::{likely, unlikely};
-use core::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, AtomicBool};
-use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use core::cell::{Cell, UnsafeCell};
-use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::{copy_nonoverlapping, null_mut};
-use plat::p::sys_alloc;
-
-#[cfg(any(target_os = "windows", doc))]
-use plat::p::sys_commit;

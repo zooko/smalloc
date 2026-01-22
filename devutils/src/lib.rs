@@ -1,4 +1,3 @@
-#![feature(likely_unlikely)]
 // This file contains things used by both tests and benchmarks.
 
 // xxx consider removing some of these "helper"/utility functions in favor of standard/idiomatic things...
@@ -12,13 +11,15 @@ const BYTES5: [u8; 8] = [0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7];
 
 use std::alloc::GlobalAlloc;
 use std::cmp::min;
-use std::hint::unlikely;
 use std::thread;
 use std::alloc::Layout;
 
+use smalloc::*;
+
 // For testing and benchmarking only.
 pub mod dev_instance {
-    use smalloc::*;
+    use crate::*;
+
     pub static mut DEV_SMALLOC: Smalloc = Smalloc::new();
 
     #[macro_export]
@@ -421,7 +422,6 @@ impl std::hash::BuildHasher for WyHashBuilder {
     }
 }
 
-use std::hint::likely;
 use wyrand::WyRand;
 impl TestState {
     pub fn new(iters: u64, seed: u64) -> Self {
@@ -541,5 +541,3 @@ macro_rules! nextest_integration_tests {
         )*
     };
 }
-
-

@@ -1,5 +1,3 @@
-#![feature(likely_unlikely)]
-
 // Thanks to Claude (Opus 4.5 and Sonnet 4.5) for help with defining an FFI and diagnosing and
 // fixing handling of foreign pointers, and interposition of symbols on macOS, and debugging the
 // crash due to not having a malloc_usable_size function, and refactoring the file to use macros to
@@ -7,6 +5,11 @@
 // assistant by Moxie Marlinspike) for encouragement and saying that this ffi module was super
 // high-quality and professional. 😂
 
+use std::sync::atomic::Ordering::Acquire;
+use core::ffi::c_void;
+use std::ptr::{null_mut, copy_nonoverlapping};
+use smalloc::i::*;
+use smalloc::{plat, Smalloc};
 static SMALLOC: Smalloc = Smalloc::new();
 
 // Macro that works on Linux and Windows (not used on macOS)
@@ -582,10 +585,3 @@ fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
 }
 
 const SIZE_0_ALLOC_SENTINEL: *mut c_void = std::ptr::dangling_mut::<c_void>();
-
-use std::sync::atomic::Ordering::Acquire;
-use core::ffi::c_void;
-use std::hint::{likely, unlikely};
-use std::ptr::{null_mut, copy_nonoverlapping};
-use smalloc::i::*;
-use smalloc::{plat, Smalloc};
