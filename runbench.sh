@@ -6,6 +6,7 @@ BNAME="cargo-bench"
 GITCOMMIT="$(git log -1 | head -1 | cut -d' ' -f2)"
 GITCLEANSTATUS=$( [ -z "$( git status --porcelain )" ] && echo \"Clean\" || echo \"Uncommitted changes\" )
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
 # CPU type on linuxy
 CPUTYPE=`grep "model name" /proc/cpuinfo 2>/dev/null | uniq | cut -d':' -f2-`
 if [ "x${CPUTYPE}" = "x" ] ; then
@@ -20,6 +21,8 @@ OUTPUT_DIR="${OUTPUT_DIR:-./bench/results}/${CPUSTR_DOT_OSSTR}"
 
 RESF="${OUTPUT_DIR}/${BNAME}.result.txt"
 GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
+
+mkdir -p ${OUTPUT_DIR}
 
 rm -f $RESF
 
