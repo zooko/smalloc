@@ -7,7 +7,12 @@ level, which can also compare to low-level measurements of other allocators. Run
 ./runbench.sh
 ```
 
-There is an example output in [results/cargo-bench.result.AppleM4Max.darwin25..txt](results/cargo-bench.result.AppleM4Max.darwin25..txt).
+Example output: [results/AppleM4Max.darwin25/cargo-bench.result.txt](results/AppleM4Max.darwin25/cargo-bench.result.txt).
+
+![](results/AppleM4Max.darwin25/cargo-bench.graph-st.svg)
+
+![](results/AppleM4Max.darwin25/cargo-bench.graph-mt.svg)
+
 
 # Count Lines of Code
 
