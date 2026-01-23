@@ -21,6 +21,13 @@ OUTPUT_DIR="${OUTPUT_DIR:-./bench/results}/${CPUSTR_DOT_OSSTR}"
 RESF="${OUTPUT_DIR}/${BNAME}.result.txt"
 GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
 
+rm -f $RESF
+
+echo "GITCOMMIT: ${GITCOMMIT}" 2>&1 | tee -a $RESF
+echo "GITCLEANSTATUS: ${GITCLEANSTATUS}" 2>&1 | tee -a $RESF
+echo "CPUTYPE: ${CPUTYPE}" 2>&1 | tee -a $RESF
+echo "OSTYPE: ${OSTYPE}" 2>&1 | tee -a $RESF
+
 mkdir -p ${OUTPUT_DIR}
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
@@ -44,4 +51,4 @@ echo 2>&1 | tee -a $RESF &&
     --cpu "$CPUTYPE" \
     --os "$OSTYPE" &&
 
-echo "# Results are in \"${RESF}\" ."
+echo "# Data results (text) are in \"${RESF}\" ."

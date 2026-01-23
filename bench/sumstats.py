@@ -92,7 +92,29 @@ def sort_allocators(allocators):
         return (1, name)
     return sorted(allocators, key=sort_key)
 
-def generate_detailed_graph(ratios, test_type, output_file, metadata):
+def format_ns_truncated(ns_value):
+    """Format nanoseconds as truncated whole number with appropriate unit."""
+    if ns_value >= 1_000_000:
+        # Milliseconds
+        return f"{int(ns_value / 1_000_000)}ms"
+    elif ns_value >= 1_000:
+        # Microseconds
+        return f"{int(ns_value / 1_000)}μs"
+    else:
+        # Nanoseconds
+        return f"{int(ns_value)}ns"
+
+def format_pct_diff(ratio):
+    """Format percentage difference from baseline."""
+    pct_diff = (ratio - 1.0) * 100
+    if abs(pct_diff) < 0.5:
+        return "0%"
+    elif pct_diff > 0:
+        return f"+{int(round(pct_diff))}%"
+    else:
+        return f"{int(round(pct_diff))}%"
+
+def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
     """Generate detailed bar chart showing each test's performance."""
 
     # Filter tests for this type (st or mt)
@@ -111,25 +133,38 @@ def generate_detailed_graph(ratios, test_type, output_file, metadata):
         return
 
     # Create figure
-    fig, ax = plt.subplots(figsize=(12, 7))
-    plt.subplots_adjust(bottom=0.25)
+    fig, ax = plt.subplots(figsize=(14, 8))
+    plt.subplots_adjust(bottom=0.18, top=0.88)
 
     # Bar positioning
     n_allocators = len(allocators)
     n_tests = len(tests)
     bar_width = 0.8 / n_allocators
 
+    # Store bar data for labeling
+    bar_data = []  # [(x_pos, height, ns_value, ratio, allocator), ...]
+
     for i, allocator in enumerate(allocators):
         alloc_ratios = ratios.get(allocator, {})
+        alloc_results = results.get(allocator, {})
         values = []
+        ns_values = []
+        ratio_values = []
         for test in tests:
             ratio = alloc_ratios.get(test, 1.0)
+            ns_val = alloc_results.get(test, 0)
             # Convert ratio to percentage (baseline = 100%)
             pct = ratio * 100
             values.append(pct)
+            ns_values.append(ns_val)
+            ratio_values.append(ratio)
 
         x = np.arange(n_tests) + i * bar_width
-        ax.bar(x, values, bar_width, label=allocator, color=get_color(allocator), edgecolor='none')
+        bars = ax.bar(x, values, bar_width, label=allocator, color=get_color(allocator), edgecolor='none')
+
+        # Store data for labeling
+        for j, (bar, ns_val, ratio) in enumerate(zip(bars, ns_values, ratio_values)):
+            bar_data.append((bar.get_x() + bar.get_width()/2, bar.get_height(), ns_val, ratio, allocator))
 
     # Set y-axis to logarithmic scale
     ax.set_yscale('log')
@@ -148,11 +183,12 @@ def generate_detailed_graph(ratios, test_type, output_file, metadata):
         for test in tests:
             ratio = alloc_ratios.get(test, 1.0)
             all_values.append(ratio * 100)
+
     min_pct = min(all_values) if all_values else 100
     max_pct = max(all_values) if all_values else 100
 
     # Set limits with some padding in log space
-    ax.set_ylim(min_pct * 0.7, max_pct * 1.5)
+    ax.set_ylim(min_pct * 0.7, max_pct * 2.5)
 
     # Add horizontal line at 100% for reference (baseline)
     ax.axhline(y=100, color='#333333', linewidth=1.5, linestyle='--', alpha=0.7, label='_nolegend_')
@@ -161,9 +197,35 @@ def generate_detailed_graph(ratios, test_type, output_file, metadata):
     ax.yaxis.grid(True, linestyle='--', alpha=0.3, which='both')
     ax.set_axisbelow(True)
 
+    # Add labels: absolute time above bar, percentage diff inside bar
+    for x_pos, bar_height, ns_val, ratio, allocator in bar_data:
+        # Absolute time label above the bar
+        if ns_val > 0:
+            label = format_ns_truncated(ns_val)
+            ax.annotate(label,
+                        xy=(x_pos, bar_height),
+                        xytext=(0, 3),
+                        textcoords='offset points',
+                        ha='center', va='bottom',
+                        fontsize=7, fontweight='bold',
+                        color='#333333')
+
+        # Percentage diff inside the bar (near the top)
+        # Skip for baseline (default) since it's always 0%
+        if allocator != 'default':
+            pct_label = format_pct_diff(ratio)
+            # Position inside the bar, near the top
+            # Use a position that's 85% of the bar height (in log space)
+            inner_y = bar_height * 0.92
+            ax.annotate(pct_label,
+                        xy=(x_pos, inner_y),
+                        ha='center', va='top',
+                        fontsize=6, fontweight='bold',
+                        color='white')
+
     # Title
     type_label = "Single-Threaded" if test_type == "st" else "Multi-Threaded"
-    ax.set_title(f'{type_label} Performance by Test\n(Time vs baseline, lower is better, log scale)', 
+    ax.set_title(f'{type_label} Performance by Test\n(Time vs baseline, lower is better, log scale)',
                  fontsize=14, fontweight='bold', pad=15)
 
     # Legend
@@ -217,6 +279,7 @@ def main():
     parser.add_argument('--cpu', help='CPU type')
     parser.add_argument('--os', help='OS type')
     parser.add_argument('--source', help='Source URL')
+
     args = parser.parse_args()
 
     # Parse benchmark output
@@ -232,7 +295,6 @@ def main():
     # Compute arithmetic means per allocator, split by ST and MT
     means_st = {}
     means_mt = {}
-
     for allocator, test_ratios in ratios.items():
         st_ratios = [r for name, r in test_ratios.items() if name.startswith('st_')]
         mt_ratios = [r for name, r in test_ratios.items() if name.startswith('mt_')]
@@ -292,14 +354,14 @@ def main():
 
         base_name = args.graph
 
-        # Detailed graphs
+        # Detailed graphs (passing results for ns/i values)
         if means_st:
             gfname = f'{base_name}st.svg'
-            generate_detailed_graph(ratios, 'st', gfname, metadata)
+            generate_detailed_graph(ratios, results, 'st', gfname, metadata)
             print("Singlethreaded benchmarks graph is in %s" % gfname)
         if means_mt:
             gfname = f'{base_name}mt.svg'
-            generate_detailed_graph(ratios, 'mt', gfname, metadata)
+            generate_detailed_graph(ratios, results, 'mt', gfname, metadata)
             print("Multithreaded benchmarks graph is in %s" % gfname)
 
 if __name__ == '__main__':
