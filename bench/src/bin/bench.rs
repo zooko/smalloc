@@ -39,6 +39,8 @@ pub fn main() {
             0
         });
 
+    println!("Using seed: {}", seed);
+    
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
@@ -48,9 +50,6 @@ pub fn main() {
     // they're so fast.
     let num_st_batches = 40;
 
-
-    println!("Using seed: {}", seed);
-    
     const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 64;
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
@@ -67,6 +66,15 @@ pub fn main() {
 
     if compare {
         if thorough {
+            compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
+            compare_st_bench!(a, ITERS_FEW, num_st_batches, seed);
+
+            compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            compare_st_bench!(ad, iters_st_many, num_st_batches, seed);
+
+            compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            compare_st_bench!(adr, iters_st_many, num_st_batches, seed);
+
             // hs_bench simulates a somewhat plausible scenario, which is a worst-case-scenario for
             // smalloc before v7.2, when a bunch of threads are all trying to alloc/dealloc from the
             // same slab. This benchmark is structured specifically to exerise smalloc's hotspot:
@@ -123,22 +131,22 @@ pub fn main() {
         compare_mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
-        compare_mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_st_bench!(adr, iters_st_many, num_st_batches, seed);
-
         compare_mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         compare_st_bench!(adww, iters_st_many, num_st_batches, seed);
 
-        compare_mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        compare_st_bench!(ad, iters_st_many, num_st_batches, seed);
-
         compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         compare_st_bench!(aww, ITERS_FEW, num_st_batches, seed);
-
-        compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        compare_st_bench!(a, ITERS_FEW, num_st_batches, seed);
     } else {
         if thorough {
+            mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
+            st_bench!(a, ITERS_FEW, num_st_batches, seed);
+
+            mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            st_bench!(ad, iters_st_many, num_st_batches, seed);
+
+            mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            st_bench!(adr, iters_st_many, num_st_batches, seed);
+
             let l = Layout::from_size_align(32, 1).unwrap();
             let sm = devutils::get_devsmalloc!();
             sm.idempotent_init();
@@ -173,19 +181,10 @@ pub fn main() {
         mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         st_bench!(adrww, iters_st_many, num_st_batches, seed);
 
-        mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        st_bench!(adr, iters_st_many, num_st_batches, seed);
-
         mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
         st_bench!(adww, iters_st_many, num_st_batches, seed);
 
-        mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        st_bench!(ad, iters_st_many, num_st_batches, seed);
-
         mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         st_bench!(aww, ITERS_FEW, num_st_batches, seed);
-
-        mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        st_bench!(a, ITERS_FEW, num_st_batches, seed);
     }
 }

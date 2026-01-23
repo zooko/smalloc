@@ -15,39 +15,33 @@ fi
 CPUTYPESTR="${CPUTYPE//[^[:alnum:]]/}"
 OSTYPESTR="${OSTYPE//[^[:alnum:]]/}"
 ARGS=$*
-ARGSSTR="${ARGS//[^[:alnum:]]/}"
 CPUSTR_DOT_OSSTR="${CPUTYPESTR}.${OSTYPESTR}"
-FNAME="${BNAME}.result.${CPUSTR_DOT_OSSTR}.txt"
-RESF="tmp/${FNAME}"
-GRAPHF="tmp/${BNAME}.graph.${CPUSTR_DOT_OSSTR}.svg"
+OUTPUT_DIR="${OUTPUT_DIR:-./bench/results}/${CPUSTR_DOT_OSSTR}"
 
-echo "# Saving result into \"${RESF}\""
-echo "# Saving graph into \"${GRAPHF}\""
-rm -f $RESF $GRAPHF
-mkdir -p tmp
+RESF="${OUTPUT_DIR}/${BNAME}.result.txt"
+GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
+
+mkdir -p ${OUTPUT_DIR}
 
 if [ "x${OSTYPE}" = "xmsys" ]; then
     # no jemalloc or snmalloc on windows
-    ALLOCATORS="mimalloc,rpmalloc"
+    ALLOCATORS=mimalloc,rpmalloc
 else
-    ALLOCATORS="jemalloc,snmalloc,mimalloc,rpmalloc"
+    ALLOCATORS=mimalloc,rpmalloc,jemalloc,snmalloc
 fi
-
-set -e
 
 cargo --locked build --release --package bench --features=$ALLOCATORS &&
 
-# Run benchmarks
-./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
+echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $RESF &&
+echo 2>&1 | tee -a $RESF &&
+./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF &&
 
-# Generate comparison with metadata passed as arguments
-# ./sumstats.py default $ALLOCATORS \
-#     --commit "$GITCOMMIT" \
-#     --git-status "$GITCLEANSTATUS" \
-#     --cpu "$CPUTYPE" \
-#     --os "$OSTYPE" \
-#     --graph "$GRAPHF" \
-#     2>&1 | tee -a $RESF
+# Generate graphs with sumstats.py
+./bench/sumstats.py "$RESF" \
+    --graph "$GRAPH_BASE" \
+    --commit "$GITCOMMIT" \
+    --git-status "$GITCLEANSTATUS" \
+    --cpu "$CPUTYPE" \
+    --os "$OSTYPE" &&
 
-# echo "# Results are in \"${RESF}\" ."
-# echo "# Graph is in \"${GRAPHF}\" ."
+echo "# Results are in \"${RESF}\" ."
