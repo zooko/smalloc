@@ -4,9 +4,7 @@
 import sys
 import re
 import argparse
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
+import math
 
 # Allocator colors
 ALLOCATOR_COLORS = {
@@ -35,14 +33,13 @@ def parse_benchmark_output(filename):
         content = f.read()
 
     # Pattern to match benchmark lines like:
-    # name:   de_mt_adrww-64, threads:    64, iters:     20000, ns:     15,778,375, ns/i:       788.9
-
+    # name: de_mt_adrww-64, threads: 64, iters: 20000, ns: 15,778,375, ns/i: 788.9
     pattern = r'name:\s+(\w+)_(\w+)_([^,]+),\s+threads:\s+([\d,]+),\s+iters:\s+[\d,]+,\s+ns:\s+[\d,]+,\s+ns/i:\s+([\d.,]+)'
 
     for match in re.finditer(pattern, content):
         allocator_prefix = match.group(1)  # e.g., "mi" for mimalloc
-        thread_type = match.group(2)        # e.g., "mt" or "st"
-        test_suffix = match.group(3)        # e.g., "a-64" or "adrww"
+        thread_type = match.group(2)       # e.g., "mt" or "st"
+        test_suffix = match.group(3)       # e.g., "a-64" or "adrww"
         threads = int(match.group(4).replace(',', ''))
         ns_per_iter = float(match.group(5).replace(',', ''))
 
@@ -55,7 +52,6 @@ def parse_benchmark_output(filename):
             'sm': 'smalloc',
             'de': 'default',
         }
-
         allocator = allocator_map.get(allocator_prefix, allocator_prefix)
 
         # Create test name: thread_type + test_suffix (e.g., "st_a" or "mt_adrww-64")
@@ -63,7 +59,6 @@ def parse_benchmark_output(filename):
 
         if allocator not in results:
             results[allocator] = {}
-
         results[allocator][test_name] = ns_per_iter
 
     return results
@@ -115,9 +110,43 @@ def format_pct_diff(ratio):
     else:
         return f"{int(round(pct_diff))}%"
 
+def escape_xml(text):
+    """Escape special XML characters."""
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+
+def rounded_rect_path(x, y, width, height, radius):
+    """Generate SVG path for rectangle with only top corners rounded."""
+    r = min(radius, width / 2, height / 2)
+
+    # Start at bottom-left, go clockwise
+    path = f"M {x} {y + height}"
+    path += f" L {x + width} {y + height}"
+    path += f" L {x + width} {y + r}"
+    path += f" A {r} {r} 0 0 0 {x + width - r} {y}"
+    path += f" L {x + r} {y}"
+    path += f" A {r} {r} 0 0 0 {x} {y + r}"
+    path += f" Z"
+
+    return path
+
+def needs_log_scale(ratios, tests, allocators):
+    """Check if any test group has a 10x or greater ratio between measurements."""
+    for test in tests:
+        test_pcts = []
+        for allocator in allocators:
+            alloc_ratios = ratios.get(allocator, {})
+            if test in alloc_ratios:
+                test_pcts.append(alloc_ratios[test] * 100)
+
+        if len(test_pcts) >= 2:
+            min_pct = min(test_pcts)
+            max_pct = max(test_pcts)
+            if min_pct > 0 and max_pct / min_pct >= 10:
+                return True
+    return False
+
 def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
     """Generate detailed bar chart showing each test's performance."""
-
     # Filter tests for this type (st or mt)
     allocators = sort_allocators([a for a in ratios.keys() if ratios[a]])
 
@@ -129,146 +158,296 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
                 all_tests.add(test_name)
 
     tests = sorted(all_tests)
+
     if not tests:
         print(f"No {test_type} tests found, skipping detailed graph", file=sys.stderr)
         return
 
-    # Create figure
-    fig, ax = plt.subplots(figsize=(14, 8))
-    plt.subplots_adjust(bottom=0.18, top=0.88)
+    # Determine if we need log scale
+    use_log_scale = needs_log_scale(ratios, tests, allocators)
 
-    # Bar positioning
+    # SVG dimensions
+    svg_width = 1000
+    svg_height = 550
+    margin_left = 80
+    margin_right = 180  # Room for legend
+    margin_top = 80
+    margin_bottom = 140
+    chart_width = svg_width - margin_left - margin_right
+    chart_height = svg_height - margin_top - margin_bottom
+
     n_allocators = len(allocators)
     n_tests = len(tests)
-    bar_width = 0.8 / n_allocators
 
-    # Store bar data for labeling
-    bar_data = []  # [(x_pos, height, ns_value, ratio, allocator), ...]
+    # Bar layout
+    group_width = chart_width / n_tests
+    bar_width = (group_width * 0.8) / n_allocators
+    group_padding = group_width * 0.1
 
-    for i, allocator in enumerate(allocators):
-        alloc_ratios = ratios.get(allocator, {})
-        alloc_results = results.get(allocator, {})
-        values = []
-        ns_values = []
-        ratio_values = []
-        for test in tests:
-            ratio = alloc_ratios.get(test, 1.0)
-            ns_val = alloc_results.get(test, 0)
-            # Convert ratio to percentage (baseline = 100%)
-            pct = ratio * 100
-            values.append(pct)
-            ns_values.append(ns_val)
-            ratio_values.append(ratio)
-
-        x = np.arange(n_tests) + i * bar_width
-        bars = ax.bar(x, values, bar_width, label=allocator, color=get_color(allocator), edgecolor='none')
-
-        # Store data for labeling
-        for j, (bar, ns_val, ratio) in enumerate(zip(bars, ns_values, ratio_values)):
-            bar_data.append((bar.get_x() + bar.get_width()/2, bar.get_height(), ns_val, ratio, allocator))
-
-    # Set y-axis to logarithmic scale
-    ax.set_yscale('log')
-
-    # Styling
-    ax.set_xticks(np.arange(n_tests) + bar_width * (n_allocators - 1) / 2)
-    # Simplify test labels (remove "st_" or "mt_" prefix)
-    test_labels = [t.split('_', 1)[1] if '_' in t else t for t in tests]
-    ax.set_xticklabels(test_labels, fontsize=10)
-    ax.set_ylabel('Time vs Baseline (%, log scale)', fontsize=11)
-
-    # Calculate y-axis limits for log scale
-    all_values = []
+    # Calculate y-axis range (percentage, baseline = 100%)
+    all_pcts = []
     for allocator in allocators:
         alloc_ratios = ratios.get(allocator, {})
         for test in tests:
-            ratio = alloc_ratios.get(test, 1.0)
-            all_values.append(ratio * 100)
+            if test in alloc_ratios:
+                all_pcts.append(alloc_ratios[test] * 100)
 
-    min_pct = min(all_values) if all_values else 100
-    max_pct = max(all_values) if all_values else 100
+    min_pct = min(all_pcts) if all_pcts else 1
+    max_pct = max(all_pcts) if all_pcts else 100
 
-    # Set limits with some padding in log space
-    ax.set_ylim(min_pct * 0.7, max_pct * 2.5)
+    # Chart area boundaries
+    chart_top_y = margin_top
+    chart_bottom_y = margin_top + chart_height
 
-    # Add horizontal line at 100% for reference (baseline)
-    ax.axhline(y=100, color='#333333', linewidth=1.5, linestyle='--', alpha=0.7, label='_nolegend_')
+    if use_log_scale:
+        # Log scale: extend range for visual padding
+        y_min = max(min_pct * 0.7, 1)  # Don't go below 1%
+        y_max = max_pct * 1.3
 
-    # Grid (works well with log scale)
-    ax.yaxis.grid(True, linestyle='--', alpha=0.3, which='both')
-    ax.set_axisbelow(True)
+        log_y_min = math.log10(y_min)
+        log_y_max = math.log10(y_max)
+        log_range = log_y_max - log_y_min
 
-    # Add labels: absolute time above bar, percentage diff inside bar
-    for x_pos, bar_height, ns_val, ratio, allocator in bar_data:
-        # Absolute time label above the bar
-        if ns_val > 0:
-            label = format_ns_truncated(ns_val)
-            ax.annotate(label,
-                        xy=(x_pos, bar_height),
-                        xytext=(0, 3),
-                        textcoords='offset points',
-                        ha='center', va='bottom',
-                        fontsize=7, fontweight='bold',
-                        color='#333333')
+        # Value-to-Y coordinate conversion for log scale
+        def pct_to_y(pct):
+            if pct <= 0:
+                pct = y_min
+            log_val = math.log10(pct)
+            # Normalize to 0-1 range, then map to chart coordinates
+            normalized = (log_val - log_y_min) / log_range
+            # Y increases downward, so invert
+            return chart_top_y + chart_height * (1 - normalized)
 
-        # Percentage diff inside the bar (near the top)
-        # Skip for baseline (default) since it's always 0%
-        if allocator != 'default':
-            pct_label = format_pct_diff(ratio)
-            # Position inside the bar, near the top
-            # Use a position that's 85% of the bar height (in log space)
-            inner_y = bar_height * 0.92
-            ax.annotate(pct_label,
-                        xy=(x_pos, inner_y),
-                        ha='center', va='top',
-                        fontsize=6, fontweight='bold',
-                        color='white')
+    else:
+        # Linear scale: start at 0
+        y_min = 0
+        y_max = max_pct * 1.15
+        # Round up to nice number
+        if y_max <= 120:
+            y_max = 120
+        elif y_max <= 150:
+            y_max = 150
+        elif y_max <= 200:
+            y_max = 200
+        else:
+            y_max = math.ceil(y_max / 50) * 50
+
+        # Value-to-Y coordinate conversion for linear scale
+        def pct_to_y(pct):
+            normalized = pct / y_max
+            return chart_top_y + chart_height * (1 - normalized)
+
+    # Start building SVG
+    svg_parts = []
+
+    # SVG header
+    svg_parts.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_width} {svg_height}" width="{svg_width}" height="{svg_height}">\n')
+
+    # Background
+    svg_parts.append(f'  <rect width="{svg_width}" height="{svg_height}" fill="white"/>\n')
+
+    # Styles (using your specified fonts)
+    svg_parts.append('''  <style>
+    .title { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #333333; }
+    .subtitle { font-family: sans-serif; font-size: 12px; fill: #666666; }
+    .axis-label { font-family: sans-serif; font-size: 11px; fill: #666666; }
+    .tick-label { font-family: sans-serif; font-size: 10px; fill: #333333; }
+    .tick-label-minor { font-family: sans-serif; font-size: 9px; fill: #999999; }
+    .test-label { font-family: sans-serif; font-size: 11px; fill: #333333; }
+    .bar-label-value { font-family: sans-serif; font-size: 8px; fill: #333333; }
+    .bar-label-pct { font-family: sans-serif; font-size: 8px; fill: white; }
+    .legend-text { font-family: sans-serif; font-size: 10px; fill: #333333; }
+    .metadata { font-family: sans-serif; font-size: 9px; fill: #666666; }
+    .key-text { font-family: sans-serif; font-size: 9px; font-style: italic; fill: #666666; }
+    .grid-line-major { stroke: #cccccc; stroke-width: 1; }
+    .grid-line-minor { stroke: #e0e0e0; stroke-width: 0.5; stroke-dasharray: 4,3; }
+  </style>\n''')
 
     # Title
     type_label = "Single-Threaded" if test_type == "st" else "Multi-Threaded"
-    ax.set_title(f'{type_label} Performance by Test\n(Time vs baseline, lower is better, log scale)',
-                 fontsize=14, fontweight='bold', pad=15)
+    title_y = 30
+    svg_parts.append(f'  <text x="{svg_width/2}" y="{title_y}" class="title" text-anchor="middle">{type_label} Performance by Test</text>\n')
+    scale_label = "log scale" if use_log_scale else "linear scale"
+    svg_parts.append(f'  <text x="{svg_width/2}" y="{title_y + 18}" class="subtitle" text-anchor="middle">(Time vs baseline, lower is better, {scale_label})</text>\n')
+
+    # Y-axis label (rotated)
+    y_label_x = 20
+    y_label_y = margin_top + chart_height / 2
+    svg_parts.append(f'  <text x="{y_label_x}" y="{y_label_y}" class="axis-label" text-anchor="middle" transform="rotate(-90 {y_label_x} {y_label_y})">Time vs Baseline (%, {scale_label})</text>\n')
+
+    # Generate tick values
+    if use_log_scale:
+        # Major ticks at powers of 10
+        major_ticks = []
+        minor_ticks = []
+
+        # Find the range of powers of 10
+        min_power = math.floor(math.log10(y_min))
+        max_power = math.ceil(math.log10(y_max))
+
+        for power in range(min_power, max_power + 1):
+            val = 10 ** power
+            if y_min <= val <= y_max:
+                major_ticks.append(val)
+
+            # Minor ticks at 2x and 5x each power of 10
+            for mult in [2, 5]:
+                minor_val = mult * (10 ** power)
+                if y_min <= minor_val <= y_max and minor_val not in major_ticks:
+                    minor_ticks.append(minor_val)
+
+        # Also add ticks at the actual min and max if they're nice numbers
+        for val in [y_min, y_max]:
+            rounded = round(val)
+            if abs(rounded - val) < 0.1 * val:
+                if rounded not in major_ticks and rounded not in minor_ticks:
+                    minor_ticks.append(rounded)
+
+        # Draw minor grid lines first (so they're behind major ones)
+        for tick in sorted(minor_ticks):
+            y_pos = pct_to_y(tick)
+            if chart_top_y <= y_pos <= chart_bottom_y:
+                svg_parts.append(f'  <line x1="{margin_left}" y1="{y_pos}" x2="{margin_left + chart_width}" y2="{y_pos}" class="grid-line-minor"/>\n')
+                # Minor tick label
+                if tick >= 1000:
+                    label = f"{int(tick/1000)}k" if tick % 1000 == 0 else f"{tick/1000:.1f}k"
+                else:
+                    label = f"{int(tick)}" if tick == int(tick) else f"{tick:.1f}"
+                svg_parts.append(f'  <text x="{margin_left - 8}" y="{y_pos + 3}" class="tick-label-minor" text-anchor="end">{label}%</text>\n')
+
+        # Draw major grid lines
+        for tick in major_ticks:
+            y_pos = pct_to_y(tick)
+            if chart_top_y <= y_pos <= chart_bottom_y:
+                svg_parts.append(f'  <line x1="{margin_left}" y1="{y_pos}" x2="{margin_left + chart_width}" y2="{y_pos}" class="grid-line-major"/>\n')
+                # Major tick label
+                if tick >= 1000:
+                    label = f"{int(tick/1000)}k"
+                else:
+                    label = f"{int(tick)}"
+                svg_parts.append(f'  <text x="{margin_left - 8}" y="{y_pos + 3}" class="tick-label" text-anchor="end">{label}%</text>\n')
+
+    else:
+        # Linear scale ticks
+        if y_max <= 150:
+            step = 20
+        elif y_max <= 300:
+            step = 50
+        else:
+            step = 100
+
+        tick = 0
+        while tick <= y_max:
+            y_pos = pct_to_y(tick)
+            svg_parts.append(f'  <line x1="{margin_left}" y1="{y_pos}" x2="{margin_left + chart_width}" y2="{y_pos}" class="grid-line-major"/>\n')
+            svg_parts.append(f'  <text x="{margin_left - 8}" y="{y_pos + 3}" class="tick-label" text-anchor="end">{int(tick)}%</text>\n')
+            tick += step
+
+    # Baseline line at 100%
+    if y_min <= 100 <= y_max:
+        baseline_y = pct_to_y(100)
+        svg_parts.append(f'  <line x1="{margin_left}" y1="{baseline_y}" x2="{margin_left + chart_width}" y2="{baseline_y}" class="grid-line-line"/>\n')
+
+    # X-axis line at bottom
+    svg_parts.append(f'  <line x1="{margin_left}" y1="{chart_bottom_y}" x2="{margin_left + chart_width}" y2="{chart_bottom_y}" stroke="#333333" stroke-width="1"/>\n')
+
+    # Draw bars
+    for test_idx, test in enumerate(tests):
+        group_x = margin_left + test_idx * group_width + group_padding
+
+        for alloc_idx, allocator in enumerate(allocators):
+            alloc_ratios = ratios.get(allocator, {})
+            alloc_results = results.get(allocator, {})
+
+            if test not in alloc_ratios:
+                continue
+
+            ratio = alloc_ratios[test]
+            pct = ratio * 100
+            ns_val = alloc_results.get(test, 0)
+
+            # Bar position - calculate Y from percentage
+            bar_x = group_x + alloc_idx * bar_width
+            bar_top_y = pct_to_y(pct)
+            bar_height = chart_bottom_y - bar_top_y
+
+            # Ensure minimum visible bar height
+            if bar_height < 2:
+                bar_height = 2
+                bar_top_y = chart_bottom_y - bar_height
+
+            color = get_color(allocator)
+
+            # Draw bar with rounded top corners
+            corner_radius = 3
+            path = rounded_rect_path(bar_x, bar_top_y, bar_width - 1, bar_height, corner_radius)
+            svg_parts.append(f'  <path d="{path}" fill="{color}"/>\n')
+
+            # Value label above bar (absolute time)
+            bar_center_x = bar_x + (bar_width - 1) / 2
+            if ns_val > 0:
+                label = format_ns_truncated(ns_val)
+                svg_parts.append(f'  <text x="{bar_center_x}" y="{bar_top_y - 5}" class="bar-label-value" text-anchor="middle">{escape_xml(label)}</text>\n')
+
+            # Percentage diff inside bar - skip for baseline
+            if allocator != 'default' and bar_height > 20:
+                pct_label = format_pct_diff(ratio)
+                pct_y = bar_top_y + 14
+                svg_parts.append(f'  <text x="{bar_center_x}" y="{pct_y}" class="bar-label-pct" text-anchor="middle">{escape_xml(pct_label)}</text>\n')
+
+        # Test label below group
+        group_center_x = group_x + (n_allocators * bar_width) / 2
+        test_label = test.split('_', 1)[1] if '_' in test else test
+        svg_parts.append(f'  <text x="{group_center_x}" y="{chart_bottom_y + 20}" class="test-label" text-anchor="middle">{escape_xml(test_label)}</text>\n')
 
     # Legend
-    ax.legend(loc='upper right', fontsize=9)
+    legend_x = margin_left + chart_width + 20
+    legend_y = margin_top + 10
+    legend_item_height = 20
+    legend_box_size = 12
+
+    for i, allocator in enumerate(allocators):
+        item_y = legend_y + i * legend_item_height
+        color = get_color(allocator)
+
+        # Color box with rounded corners
+        svg_parts.append(f'  <rect x="{legend_x}" y="{item_y}" width="{legend_box_size}" height="{legend_box_size}" fill="{color}" rx="2"/>\n')
+        # Label
+        svg_parts.append(f'  <text x="{legend_x + legend_box_size + 6}" y="{item_y + 10}" class="legend-text">{escape_xml(allocator)}</text>\n')
 
     # Key for test abbreviations
+    key_y = svg_height - 75
     key_text = "Tests: adrww=alloc/dealloc/realloc and write, adww=alloc/dealloc and write, aww=alloc and write"
+    svg_parts.append(f'  <text x="{svg_width/2}" y="{key_y}" class="key-text" text-anchor="middle">{escape_xml(key_text)}</text>\n')
 
     # Metadata
-    meta_lines = []
-    if metadata.get('source'):
-        meta_lines.append(f"Source: {metadata['source']}")
+    meta_y = svg_height - 50
 
-    line1_parts = []
+    meta_parts = []
     if metadata.get('commit'):
-        line1_parts.append(f"Commit: {metadata['commit'][:12]}")
+        meta_parts.append(f"Commit: {metadata['commit'][:12]}")
     if metadata.get('git_status'):
-        line1_parts.append(f"Git status: {metadata['git_status']}")
-    if line1_parts:
-        meta_lines.append(" · ".join(line1_parts))
+        meta_parts.append(f'Git status: "{metadata["git_status"]}"')
+
+    if meta_parts:
+        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(meta_parts))}</text>\n')
 
     line2_parts = []
     if metadata.get('cpu'):
         line2_parts.append(f"CPU: {metadata['cpu']}")
     if metadata.get('os'):
         line2_parts.append(f"OS: {metadata['os']}")
+
     if line2_parts:
-        meta_lines.append(" · ".join(line2_parts))
+        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 15}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line2_parts))}</text>\n')
 
-    fig.text(0.5, 0.11, key_text, ha='center', fontsize=9, color='#666666', style='italic')
+    # Close SVG
+    svg_parts.append('</svg>\n')
 
-    y_pos = 0.07
-    for line in meta_lines:
-        fig.text(0.5, y_pos, line, ha='center', fontsize=9, color='#666666', family='monospace')
-        y_pos -= 0.03
+    # Write to file
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(''.join(svg_parts))
 
-    # Remove top and right spines
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-    plt.savefig(output_file, format='svg', bbox_inches='tight', dpi=150)
-    plt.close()
     print(f"📊 Detailed graph saved to: {output_file}")
 
 def main():
@@ -296,6 +475,7 @@ def main():
     # Compute arithmetic means per allocator, split by ST and MT
     means_st = {}
     means_mt = {}
+
     for allocator, test_ratios in ratios.items():
         st_ratios = [r for name, r in test_ratios.items() if name.startswith('st_')]
         mt_ratios = [r for name, r in test_ratios.items() if name.startswith('mt_')]
@@ -315,14 +495,14 @@ def main():
         for alloc in sort_allocators(means_st.keys()):
             mean = means_st[alloc]
             pct = (mean - 1.0) * 100
-            print(f"  {alloc:12s}: {mean:.3f}  ({pct:+.1f}%)")
+            print(f"  {alloc:12s}: {mean:.3f} ({pct:+.1f}%)")
 
     if means_mt:
         print("\nMulti-Threaded - Arithmetic mean of time ratios (1.0 = baseline):")
         for alloc in sort_allocators(means_mt.keys()):
             mean = means_mt[alloc]
             pct = (mean - 1.0) * 100
-            print(f"  {alloc:12s}: {mean:.3f}  ({pct:+.1f}%)")
+            print(f"  {alloc:12s}: {mean:.3f} ({pct:+.1f}%)")
 
     # Print smalloc comparison
     if 'smalloc' in means_st:
@@ -355,11 +535,12 @@ def main():
 
         base_name = args.graph
 
-        # Detailed graphs (passing results for ns/i values)
+        # Detailed graphs
         if means_st:
             gfname = f'{base_name}st.svg'
             generate_detailed_graph(ratios, results, 'st', gfname, metadata)
             print("Singlethreaded benchmarks graph is in %s" % gfname)
+
         if means_mt:
             gfname = f'{base_name}mt.svg'
             generate_detailed_graph(ratios, results, 'mt', gfname, metadata)
