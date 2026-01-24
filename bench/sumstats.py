@@ -8,15 +8,16 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 
-# Allocator colors (matching simd-json benchmark colors)
+# Allocator colors
 ALLOCATOR_COLORS = {
-    'default': '#ab47bc',    # purple
-    'glibc': '#5c6bc0',      # indigo
-    'jemalloc': '#42a5f5',   # blue
-    'snmalloc': '#26a69a',   # teal
-    'mimalloc': '#ffca28',   # amber
-    'rpmalloc': '#ff7043',   # deep orange
-    'smalloc': '#66bb6a',    # green
+    'default': '#78909c',   # blue-grey (distinct from smalloc green)
+    'glibc': '#5c6bc0',     # indigo
+    'jemalloc': '#66bb6a',  # green
+    'snmalloc': '#ab47bc',  # purple
+    'mimalloc': '#ffca28',  # amber
+    'rpmalloc': '#ff7043',  # deep orange
+    'smalloc': '#42a5f5',   # blue
+    'smalloc + ffi': '#93c2f9', # light blue
 }
 UNKNOWN_ALLOCATOR_COLOR = '#9e9e9e'  # gray
 
