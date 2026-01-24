@@ -1,5 +1,4 @@
 #!/bin/bash
-
 set -e
 
 BNAME="cargo-bench"
@@ -15,9 +14,14 @@ if [ -z "${CPUTYPE}" ] ; then
     # CPU type on macos
     CPUTYPE=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")
 fi
+CPUTYPE=${CPUTYPE:-Unknown}
+CPUTYPE=${CPUTYPE## }  # Trim leading space
+
 CPUTYPESTR="${CPUTYPE//[^[:alnum:]]/}"
 OSTYPESTR="${OSTYPE//[^[:alnum:]]/}"
+
 ARGS=$*
+
 CPUSTR_DOT_OSSTR="${CPUTYPESTR}.${OSTYPESTR}"
 OUTPUT_DIR="${OUTPUT_DIR:-./bench/results}/${CPUSTR_DOT_OSSTR}"
 
