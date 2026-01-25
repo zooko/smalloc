@@ -29,7 +29,7 @@ def parse_benchmark_output(filename):
     """Parse the benchmark output file and return structured data."""
     results = {}  # {allocator: {test_name: time_ns}}
 
-    with open(filename, 'r') as f:
+    with open(filename, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Pattern to match benchmark lines like:
@@ -239,6 +239,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
 
     # Start building SVG
     svg_parts = []
+    svg_parts.append('<?xml version="1.0" encoding="UTF-8"?>')
 
     # SVG header
     svg_parts.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_width} {svg_height}" width="{svg_width}" height="{svg_height}">\n')
@@ -448,7 +449,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(''.join(svg_parts))
 
-    print(f"📊 Detailed graph saved to: {output_file}")
+    print(f"Detailed graph saved to: {output_file}")
 
 def main():
     parser = argparse.ArgumentParser(description='Parse benchmark results and generate graphs')
