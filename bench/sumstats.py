@@ -438,6 +438,8 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
         line2_parts.append(f"CPU: {metadata['cpu']}")
     if metadata.get('os'):
         line2_parts.append(f"OS: {metadata['os']}")
+    if metadata.get('cpucount'):
+        line2_parts.append(f"CPU Count: {metadata['cpucount']}")
 
     if line2_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 15}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line2_parts))}</text>\n')
@@ -459,6 +461,7 @@ def main():
     parser.add_argument('--git-status', help='Git status (Clean or Uncommitted changes)')
     parser.add_argument('--cpu', help='CPU type')
     parser.add_argument('--os', help='OS type')
+    parser.add_argument('--cpucount', help='Number of CPUs')
     parser.add_argument('--source', help='Source URL')
 
     args = parser.parse_args()
@@ -531,6 +534,7 @@ def main():
             'git_status': args.git_status,
             'cpu': args.cpu,
             'os': args.os,
+            'cpucount': args.cpucount,
             'source': args.source,
         }
 

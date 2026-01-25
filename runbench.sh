@@ -20,6 +20,8 @@ CPUTYPE=${CPUTYPE## }  # Trim leading space
 CPUTYPESTR="${CPUTYPE//[^[:alnum:]]/}"
 OSTYPESTR="${OSTYPE//[^[:alnum:]]/}"
 
+CPUCOUNT=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-unknown}")
+
 ARGS=$*
 
 CPUSTR_DOT_OSSTR="${CPUTYPESTR}.${OSTYPESTR}"
@@ -35,6 +37,7 @@ echo "GITCOMMIT: ${GITCOMMIT}" 2>&1 | tee -a $RESF
 echo "GITCLEANSTATUS: ${GITCLEANSTATUS}" 2>&1 | tee -a $RESF
 echo "CPUTYPE: ${CPUTYPE}" 2>&1 | tee -a $RESF
 echo "OSTYPE: ${OSTYPE}" 2>&1 | tee -a $RESF
+echo "CPUCOUNT: ${CPUCOUNT}" 2>&1 | tee -a $RESF
 
 mkdir -p ${OUTPUT_DIR}
 
@@ -47,8 +50,6 @@ fi
 
 cargo --locked build --release --package bench --features=$ALLOCATORS
 
-echo "# ./target/release/bench --compare ${ARGS}" 2>&1 | tee -a $RESF
-echo 2>&1 | tee -a $RESF
 ./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
 
 # Generate graphs with sumstats.py
@@ -57,6 +58,7 @@ echo 2>&1 | tee -a $RESF
     --commit "$GITCOMMIT" \
     --git-status "$GITCLEANSTATUS" \
     --cpu "$CPUTYPE" \
-    --os "$OSTYPE"
+    --os "$OSTYPE" \
+    --cpucount "$CPUCOUNT"
 
 echo "# Data results (text) are in \"${RESF}\" ."
