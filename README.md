@@ -4,10 +4,10 @@
 `mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features (see below).
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 351 lines of Rust code. The other high-quality memory
-allocators range from 2,509 lines of code (`rpmalloc`) to 25,713 lines of code (`jemalloc`).
+simpler. The current implementation is only 341 lines of Rust code. The other high-quality memory
+allocators range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
 
-Fewer lines of code means fewer bugs, and it also means simpler code paths, resulting in more
+Fewer lines of code means fewer bugs, and it also means fewer code paths, resulting in more
 consistent and debuggable behavior.
 
 # Caveats
@@ -19,26 +19,14 @@ management bugs.
 
 # Performance
 
-See [./bench/README.md](./bench/README.md) for benchmarks of the default/system memory allocator,
-`smalloc`, `jemalloc`, `snmalloc`, `mimalloc`, and `rpmalloc`.
+<a href="https://github.com/zooko/bench-allocators/blob/main/benchmark-results/AppleM4Max.darwin25/COMBINED-REPORT.md">
+  <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc-mt.graph.svg" width="600">
+</a>
+    
+(Click on the image.)
 
-Example result to demonstrate that `smalloc` is sometimes more efficient than the alternatives:
-
-```text
-name:     de_mt_aww-64, threads:    64, iters:      2000, ns:      1,807,708, ns/i:       903.8
-name:     je_mt_aww-64, threads:    64, iters:      2000, ns:     31,078,666, ns/i:    15,539.3
-name:     sn_mt_aww-64, threads:    64, iters:      2000, ns:      3,027,291, ns/i:     1,513.6
-name:     mi_mt_aww-64, threads:    64, iters:      2000, ns:      3,470,084, ns/i:     1,735.0
-name:     rp_mt_aww-64, threads:    64, iters:      2000, ns:      1,806,917, ns/i:       903.4
-name:     sm_mt_aww-64, threads:    64, iters:      2000, ns:        781,416, ns/i:       390.7
-smalloc diff from  default:  -57%
-smalloc diff from jemalloc:  -97%
-smalloc diff from snmalloc:  -74%
-smalloc diff from mimalloc:  -77%
-smalloc diff from rpmalloc:  -57%
-```
-
-([source](bench/results/cargo-bench.result.AppleM4Max.darwin25..txt))
+See the [bench-allocators](https://github.com/zooko/bench-allocators/README.md) repo for more
+benchmark results and how to generate them yourself.
 
 # Limitations
 
