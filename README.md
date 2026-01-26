@@ -1,7 +1,7 @@
 # smalloc -- a simple memory allocator
 
 `smalloc` is suitable as a drop-in replacement for the glibc memory allocator, `jemalloc`,
-`mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features (see below).
+`mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
 simpler. The current implementation is only 341 lines of Rust code. The other high-quality memory
