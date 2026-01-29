@@ -456,6 +456,13 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
+    use core::ffi::c_void;
+    use std::sync::atomic::Ordering::{Acquire,Release};
+    use crate::null_mut;
+    use std::sync::atomic::AtomicPtr;
+
+    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
+
     pub(crate) fn set_errno(value: i32) {
         // Code written for the C standard may check errno. Code written for win32 may check the
         // windows "Last Error".
@@ -467,20 +474,6 @@ mod platform {
         unsafe extern "system" { fn SetLastError(dwErrCode: u32); }
         unsafe { SetLastError(value as u32); }
     }
-}
-
-// =============================================================================
-// Windows platform module
-// =============================================================================
-
-#[cfg(target_os = "windows")]
-mod platform {
-    use core::ffi::c_void;
-    use std::sync::atomic::Ordering::{Acquire,Release};
-    use crate::null_mut;
-    use std::sync::atomic::AtomicPtr;
-
-    const NOT_LOOKED_UP: *mut c_void = std::ptr::dangling_mut::<c_void>();
 
     #[inline(always)]
     unsafe fn lookup_symbol(symbol: &str) -> *mut c_void {
