@@ -44,11 +44,11 @@ pub fn main() {
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
-    let num_batches = 20;
+    let num_batches = 100;
 
     // We can do more iters without making the user wait in singlethreaded benchmarks because
     // they're so fast.
-    let num_st_batches = 40;
+    let num_st_batches = 200;
 
     const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 64;
     const THREADS_WAY_TOO_MANY: u32 = 1024;
