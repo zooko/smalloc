@@ -12,7 +12,7 @@ impl fmt::Display for AllocFailed {
     }
 }
 
-#[cfg(any(target_os = "windows", doc))]
+#[cfg(target_os = "windows")]
 pub mod p {
     use super::AllocFailed;
     use windows_sys::Win32::System::Memory::{VirtualAlloc2, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PAGE_NOACCESS};
@@ -43,7 +43,6 @@ pub mod p {
         }
     }
 
-    #[cfg(any(target_os = "windows", doc))]
     #[allow(unsafe_code)]
     pub fn sys_commit(pin: *mut u8, reqsize: usize) -> Result<*mut u8, AllocFailed> {
         //eprintln!("about to commit {pin:p}, {reqsize}");
@@ -64,7 +63,7 @@ pub mod p {
     }
 }
 
-#[cfg(any(target_os = "linux", doc))]
+#[cfg(target_os = "linux")]
 pub mod p {
     use super::AllocFailed;
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
@@ -85,7 +84,7 @@ pub mod p {
     }
 }
 
-#[cfg(any(target_vendor = "apple", doc))]
+#[cfg(target_vendor = "apple")]
 pub mod p {
     use super::AllocFailed;
     use mach_sys::kern_return::KERN_SUCCESS;

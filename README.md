@@ -4,11 +4,10 @@
 `mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 341 lines of Rust code. The other high-quality memory
-allocators range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
+simpler. The current implementation is only 341 lines of Rust code. The other memory allocators
+range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
 
-Fewer lines of code means fewer bugs, and it also means fewer code paths, resulting in more
-consistent and debuggable behavior.
+Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
 
 # Caveats
 
@@ -40,9 +39,9 @@ There are two limitations:
    return a null pointer.
    
    It would be possible to change smalloc to fall back to the default allocator or to `mmap` in that
-   case, but that would result in performance degradation and possibly in less predictable failure
-   modes. I want smalloc to have consistent performance and failure modes so I choose to return a
-   null pointer in that case.
+   case (as some other memory allocators do), but that would result in performance degradation and
+   possibly in less predictable failure modes. I want smalloc to have consistent performance and
+   failure modes so I choose to return a null pointer in that case.
 
 2. You can't instantiate more than one instance of `smalloc` in a single process.
 
@@ -726,14 +725,8 @@ useful tool!
 
 # Open Issues / Future Work
 
-* Port to Windows (probably just a matter of adding a call to `VirtualAlloc` using the
-  Microsoft-supported Rust `windows-sys` Rust crate, in [src/plat/mod.rs](src/plat/mod.rs)).
-
 * Port to iOS (you just need to give your app the entitlement named
   `com.apple.developer.kernel.extended-virtual-addressing`), Android
-
-* try again to get the cpu number, at least on non-macOS, instead of the thread-local "threadnum"
-  variable :-) Also try again with Rust threadid
 
 * Experiment with making it FIFO instead of LIFO -- this would potentially harden against bugs like
   double-frees and buffer overflows, it might improve multithreading performance (because pushes
@@ -751,8 +744,6 @@ useful tool!
 * and cargo-mutants
 
 * Try "tarpaulin" again HT Sean Bowe
-* need some graphs
-* needs to be v 1.0 to excite Hacker News readers
 
 * If we could allocate even more virtual memory address space, `smalloc` could more scalable
   (i.e. have more large slots, more per-thread slabs, etc). And you could have more than one
@@ -785,14 +776,11 @@ useful tool!
 * Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
 * Relatedly, when doing `zeromem=true`, i.e. for `calloc` and when the Windows Heap API's `HEAP_ZERO_MEMORY` flag is set, there is a size of allocation at which point it is actually more efficient to madvise the kernel to drop that page and give us fresh zero-backed pages than to memset all of the bytes. It remains an open question whether the runtime in the common case (a single simple comparison and a branch) and the code complexity are actually worth it.
 
+* port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc in wasm in the web browser. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
 
-* port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
-
-* Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, provided by `smalloc`, getting passed to C++ `delete` or vice versa).
+* Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, as implemented by `smalloc`, getting passed to C++ `delete` or vice versa).
 
 * put smalloc into xous instead of its current libmalloc: https://github.com/betrusted-io/xous-core
-
-* run the rpmalloc benchmarks: https://github.com/mjansson/rpmalloc/blob/develop/BENCHMARKS.md
 
 * read this https://jahej.com/alt/2011_05_28_implementing-a-true-realloc-in-cpp.html
 

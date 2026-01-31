@@ -1,3 +1,15 @@
+//! # smalloc
+//!
+//! A simple, fast memory allocator.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use smalloc::Smalloc;
+//! #[global_allocator]
+//! static ALLOC: Smalloc = Smalloc::new();
+//! ```
+
 // Table of contents of this file:
 //
 // * Public structs and methods
@@ -17,11 +29,21 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{copy_nonoverlapping, null_mut};
 use plat::p::sys_alloc;
 
-#[cfg(any(target_os = "windows", doc))]
+#[cfg(target_os = "windows")]
 use plat::p::sys_commit;
 
 
 // --- Public structs and methods ---
+
+/// A simple, fast memory allocator.
+///
+/// # Example
+///
+/// ```rust
+/// use smalloc::Smalloc;
+/// #[global_allocator]
+/// static ALLOC: Smalloc = Smalloc::new();
+/// ```
 
 pub struct Smalloc {
     inner: UnsafeCell<SmallocInner>,
@@ -35,6 +57,7 @@ impl Smalloc {
         }),
     } }
 
+    #[doc(hidden)]
     #[inline(always)]
     pub fn idempotent_init(&self) {
         let inner = self.inner();
@@ -199,6 +222,7 @@ pub mod i {
     }
 
     impl Smalloc {
+        #[doc(hidden)]
         #[inline(always)]
         pub fn inner_dealloc(&self, p_addr: usize) {
             // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
@@ -253,6 +277,7 @@ pub mod i {
         }
 
         /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
+        #[doc(hidden)]
         #[inline(always)]
         pub fn inner_alloc(&self, orig_sc: u8, zeromem: bool) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
@@ -391,6 +416,7 @@ pub mod i {
             }
         }
 
+        #[doc(hidden)]
         #[inline(always)]
         pub fn inner(&self) -> &SmallocInner {
             unsafe { &*self.inner.get() }
@@ -536,8 +562,10 @@ fn get_slabnum() -> u8 {
     })
 }
 
+#[doc(hidden)]
 unsafe impl Sync for Smalloc {}
 
+#[doc(hidden)]
 impl Default for Smalloc {
     fn default() -> Self {
         Self::new()
