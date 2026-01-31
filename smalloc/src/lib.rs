@@ -22,7 +22,7 @@
 //     - Constants for calculating the total virtual address space to reserve
 //xxx update this ToC
 
-use core::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, AtomicBool};
+use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, AtomicBool};
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::cell::{Cell, UnsafeCell};
 use core::alloc::{GlobalAlloc, Layout};
@@ -540,10 +540,10 @@ const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_BYTE_ADDR + BASEPTR_ALI
 
 // --- Implementation ---
 
-static GLOBAL_THREAD_NUM: AtomicU16 = AtomicU16::new(0);
-const SLAB_NUM_SENTINEL: u16 = u16::MAX;
+static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
+const SLAB_NUM_SENTINEL: u8 = u8::MAX;
 thread_local! {
-    static SLABNUM: Cell<u16> = const { Cell::new(SLAB_NUM_SENTINEL) };
+    static SLABNUM: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
 }
 
 /// Get the slab number for this thread. On first call, initializes it from GLOBAL_THREAD_NUM.
@@ -553,11 +553,11 @@ fn get_slabnum() -> u8 {
         let slabnum = cell.get();
         if slabnum == SLAB_NUM_SENTINEL {
             let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
-            let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK as u16;
+            let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK;
             cell.set(newslabnum);
-            newslabnum as u8
+            newslabnum
         } else {
-            slabnum as u8
+            slabnum
         }
     })
 }
