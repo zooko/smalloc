@@ -1,6 +1,3 @@
-#![cfg_attr(nightly, feature(likely_unlikely))]
-#![cfg_attr(nightly, allow(internal_features))]
-
 //! # smalloc
 //!
 //! A simple, fast memory allocator.
@@ -64,16 +61,16 @@ impl Smalloc {
     pub fn idempotent_init(&self) {
         let inner = self.inner();
         let smbpval = inner.smbp.load(Relaxed);
-        if unlikely(smbpval == 0) {
+        if smbpval == 0 {
             // acquire the spin lock
             loop {
-                if likely(inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok()) {
+                if inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
                     break;
                 }
             }
 
             let smbpval = inner.smbp.load(Relaxed);
-            if likely(smbpval == 0) {
+            if smbpval == 0 {
                 let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
                 assert!(sysbp != 0);
                 let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
@@ -104,7 +101,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let sc = reqali_to_sc(reqsiz, reqalign);
 
-        if unlikely(sc >= NUM_SCS) {
+        if sc >= NUM_SCS {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
@@ -130,7 +127,7 @@ unsafe impl GlobalAlloc for Smalloc {
 
         let sc = reqali_to_sc(reqsiz, reqalign);
 
-        if unlikely(sc >= NUM_SCS) {
+        if sc >= NUM_SCS {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
@@ -180,7 +177,7 @@ unsafe impl GlobalAlloc for Smalloc {
             return ptr;
         }
 
-        if unlikely(reqsc >= NUM_SCS) {
+        if reqsc >= NUM_SCS {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
@@ -188,7 +185,7 @@ unsafe impl GlobalAlloc for Smalloc {
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
             let newp = self.inner_alloc(reqsc, false);
-            if unlikely(newp.is_null()) {
+            if newp.is_null() {
                 // smalloc slots must be exhausted
                 return newp;
             }
@@ -319,7 +316,7 @@ pub mod i {
                 // write—the memory of the sentinel slot.)
                 debug_assert!(if curfirstentry & ENTRY_SLOTNUM_MASK == sentinel_slotnum { curfirstentry & ENTRY_NEXT_TOUCHED_BIT == 0 } else { true });
 
-                if likely(curfirstentry != sentinel_slotnum) {
+                if curfirstentry != sentinel_slotnum {
                     // There is a slot available in the free list.
 
                     // Here's the pointer to the current first entry:
@@ -350,7 +347,7 @@ pub mod i {
 
                             // commit the larger of 1 slot and 1 page
                             let cbits = std::cmp::max(plat::p::SC_FOR_PAGE, sc);
-                            if unlikely(curfirstentry_p.trailing_zeros() >= cbits as u32) {
+                            if curfirstentry_p.trailing_zeros() >= cbits as u32 {
                                 sys_commit(curfirstentry_p as *mut u8, 1 << cbits).unwrap();
                             }
                         }
@@ -364,13 +361,13 @@ pub mod i {
                     let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry as u64;
 
                     // Compare and exchange
-                    if likely(flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok()) { 
+                    if flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok() { 
                         debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
                         debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
 
                         // Okay we've successfully allocated a slot! If `zeromem` is requested and
                         // this slot has previously been touched then we have to zero its contents.
-                        if unlikely(zeromem) && (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
+                        if zeromem && (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
@@ -387,7 +384,7 @@ pub mod i {
 
                     slabnum = (slabnum + SLAB_FAILOVER_NUM) & SLABNUM_BITS_ALONE_MASK;
 
-                    if likely(slabnum != orig_slabnum) {
+                    if slabnum != orig_slabnum {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
                         // so keep trying, but make a note that at least one of the slabs in this
                         // sizeclass was full. (Note that if orig_slabnum is the only one that is
@@ -400,8 +397,8 @@ pub mod i {
                         // lost). If at least one slab in this size class was full, then overflow to
                         // the next larger size class. (Else, keep trying different slabs in this
                         // size class.)
-                        if unlikely(a_slab_was_full) {
-                            if unlikely(sc == NUM_SCS - 1) {
+                        if a_slab_was_full {
+                            if sc == NUM_SCS - 1 {
                                 // This is the largest size class and we've exhausted at least one
                                 // slab in it, plus we've tried all other slabs at least once, and
                                 // each one was either full or we encountered (and lost) an flh
@@ -482,17 +479,6 @@ pub mod i {
 
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
-
-    #[cfg(nightly)]
-    pub use std::hint::{likely, unlikely};
-
-    #[cfg(not(nightly))]
-    #[inline(always)]
-    pub const fn likely(b: bool) -> bool { b }
-
-    #[cfg(not(nightly))]
-    #[inline(always)]
-    pub const fn unlikely(b: bool) -> bool { b }
 }
 
 pub use i::*;

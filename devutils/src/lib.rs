@@ -1,6 +1,3 @@
-#![cfg_attr(nightly, feature(likely_unlikely))]
-#![cfg_attr(nightly, allow(internal_features))]
-
 // This file contains things used by both tests and benchmarks.
 
 const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
@@ -35,7 +32,7 @@ pub mod dev_instance {
 pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 3;
-    if unlikely(s.ps.is_empty()) || coin == 0 {
+    if s.ps.is_empty() || coin == 0 {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
@@ -125,7 +122,7 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 3;
-    if unlikely(s.ps.is_empty()) || coin == 0 {
+    if s.ps.is_empty() || coin == 0 {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
@@ -173,7 +170,7 @@ pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 2;
-    if unlikely(s.ps.is_empty()) || coin == 0 {
+    if s.ps.is_empty() || coin == 0 {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
@@ -241,7 +238,7 @@ pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
 pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
     // random coin
     let coin = s.next_coin() % 2;
-    if unlikely(s.ps.is_empty()) || coin == 0 {
+    if s.ps.is_empty() || coin == 0 {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
@@ -470,7 +467,7 @@ impl TestState {
         debug_assert!(self.nextp < self.ps.len());
         debug_assert!(!self.ps.is_empty());
         let (u, l) = unsafe { self.ps.swap_remove_unchecked(self.nextp) };
-        if likely(!self.ps.is_empty()) {
+        if !self.ps.is_empty() {
             if self.nextp.is_multiple_of(1000) {
                 self.nextp = self.next_coin() as usize % self.ps.len();
             } else {
