@@ -1,3 +1,6 @@
+#![cfg_attr(nightly, feature(likely_unlikely))]
+#![cfg_attr(nightly, allow(internal_features))]
+
 //! # smalloc
 //!
 //! A simple, fast memory allocator.
@@ -44,7 +47,6 @@ use plat::p::sys_commit;
 /// #[global_allocator]
 /// static ALLOC: Smalloc = Smalloc::new();
 /// ```
-
 pub struct Smalloc {
     inner: UnsafeCell<SmallocInner>,
 }
@@ -62,16 +64,16 @@ impl Smalloc {
     pub fn idempotent_init(&self) {
         let inner = self.inner();
         let smbpval = inner.smbp.load(Relaxed);
-        if smbpval == 0 {
+        if unlikely(smbpval == 0) {
             // acquire the spin lock
             loop {
-                if inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
+                if likely(inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok()) {
                     break;
                 }
             }
 
             let smbpval = inner.smbp.load(Relaxed);
-            if smbpval == 0 {
+            if likely(smbpval == 0) {
                 let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
                 assert!(sysbp != 0);
                 let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
@@ -174,7 +176,7 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(reqsc >= NUM_UNUSED_SCS);
 
         // If the requested slot is <= the original slot, just return the pointer and we're done.
-        if unlikely(reqsc <= oldsc) {
+        if reqsc <= oldsc {
             return ptr;
         }
 
@@ -325,7 +327,7 @@ pub mod i {
                     let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SN_D_T_BITS) | (curfirstentryslotnum as usize) << sc;
                     debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
 
-                    let next_entry = if likely((curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0) {
+                    let next_entry = if (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
                         // Read the bits from the first entry's space (which are about the second
                         // entry). These bits might be invalid, if the flh has changed since we read
                         // it above and another thread has started using this memory for something
@@ -368,7 +370,7 @@ pub mod i {
 
                         // Okay we've successfully allocated a slot! If `zeromem` is requested and
                         // this slot has previously been touched then we have to zero its contents.
-                        if unlikely(zeromem) && unlikely((curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0) {
+                        if unlikely(zeromem) && (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
@@ -481,17 +483,14 @@ pub mod i {
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
 
-    // Gating this on a feature named "nightly" is commented out because the resulting optimization
-    // is probably not worth the code and build-system complexity.  #[cfg(feature = "nightly")] pub
-    // use
+    #[cfg(nightly)]
+    pub use std::hint::{likely, unlikely};
 
-    // core::intrinsics::{likely, unlikely};
-    // 
-    // #[cfg(not(feature = "nightly"))]
+    #[cfg(not(nightly))]
     #[inline(always)]
     pub const fn likely(b: bool) -> bool { b }
 
-    // #[cfg(not(feature = "nightly"))]
+    #[cfg(not(nightly))]
     #[inline(always)]
     pub const fn unlikely(b: bool) -> bool { b }
 }

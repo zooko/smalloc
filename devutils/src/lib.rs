@@ -1,6 +1,7 @@
-// This file contains things used by both tests and benchmarks.
+#![cfg_attr(nightly, feature(likely_unlikely))]
+#![cfg_attr(nightly, allow(internal_features))]
 
-// xxx consider removing some of these "helper"/utility functions in favor of standard/idiomatic things...
+// This file contains things used by both tests and benchmarks.
 
 const BYTES1: [u8; 8] = [1, 2, 4, 3, 5, 6, 7, 8];
 const BYTES2: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
