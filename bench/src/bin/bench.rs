@@ -44,7 +44,7 @@ pub fn main() {
     let compare = std::env::args().any(|arg| arg == "--compare");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
-    let num_batches = 100;
+    let num_batches = 30;
 
     // We can do more iters without making the user wait in singlethreaded benchmarks because
     // they're so fast.
@@ -54,15 +54,15 @@ pub fn main() {
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
     // for benchmarks that are going to re-use space
-    let iters_many = 20_000;
+    let iters_many = 100_000;
 
     // We can do more iters without making the user wait in singlethreaded benchmarks because
     // they're so fast.
-    let iters_st_many = 50_000;
+    let iters_st_many = 500_000;
 
     // for benchmarks that are not going to re-use space, so they'll run out of space if we do
     // iters_many
-    const ITERS_FEW: u64 = 2_000;
+    const ITERS_FEW: u64 = 10_000;
 
     if compare {
         if thorough {
