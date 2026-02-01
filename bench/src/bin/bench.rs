@@ -149,7 +149,6 @@ pub fn main() {
 
             let l = Layout::from_size_align(32, 1).unwrap();
             let sm = devutils::get_devsmalloc!();
-            sm.idempotent_init();
 
             // These consistently crash the OS (!) on macOS Tahoe 26.2 on Apple M4 Max. :-(
             if !is_macos() {

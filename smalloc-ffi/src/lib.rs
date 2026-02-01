@@ -52,7 +52,7 @@ enum PtrClass {
 
 #[inline(always)]
 fn classify_ptr(ptr: *mut c_void) -> PtrClass {
-    if unlikely(ptr.is_null() || ptr == SIZE_0_ALLOC_SENTINEL) {
+    if ptr.is_null() || ptr == SIZE_0_ALLOC_SENTINEL {
         return PtrClass::NullOrSentinel;
     }
 
@@ -60,7 +60,7 @@ fn classify_ptr(ptr: *mut c_void) -> PtrClass {
     let smbp = SMALLOC.inner().smbp.load(Acquire);//xxx could use Relaxed instead?
     debug_assert!(smbp != 0);
 
-    if likely(p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR) {
+    if p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR {
         let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
 
         debug_assert!(sc >= NUM_UNUSED_SCS);
@@ -89,8 +89,9 @@ fn ptr_to_sc(ptr: *mut c_void) -> u8 {
 
 #[inline(always)]
 fn smalloc_inner_alloc(sc: u8, zeromem: bool) -> *mut c_void {
-    SMALLOC.idempotent_init();
-    SMALLOC.inner_alloc(sc, zeromem) as *mut c_void
+    let inner = SMALLOC.inner();
+    inner.idempotent_init();
+    inner.alloc(sc, zeromem) as *mut c_void
 }
 
 // =============================================================================
@@ -102,18 +103,18 @@ fn smalloc_inner_alloc(sc: u8, zeromem: bool) -> *mut c_void {
 /// This has the same safety requirements as any implementation of `malloc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
-    if unlikely(size == 0) {
+    if size == 0 {
         return SIZE_0_ALLOC_SENTINEL;
     }
 
     let sc = req_to_sc(size);
-    if unlikely(sc >= NUM_SCS) {
+    if sc >= NUM_SCS {
         platform::set_oom_err();
         return null_mut();
     }
 
     let ptr = smalloc_inner_alloc(sc, false);
-    if unlikely(ptr.is_null()) {
+    if ptr.is_null() {
         platform::set_oom_err();
     }
 
@@ -127,7 +128,7 @@ pub unsafe extern "C" fn smalloc_malloc(size: usize) -> *mut c_void {
 pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
     match classify_ptr(ptr) {
         PtrClass::Smalloc => {
-            SMALLOC.inner_dealloc(ptr.addr());
+            SMALLOC.inner().dealloc(ptr.addr());
         }
         PtrClass::Foreign => {
             platform::call_prev_free(ptr);
@@ -143,19 +144,19 @@ pub unsafe extern "C" fn smalloc_free(ptr: *mut c_void) {
 pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     match classify_ptr(ptr) {
         PtrClass::Smalloc => {
-            if unlikely(new_size == 0) {
+            if new_size == 0 {
                 unsafe { smalloc_free(ptr) };
                 return SIZE_0_ALLOC_SENTINEL;
             }
 
             let reqsc = req_to_sc(new_size);
-            if unlikely(reqsc >= NUM_SCS) {
+            if reqsc >= NUM_SCS {
                 platform::set_oom_err();
                 return null_mut();
             }
 
             let oldsc = ptr_to_sc(ptr);
-            if unlikely(reqsc <= oldsc) {
+            if reqsc <= oldsc {
                 return ptr;
             }
 
@@ -167,10 +168,10 @@ pub unsafe extern "C" fn smalloc_realloc(ptr: *mut c_void, new_size: usize) -> *
             };
             let newp = smalloc_inner_alloc(reqsc, false);
 
-            if likely(!newp.is_null()) {
+            if !newp.is_null() {
                 let oldsize = 1 << oldsc;
                 unsafe { copy_nonoverlapping(ptr, newp, oldsize) };
-                SMALLOC.inner_dealloc(ptr.addr());
+                SMALLOC.inner().dealloc(ptr.addr());
             } else {
                 // if this is NULL then we're just going to return NULL
                 platform::set_oom_err();
@@ -205,18 +206,18 @@ pub unsafe extern "C" fn smalloc_calloc(count: usize, size: usize) -> *mut c_voi
 
     let total = ((count as u32 as u64) * (size as u32 as u64)) as usize;
 
-    if unlikely(total == 0) {
+    if total == 0 {
         return SIZE_0_ALLOC_SENTINEL;
     }
 
     let sc = req_to_sc(total);
-    if unlikely(sc >= NUM_SCS) {
+    if sc >= NUM_SCS {
         platform::set_oom_err();
         return null_mut();
     }
 
     let ptr = smalloc_inner_alloc(sc, true);
-    if unlikely(ptr.is_null()) {
+    if ptr.is_null() {
         platform::set_oom_err();
     }
 
@@ -279,7 +280,7 @@ pub unsafe extern "C" fn smalloc_malloc_usable_size(ptr: *mut c_void) -> usize {
 pub unsafe extern "C" fn smalloc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     debug_assert!(alignment > 0);
 
-    if unlikely(size == 0) {
+    if size == 0 {
         return SIZE_0_ALLOC_SENTINEL;
     }
 
@@ -287,13 +288,13 @@ pub unsafe extern "C" fn smalloc_aligned_alloc(alignment: usize, size: usize) ->
     debug_assert!(size.is_multiple_of(alignment));
 
     let sc = reqali_to_sc(size, alignment);
-    if unlikely(sc >= NUM_SCS) {
+    if sc >= NUM_SCS {
         platform::set_oom_err();
         return null_mut();
     }
 
     let ptr = smalloc_inner_alloc(sc, false);
-    if unlikely(ptr.is_null()) {
+    if ptr.is_null() {
         platform::set_oom_err();
     }
 
@@ -309,7 +310,7 @@ pub unsafe extern "C" fn smalloc_free_aligned_sized(ptr: *mut c_void, alignment:
 
     match classify_ptr(ptr) {
         PtrClass::Smalloc => {
-            SMALLOC.inner_dealloc(ptr.addr());
+            SMALLOC.inner().dealloc(ptr.addr());
         }
         PtrClass::Foreign => {
             platform::call_prev_free_aligned_sized(ptr, alignment, size);
@@ -325,7 +326,7 @@ pub unsafe extern "C" fn smalloc_free_aligned_sized(ptr: *mut c_void, alignment:
 pub unsafe extern "C" fn smalloc_free_sized(ptr: *mut c_void, size: usize) {
     match classify_ptr(ptr) {
         PtrClass::Smalloc => {
-            SMALLOC.inner_dealloc(ptr.addr());
+            SMALLOC.inner().dealloc(ptr.addr());
         }
         PtrClass::Foreign => {
             platform::call_prev_free_sized(ptr, size);

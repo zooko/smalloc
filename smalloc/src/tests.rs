@@ -12,6 +12,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     debug_assert!(sc <= (NUM_SCS - 2)); // This test code needs at least 3 slots.
 
     let sm = get_testsmalloc();
+    sm.inner().idempotent_init();
 
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
@@ -509,6 +510,7 @@ nextest_unit_tests! {
     /// allocation will fail.
     fn overflow_from_all_largest_large_slots_slabs() {
         let sm = get_testsmalloc();
+        sm.inner().idempotent_init();
 
         let sc = NUM_SCS - 1;
         let siz = help_slotsize(sc);
@@ -531,6 +533,7 @@ nextest_unit_tests! {
     /// allocation will come from another one.
     fn overflow_from_one_largest_large_slots_slab() {
         let sm = get_testsmalloc();
+        sm.inner().idempotent_init();
 
         let sc = NUM_SCS - 1;
         let siz = help_slotsize(sc);
@@ -651,9 +654,7 @@ fn help_alloc_diff_size_and_alignment_singlethreaded(sm: &Smalloc, sc: u8) {
 static mut UNIT_TEST_ALLOC: Smalloc = Smalloc::new();
 
 fn get_testsmalloc() -> &'static Smalloc {
-    let res = unsafe { &*std::ptr::addr_of!(UNIT_TEST_ALLOC) };
-    res.idempotent_init();
-    res
+    unsafe { &*std::ptr::addr_of!(UNIT_TEST_ALLOC) }
 }
 
 #[macro_export]

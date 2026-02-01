@@ -55,39 +55,6 @@ impl Smalloc {
             initlock: AtomicBool::new(false),
         }),
     } }
-
-    #[doc(hidden)]
-    #[inline(always)]
-    pub fn idempotent_init(&self) {
-        let inner = self.inner();
-        let smbpval = inner.smbp.load(Relaxed);
-        if smbpval == 0 {
-            // acquire the spin lock
-            loop {
-                if inner.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
-                    break;
-                }
-            }
-
-            let smbpval = inner.smbp.load(Relaxed);
-            if smbpval == 0 {
-                let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
-                assert!(sysbp != 0);
-                let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
-
-                #[cfg(any(target_os = "windows", doc))]
-                {
-                    let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
-                    sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
-                }
-
-                inner.smbp.store(smbp, Release);
-            }
-
-            // release the spin lock
-            inner.initlock.store(false, Release);
-        }
-    }
 }
 
 unsafe impl GlobalAlloc for Smalloc {
@@ -105,8 +72,9 @@ unsafe impl GlobalAlloc for Smalloc {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
-            self.idempotent_init();
-            self.inner_alloc(sc, false)
+            let inner = self.inner();
+            inner.idempotent_init();
+            inner.alloc(sc, false)
         }
     }
 
@@ -114,7 +82,7 @@ unsafe impl GlobalAlloc for Smalloc {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         debug_assert!(layout.align().is_power_of_two());
 
-        self.inner_dealloc(ptr.addr());
+        self.inner().dealloc(ptr.addr());
     }
 
     #[inline(always)]
@@ -131,8 +99,9 @@ unsafe impl GlobalAlloc for Smalloc {
             // This request exceeds the size of our largest sizeclass, so return null pointer.
             null_mut()
         } else {
-            self.idempotent_init();
-            self.inner_alloc(sc, true)
+            let inner = self.inner();
+            inner.idempotent_init();
+            inner.alloc(sc, true)
         }
     }
 
@@ -141,7 +110,8 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(!ptr.is_null());
 
         let p_addr = ptr.addr();
-        let smbp = self.inner().smbp.load(Relaxed);
+        let inner = self.inner();
+        let smbp = inner.smbp.load(Relaxed);
 
         // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
         // less than or equal to the highest slot pointer.
@@ -184,7 +154,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // The "Growers" strategy.
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
-            let newp = self.inner_alloc(reqsc, false);
+            let newp = inner.alloc(reqsc, false);
             if newp.is_null() {
                 // smalloc slots must be exhausted
                 return newp;
@@ -194,7 +164,7 @@ unsafe impl GlobalAlloc for Smalloc {
             unsafe { copy_nonoverlapping(ptr, newp, oldsize); }
 
             // Free the old slot.
-            self.inner_dealloc(p_addr);
+            inner.dealloc(p_addr);
 
             newp
         }
@@ -220,65 +190,41 @@ pub mod i {
         pub initlock: AtomicBool
     }
 
-    impl Smalloc {
-        #[doc(hidden)]
+    impl SmallocInner {
         #[inline(always)]
-        pub fn inner_dealloc(&self, p_addr: usize) {
-            // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
-            // less than or equal to the highest slot pointer.
-            let smbp = self.inner().smbp.load(Relaxed);
-            debug_assert!(p_addr >= smbp);
-            debug_assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
-
-            // Okay now we know that it is a pointer into smalloc's region.
-
-            // The sizeclass is encoded into the most-significant bits of the address:
-            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
-            debug_assert!(sc >= NUM_UNUSED_SCS);
-            debug_assert!(sc < NUM_SCS);
-
-            // The flhptr for this sizeclass and slabnum is at this location, which we can calculate
-            // by masking in the slabnum and sizeclass bits from the address and shifting them
-            // right:
-            const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
-            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
-            let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
-
-            let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
-            let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
-            debug_assert!(newslotnum < sentinel_slotnum);
-
-            loop {
-                // Load the value (current first entry slotnum and next-entry-touched bit) from the flh
-                let flhword = flh.load(Relaxed);
-
-                // The low-order 4-byte word is the slotnum and the touched-bit of the first entry
-                let curfirstentry = flhword as u32;
-
-                debug_assert!(newslotnum != curfirstentry & ENTRY_SLOTNUM_MASK);
-                // The curfirstentryslotnum can be the sentinel slotnum.
-                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
-
-                // Write it into the new slot's link
-                unsafe { *(p_addr as *mut u32) = curfirstentry };
-
-                // The high-order 4-byte word is the push counter. Increment it.
-                let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
-
-                // The new flh word is the push counter, the next-entry-touched-bit (set), and the next-entry slotnum.
-                let newflhword = push_counter | ENTRY_NEXT_TOUCHED_BIT as u64 | newslotnum as u64;
-
-                // Compare and exchange
-                if flh.compare_exchange_weak(flhword, newflhword, Release, Relaxed).is_ok() {
-                    break;
+        pub fn idempotent_init(&self) {
+            let smbpval = self.smbp.load(Relaxed);
+            if smbpval == 0 {
+                // acquire the spin lock
+                loop {
+                    if self.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
+                        break;
+                    }
                 }
+
+                let smbpval = self.smbp.load(Relaxed);
+                if smbpval == 0 {
+                    let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+                    assert!(sysbp != 0);
+                    let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
+
+                    #[cfg(any(target_os = "windows", doc))]
+                    {
+                        let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
+                        sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
+                    }
+
+                    self.smbp.store(smbp, Release);
+                }
+
+                // release the spin lock
+                self.initlock.store(false, Release);
             }
         }
 
-        /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
-        #[doc(hidden)]
         #[inline(always)]
-        pub fn inner_alloc(&self, orig_sc: u8, zeromem: bool) -> *mut u8 {
+        /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
+        pub fn alloc(&self, orig_sc: u8, zeromem: bool) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
             debug_assert!(orig_sc < NUM_SCS);
 
@@ -291,7 +237,7 @@ pub mod i {
             // If all slabs in the sizeclass are full, we'll switch to the next sizeclass.
             let mut sc = orig_sc;
 
-            let smbp = self.inner().smbp.load(Acquire);
+            let smbp = self.smbp.load(Acquire);
 
             loop {
                 // The flhptr for this sizeclass and slabnum is at this location:
@@ -415,6 +361,61 @@ pub mod i {
             }
         }
 
+        #[inline(always)]
+        pub fn dealloc(&self, p_addr: usize) {
+            // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
+            // less than or equal to the highest slot pointer.
+            let smbp = self.smbp.load(Relaxed);
+            debug_assert!(p_addr >= smbp);
+            debug_assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
+
+            // Okay now we know that it is a pointer into smalloc's region.
+
+            // The sizeclass is encoded into the most-significant bits of the address:
+            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
+            debug_assert!(sc >= NUM_UNUSED_SCS);
+            debug_assert!(sc < NUM_SCS);
+
+            // The flhptr for this sizeclass and slabnum is at this location, which we can calculate
+            // by masking in the slabnum and sizeclass bits from the address and shifting them
+            // right:
+            const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
+            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
+            let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
+
+            let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
+            let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
+            debug_assert!(newslotnum < sentinel_slotnum);
+
+            loop {
+                // Load the value (current first entry slotnum and next-entry-touched bit) from the flh
+                let flhword = flh.load(Relaxed);
+
+                // The low-order 4-byte word is the slotnum and the touched-bit of the first entry
+                let curfirstentry = flhword as u32;
+
+                debug_assert!(newslotnum != curfirstentry & ENTRY_SLOTNUM_MASK);
+                // The curfirstentryslotnum can be the sentinel slotnum.
+                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+
+                // Write it into the new slot's link
+                unsafe { *(p_addr as *mut u32) = curfirstentry };
+
+                // The high-order 4-byte word is the push counter. Increment it.
+                let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
+
+                // The new flh word is the push counter, the next-entry-touched-bit (set), and the next-entry slotnum.
+                let newflhword = push_counter | ENTRY_NEXT_TOUCHED_BIT as u64 | newslotnum as u64;
+
+                // Compare and exchange
+                if flh.compare_exchange_weak(flhword, newflhword, Release, Relaxed).is_ok() {
+                    break;
+                }
+            }
+        }
+    }
+
+    impl Smalloc {
         #[doc(hidden)]
         #[inline(always)]
         pub fn inner(&self) -> &SmallocInner {

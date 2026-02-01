@@ -317,7 +317,6 @@ pub fn print_comparisons(candidate_ns: Nanoseconds, baseline_nses: &[(&str, Nano
 macro_rules! st_bench {
     ($func:path, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
-        sm.idempotent_init();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
@@ -396,7 +395,6 @@ macro_rules! compare_st_bench {
 macro_rules! mt_bench {
     ($func:path, $threads:expr, $iters_per_batch:expr, $num_batches:expr, $seed:expr) => {{
         let sm = devutils::get_devsmalloc!();
-        sm.idempotent_init();
 
         let func_name = stringify!($func);
         let f = |al: &smalloc::Smalloc, s: &mut TestState| { $func(al, s) };
