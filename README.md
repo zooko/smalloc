@@ -4,7 +4,7 @@
 `mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 341 lines of Rust code. The other memory allocators
+simpler. The current implementation is only 349 lines of Rust code. The other memory allocators
 range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
