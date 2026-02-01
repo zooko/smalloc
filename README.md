@@ -814,6 +814,14 @@ useful tool!
     the common case (a single simple comparison and a branch) and the code complexity are actually
     worth it.
 
+  Okay, having posted this and then thought about it a bit more, this is worth doing, because it can
+  plausibly avoid a system getting into a swap-thrash and/or OOM-killer situation, and — critically
+  — because of Sam Smith's suggestion to do it only for sufficiently large allocations! My [previous
+  experiment](https://github.com/zooko/smalloc/blob/86c17f0849cc9debda67d101070f5c0fb687454b/src/lib.rs#L1189)
+  was naive and paid the cost of a system call on every `free`, but Sam Smith's suggested
+  optimization fixes that, and is also [how `smalloc` current manages memory commits on
+  Windows](https://github.com/zooko/smalloc/blob/80c823a31c9e5c4a91748f1d44bfff673a47b506/smalloc/src/lib.rs#L283).
+
 * port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc in wasm in the web browser. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
 
 * Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, as implemented by `smalloc`, getting passed to C++ `delete` or vice versa).
