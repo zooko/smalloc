@@ -351,10 +351,6 @@ mod platform {
 
     #[inline(always)]
     unsafe fn lookup_symbol(symbol: &str) -> *mut c_void {
-        const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
-        unsafe extern "C" {
-            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-        }
         let cstr = std::ffi::CString::new(symbol).unwrap();
         unsafe { dlsym(RTLD_NEXT, cstr.as_ptr()) }
     }
