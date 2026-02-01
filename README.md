@@ -822,6 +822,16 @@ useful tool!
   optimization fixes that, and is also [how `smalloc` current manages memory commits on
   Windows](https://github.com/zooko/smalloc/blob/80c823a31c9e5c4a91748f1d44bfff673a47b506/smalloc/src/lib.rs#L283).
 
+  P.S. Oh, I found my [notes from the previous
+  experiment](https://github.com/zooko/smalloc/blob/ee85224083330771324ac2682f3a6c4a114bf0bf/README.md#things-smalloc-does-not-currently-attempt-to-do)
+  and it was not quite as naive as I remembered. It paid the cost of a system call only for _large_
+  free's or alloc's. I wrote that it increased the latency from 8.4 ns to 1.8 μs for those
+  operations on large slots. (That 8.4 ns number is pretty consistent with [current
+  benchmarks](https://github.com/zooko/bench-allocators/blob/8daac112202502fdd81316bb51435677a9233849/benchmark-results/AppleM4Max.darwin25/smalloc.result.txt)
+  which say about 9.2 ns.) So the next question is, how large does a slot have to be before the cost
+  of roughly 1 μs to do a system call is compensated for by the savings of not swapping nor
+  memsetting that slot?
+
 * port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc in wasm in the web browser. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
 
 * Revisit whether we need to provide the C++ memory operators to avoid cross-allocator effects (i.e. a pointer allocated with `malloc`, as implemented by `smalloc`, getting passed to C++ `delete` or vice versa).
