@@ -53,7 +53,7 @@ const STATUS_NO_MEMORY: u32 = 0xC0000017;
 
 // Size-0 allocation sentinel. The official [Windows
 // docs](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc) are
-// silent on the question of what `HeapAlloc` will do if you request 0 bytes. Experimentation show
+// silent on the question of what `HeapAlloc` will do if you request 0 bytes. Experimentation shows
 // me that `HeapAlloc(..., 0)` on Windows 11 returns a non-null pointer that can be freed but that
 // is reported as pointing to an allocation of 0 bytes by `HeapSize`. So, our implementation of
 // `HeapAlloc` will do that. (Which, BTW, is also what `smalloc-ffi-c-api` does, because some code
@@ -141,7 +141,7 @@ unsafe fn raise_oom_if_needed(dw_flags: u32) {
         unsafe {
             RaiseException(
                 STATUS_NO_MEMORY,
-                0, // EXCEPTION_NONCONTINUABLE
+                0,
                 0,
                 null_mut(),
             );
@@ -257,7 +257,11 @@ pub unsafe extern "system" fn smalloc_HeapAlloc(
             return null_mut();
         }
 
+        #[cfg(feature = "cheapalloc")]
         let ptr = smalloc_inner_alloc(sc, dw_flags & HEAP_ZERO_MEMORY != 0);
+
+        #[cfg(not(feature = "cheapalloc"))]
+        let ptr = smalloc_inner_alloc(sc, true);
 
         if unlikely(ptr.is_null()) {
             unsafe { raise_oom_if_needed(dw_flags) };
@@ -310,61 +314,63 @@ pub unsafe extern "system" fn smalloc_HeapReAlloc(
     dw_bytes: usize,
 ) -> *mut c_void {
     if is_smalloc_heap(h_heap) {
-        match classify_ptr(lp_mem) {
-            PtrClass::Smalloc => {
-                if unlikely(dw_bytes == 0) {
-                    SMALLOC.inner_dealloc(lp_mem.addr());
-                    return SIZE_0_ALLOC_SENTINEL;
-                }
-
-        let reqsc = req_to_sc(dw_bytes);
-
-        if unlikely(reqsc >= NUM_SCS) {
-            unsafe { raise_oom_if_needed(dw_flags) };
-            return null_mut();
-        }
-
-        let oldsc = ptr_to_sc(lp_mem);
-
-        // We cannot implement HEAP_ZERO_MEMORY with a bigger or equal slot size, because we don't
-        // know the exact old allocation size, only that it fit in its old slot. The Windows API
-        // does not document any way for us to return an error or raise an exception that indicates
-        // this problem, either, so we'll have to panic.
-        assert!(dw_flags & HEAP_ZERO_MEMORY == 0 || reqsc < oldsc);
-
-        // If fits in current slot, just return it
-        if unlikely(reqsc <= oldsc) {
-            return lp_mem;
-        }
-
-        // Need larger slot - check HEAP_REALLOC_IN_PLACE_ONLY
-        if unlikely(dw_flags & HEAP_REALLOC_IN_PLACE_ONLY != 0) {
-            unsafe { raise_oom_if_needed(dw_flags) };
-            return null_mut();
-        }
-
-        // If we reached this line then the HEAP_ZERO_MEMORY flag must be off.
-        let new_ptr = smalloc_inner_alloc(reqsc, false);
-
-        if unlikely(new_ptr.is_null()) {
-            unsafe { raise_oom_if_needed(dw_flags) };
-            return null_mut();
-        }
-
-        // Copy the old data
-        unsafe { core::ptr::copy_nonoverlapping(lp_mem, new_ptr, 1 << oldsc) };
-
-        // Free old slot
-        SMALLOC.inner_dealloc(lp_mem.addr());
-
-        new_ptr
-            }
-
-        // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
+        // Since this is the smalloc heap, pointer must be smalloc, null, or sentinel (never
+        // foreign).
         assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::Null | PtrClass::Sentinel));
 
-        if unlikely(matches!(ptr_class, PtrClass::Null | PtrClass::Sentinel)) {
-            return unsafe { smalloc_HeapAlloc(h_heap, dw_flags, dw_bytes) };
+        if likely(matches!(ptr_class, PtrClass::Smalloc)) {
+            if unlikely(dw_bytes == 0) {
+                SMALLOC.inner_dealloc(lp_mem.addr());
+                return SIZE_0_ALLOC_SENTINEL;
+            }
+
+            let reqsc = req_to_sc(dw_bytes);
+
+            if unlikely(reqsc >= NUM_SCS) {
+                unsafe { raise_oom_if_needed(dw_flags) };
+                return null_mut();
+            }
+
+            let oldsc = ptr_to_sc(lp_mem);
+
+            #[cfg(feature = "cheapalloc")]
+            // We cannot implement HEAP_ZERO_MEMORY with a bigger or equal slot size, because we
+            // don't know the exact old allocation size, only that it fit in its old slot. The
+            // Windows API does not document any way for us to return an error or raise an exception
+            // that indicates this problem, either, so we'll have to panic.
+            assert!(dw_flags & HEAP_ZERO_MEMORY == 0 || reqsc < oldsc);
+
+            // If fits in current slot, just return it
+            if unlikely(reqsc <= oldsc) {
+                return lp_mem;
+            }
+
+            // Need larger slot - check HEAP_REALLOC_IN_PLACE_ONLY
+            if unlikely(dw_flags & HEAP_REALLOC_IN_PLACE_ONLY != 0) {
+                unsafe { raise_oom_if_needed(dw_flags) };
+                return null_mut();
+            }
+
+            #[cfg(feature = "cheapalloc")]
+            // If we reached this line then the HEAP_ZERO_MEMORY flag must be off.
+            let new_ptr = smalloc_inner_alloc(reqsc, false);
+            #[cfg(not(feature = "cheapalloc"))]
+            let new_ptr = smalloc_inner_alloc(reqsc, true);
+
+            if unlikely(new_ptr.is_null()) {
+                unsafe { raise_oom_if_needed(dw_flags) };
+                return null_mut();
+            }
+
+            // Copy the old data
+            unsafe { core::ptr::copy_nonoverlapping(lp_mem, new_ptr, 1 << oldsc) };
+
+            // Free old slot
+            SMALLOC.inner_dealloc(lp_mem.addr());
+
+            new_ptr
+        } else {
+            //xxx do experiments to figure out what the Windows Heap API does when you pass a NULL or sentinel to HeapRealloc().
         }
     } else {
         platform::call_system_HeapReAlloc(h_heap, dw_flags, lp_mem, dw_bytes)
@@ -385,7 +391,7 @@ pub unsafe extern "system" fn smalloc_HeapSize(
         let ptr_class = classify_ptr(lp_mem);
 
         // Since this is the smalloc heap, pointer must be smalloc or null/sentinel (never foreign)
-        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::NullOrSentinel));
+        assert!(matches!(ptr_class, PtrClass::Smalloc | PtrClass::Null | PtrClass::Sentinel));
 
         if likely(matches!(ptr_class, PtrClass::Smalloc)) {
             let sc = ptr_to_sc(lp_mem as *mut c_void);

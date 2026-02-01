@@ -1,16 +1,15 @@
-Document warning about incompatibility of smalloc-ffi-windows-heap-api with `HeapReAlloc` with
-`HEAP_ZERO_MEMORY`. This could be a significant limitation for some user code.
+This is not yet fully implemented.
 
 * go back and prune out unused System* functions that smalloc doesn't need to use after all
 
 MUST implement (for correctness & safety):
 
-☐ GetProcessHeap- return smalloc sentinel handle
-☐ HeapAlloc- main allocation
+✅ GetProcessHeap- return smalloc sentinel handle
+✅ HeapAlloc- main allocation
    Return value has to be >=8-byte-aligned (https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc).
-☐ HeapFree- main deallocation
-☐ HeapReAlloc- reallocation
-☐ HeapSize- query allocation size
+✅ HeapFree- main deallocation
+✅ HeapReAlloc- reallocation
+✅ HeapSize- query allocation size
 ☐ HeapValidate- could be called with process heap handle
 ☐ HeapLock- could be called with process heap handle
 ☐ HeapUnlock- could be called with process heap handle
@@ -18,7 +17,7 @@ MUST implement (for correctness & safety):
 ☐ HeapWalk- could be called with process heap handle
 ☐ HeapSetInformation- could be called with process heap handle
 ☐ HeapQueryInformation- could be called with process heap handle
-☐ GetProcessHeaps- enumerates heaps (can forward)
+✅ GetProcessHeaps- enumerates heaps (can forward)
 
 Do NOT need to implement (just forward):
 

@@ -12,3 +12,20 @@ smalloc = { path = "../smalloc", package = "smmalloc" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Memory"] }
+
+[features]
+
+## The `cheapalloc` flag allows smalloc to skip zeroing out allocated memory. This speeds up
+## allocations but in `cheapalloc` mode `HeapRealloc()` will abort if the `HEAP_ZERO_MEMORY` flag is
+## passed (unless the new requested size is small enough to fit into a smaller slot than the current
+## allocation).
+##
+## By default (i.e. without `cheapalloc` enabled), smalloc zeroes out all allocated memory. In
+## default mode `HeapRealloc()` will work whether or not it is passed the `HEAP_ZERO_MEMORY` flag
+## (and indeed, in default mode `HeapRealloc` behaves as if the `HEAP_ZERO_MEMORY` were always
+## set). In `cheapalloc` mode, smalloc skips zeroing allocated memory unnecessarily (unless the
+## `HEAP_ZERO_MEMORY` flag is passed to a specific function invocation to zero its
+## allocation). However, in `cheapalloc` mode, smalloc cannot implement `HeapRealloc()` with the
+## `HEAP_ZERO_MEMORY` flag (unless the new requested size fits into a smaller slot than the current
+## allocation), so it will instead abort.
+cheapalloc = []
