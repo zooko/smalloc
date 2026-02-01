@@ -120,7 +120,7 @@ Within the smalloc package, there are four files:
  * _smalloc/src/i/plat/mod.rs_: interface to the operating system's `mmap` or equivalent system call
    to reserve virtual address space
 
-These two files contain the only source code you are relying on if you use smalloc as the global
+Those two files contain the only source code you are relying on if you use smalloc as the global
 allocator in Rust.
 
  * _smalloc/src/tests.rs_: transparent-box tests that use internals of the core to test it
@@ -742,7 +742,8 @@ useful tool!
 * Experiment with making it FIFO instead of LIFO -- this would potentially harden against bugs like
   double-frees and buffer overflows, it might improve multithreading performance (because pushes
   would be updating a different pointer than pops), it would maybe improved cache-friendliness for
-  FIFO-oriented usage patterns, but it would potentially probably worse load on the virtual memory subsystem
+  FIFO-oriented usage patterns, but it would potentially probably worse load on the virtual memory
+  subsystem
 
 * Port to Cheri, add capability-safety
 
@@ -784,8 +785,34 @@ useful tool!
 * Rewrite it in Odin. :-) (Sam and Andrew's recommendation -- for the programming language, not for
   the rewrite.)
 
-* Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam Smith)
-* Relatedly, when doing `zeromem=true`, i.e. for `calloc` and when the Windows Heap API's `HEAP_ZERO_MEMORY` flag is set, there is a size of allocation at which point it is actually more efficient to madvise the kernel to drop that page and give us fresh zero-backed pages than to memset all of the bytes. It remains an open question whether the runtime in the common case (a single simple comparison and a branch) and the code complexity are actually worth it.
+* Try madvise'ing to mark pages as reusable but only when we can mark a lot of pages at once (HT Sam
+  Smith)
+  
+  A note on this: builders and users of memory allocators sometimes talk about "giving memory back
+  to the operating system". I think some of them are misunderstanding this by thinking of virtual
+  memory as a scarce resource, and memory allocators as using that resource, and "giving memory back
+  to the operating system" as making more memory available for other processes. That was accurate 30
+  years ago, but it is not really how it works nowadays with virtual memory. Instead, `madvise`'ing
+  like this is only *hinting* to the kernel that these are among the first virtual memory pages it
+  should choose to unmap in the case that it needs to give some physical memory frames to another
+  process. This is merely heuristic — it is a bet that it is *less likely* that these pages will be
+  re-used soon compared to other pages in this system. Probably more importantly, the allocator can
+  inform the kernel that it can skip the expensive step of swapping the contents of those pages
+  to/from persistent storage.
+
+  So it is only a rarely-used efficiency improvement (mostly for those other "neighbor" processes on
+  this system, and only occasionally for this process itself).
+  
+  I personally remain undecided on whether the efficiency benefits in the rare case are worth the
+  added code complexity (even though it is just a few lines of code) and the added
+  compare-and-branches in the common case (even though it is just one or two of them).
+
+  * Relatedly, when doing `zeromem=true`, i.e. for `calloc` and when the Windows Heap API's
+    `HEAP_ZERO_MEMORY` flag is set, there is a size of allocation at which point it is actually more
+    efficient to madvise the kernel to drop that page and give us fresh zero-backed pages than to
+    memset all of the bytes. This too remains an open question to me about whether the runtime in
+    the common case (a single simple comparison and a branch) and the code complexity are actually
+    worth it.
 
 * port to WASM now that WASM apparently has grown virtual memory; Note: turns out web browsers still limit the *virtual* memory space to 16 GiB even after the new improved memory model, which kills smalloc in wasm in the web browser. What a shame! But non-web-browser-hosted WASM could still maybe use smalloc...
 
