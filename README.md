@@ -19,13 +19,24 @@ management bugs.
 # Performance
 
 <a href="https://github.com/zooko/bench-allocators/blob/main/benchmark-results/AppleM4Max.darwin25/COMBINED-REPORT.md">
-  <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc-mt.graph.svg" width="600">
+    <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc-mt.graph.svg" width="600">
 </a>
     
 (Click on the image.)
 
-See the [bench-allocators](https://github.com/zooko/bench-allocators/README.md) repo for more
-benchmark results and how to generate them yourself.
+Benchmark results (difference in time elapsed — lower is better):
+
+```text
+Multi-Threaded smalloc vs others:
+  smalloc vs default     : -89.7%
+  smalloc vs jemalloc    : -98.8%
+  smalloc vs snmalloc    : -91.3%
+  smalloc vs mimalloc    : -84.0%
+  smalloc vs rpmalloc    : -95.9%
+```
+
+See the [bench-allocators](https://github.com/zooko/bench-allocators/blob/main/README.md) repo for
+more benchmark results and how to generate them yourself.
 
 # Limitations
 
