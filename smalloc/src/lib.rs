@@ -107,18 +107,10 @@ unsafe impl GlobalAlloc for Smalloc {
 
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, reqsize: usize) -> *mut u8 {
-        debug_assert!(!ptr.is_null());
-
-        let p_addr = ptr.addr();
         let inner = self.inner();
-        let smbp = inner.smbp.load(Relaxed);
+        let p_addr = ptr.addr();
+        debug_assert!(inner.is_smalloc_ptr(p_addr));
 
-        // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
-        // less than or equal to the highest slot pointer.
-        assert!(p_addr >= smbp);
-        assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
-
-        // Okay now we know that it is a pointer into smalloc's region.
         let oldsize = layout.size();
         debug_assert!(oldsize > 0);
         let oldalignment = layout.align();
@@ -129,10 +121,10 @@ unsafe impl GlobalAlloc for Smalloc {
         debug_assert!(reqali_to_sc(oldsize, oldalignment) >= NUM_UNUSED_SCS);
         debug_assert!(reqali_to_sc(oldsize, oldalignment) < NUM_SCS);
 
-        let oldsc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
+        let oldsc = ptr_to_sc(p_addr);
+
         debug_assert!(oldsc >= NUM_UNUSED_SCS);
         debug_assert!(oldsc < NUM_SCS);
-        debug_assert!(p_addr.trailing_zeros() >= oldsc as u32);
 
         // It's possible that the slot `ptr` is currently in is larger than the slot size necessary
         // to hold the size that the user requested when originally allocating (or re-allocating)
@@ -191,6 +183,18 @@ pub mod i {
     }
 
     impl SmallocInner {
+        /// Returns true if and only if this is a valid pointer to a smalloc slot.
+        #[inline(always)]
+        pub fn is_smalloc_ptr(&self, p_addr: usize) -> bool {
+            let smbp = self.smbp.load(Relaxed);
+
+            p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR &&
+                ptr_to_sc(p_addr) >= NUM_UNUSED_SCS &&
+                p_addr.trailing_zeros() >= ptr_to_sc(p_addr) as u32 &&
+                ptr_to_slotnum(p_addr) != sc_to_sentinel_slotnum(ptr_to_sc(p_addr)) &&
+                p_addr & ADDR_NEXT_TOUCHED_BIT == 0
+        }
+
         #[inline(always)]
         pub fn idempotent_init(&self) {
             let smbpval = self.smbp.load(Relaxed);
@@ -250,27 +254,28 @@ pub mod i {
 
                 // The low-order 4-byte word is the slotnum and touched-bit of the first entry.
                 let curfirstentry = flhword as u32;
+                let curfirstentryslotnum = curfirstentry & ENTRY_SLOTNUM_MASK;
+                let curfirstentrynexttouchedbit = curfirstentry & ENTRY_NEXT_TOUCHED_BIT;
 
                 // The sentinel slotnum for this sizeclass:
-                let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
+                let sentinel_slotnum = sc_to_sentinel_slotnum(sc);
 
                 // The curfirstentry slotnum can be the sentinel slotnum, but not larger.
-                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+                debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
                 // If the curfirstentry next-slotnum is the sentinel slotnum, then the
                 // next-has-been-touched bit must be false. (You can't ever touch—read or
                 // write—the memory of the sentinel slot.)
-                debug_assert!(if curfirstentry & ENTRY_SLOTNUM_MASK == sentinel_slotnum { curfirstentry & ENTRY_NEXT_TOUCHED_BIT == 0 } else { true });
+                debug_assert!(if curfirstentryslotnum == sentinel_slotnum { curfirstentrynexttouchedbit == 0 } else { true });
 
                 if curfirstentry != sentinel_slotnum {
                     // There is a slot available in the free list.
 
                     // Here's the pointer to the current first entry:
-                    let curfirstentryslotnum = curfirstentry & ENTRY_SLOTNUM_MASK;
                     let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SN_D_T_BITS) | (curfirstentryslotnum as usize) << sc;
-                    debug_assert!((curfirstentry_p - smbp >= LOWEST_SMALLOC_SLOT_ADDR) && (curfirstentry_p - smbp <= HIGHEST_SMALLOC_SLOT_ADDR));
+                    debug_assert!(self.is_smalloc_ptr(curfirstentry_p), "curfirstentry_p: {curfirstentry_p}/{curfirstentry_p:b}");
 
-                    let next_entry = if (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
+                    let next_entry = if curfirstentrynexttouchedbit != 0 {
                         // Read the bits from the first entry's space (which are about the second
                         // entry). These bits might be invalid, if the flh has changed since we read
                         // it above and another thread has started using this memory for something
@@ -313,7 +318,7 @@ pub mod i {
 
                         // Okay we've successfully allocated a slot! If `zeromem` is requested and
                         // this slot has previously been touched then we have to zero its contents.
-                        if zeromem && (curfirstentry & ENTRY_NEXT_TOUCHED_BIT) != 0 {
+                        if zeromem && curfirstentrynexttouchedbit != 0 {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
@@ -363,40 +368,34 @@ pub mod i {
 
         #[inline(always)]
         pub fn dealloc(&self, p_addr: usize) {
-            // To be valid, the pointer has to be greater than or equal to the smalloc base pointer and
-            // less than or equal to the highest slot pointer.
-            let smbp = self.smbp.load(Relaxed);
-            debug_assert!(p_addr >= smbp);
-            debug_assert!(p_addr - smbp >= LOWEST_SMALLOC_SLOT_ADDR && p_addr - smbp <= HIGHEST_SMALLOC_SLOT_ADDR);
+            debug_assert!(self.is_smalloc_ptr(p_addr));
 
             // Okay now we know that it is a pointer into smalloc's region.
 
-            // The sizeclass is encoded into the most-significant bits of the address:
-            let sc = ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8;
+            // The sizeclass is encoded into these bits of the address:
+            let sc = ptr_to_sc(p_addr);
             debug_assert!(sc >= NUM_UNUSED_SCS);
             debug_assert!(sc < NUM_SCS);
 
-            // The flhptr for this sizeclass and slabnum is at this location, which we can calculate
-            // by masking in the slabnum and sizeclass bits from the address and shifting them
-            // right:
-            const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
-            let flhptr = smbp | (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
+            let flhptr = self.smbp.load(Relaxed) | ptr_to_flhaddr(p_addr);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
-            let newslotnum = ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32;
-            let sentinel_slotnum = gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32);
+            let newslotnum = ptr_to_slotnum(p_addr);
+            let sentinel_slotnum = sc_to_sentinel_slotnum(sc);
             debug_assert!(newslotnum < sentinel_slotnum);
 
             loop {
-                // Load the value (current first entry slotnum and next-entry-touched bit) from the flh
+                // Load the value (current first entry slotnum and next-entry-touched bit) from the
+                // flh
                 let flhword = flh.load(Relaxed);
 
                 // The low-order 4-byte word is the slotnum and the touched-bit of the first entry
                 let curfirstentry = flhword as u32;
+                let curfirstentryslotnum = curfirstentry & ENTRY_SLOTNUM_MASK;
 
-                debug_assert!(newslotnum != curfirstentry & ENTRY_SLOTNUM_MASK);
-                // The curfirstentryslotnum can be the sentinel slotnum.
-                debug_assert!(curfirstentry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+                debug_assert!(newslotnum != curfirstentryslotnum);
+                // The curfirstentryslotnum can be the sentinel slotnum but not greater.
+                debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
                 // Write it into the new slot's link
                 unsafe { *(p_addr as *mut u32) = curfirstentry };
@@ -404,7 +403,8 @@ pub mod i {
                 // The high-order 4-byte word is the push counter. Increment it.
                 let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
 
-                // The new flh word is the push counter, the next-entry-touched-bit (set), and the next-entry slotnum.
+                // The new flh word is the push counter, the next-entry-touched-bit (set), and the
+                // next-entry slotnum.
                 let newflhword = push_counter | ENTRY_NEXT_TOUCHED_BIT as u64 | newslotnum as u64;
 
                 // Compare and exchange
@@ -480,6 +480,14 @@ pub mod i {
 
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
+
+    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_BYTE_ADDR + BASEPTR_ALIGN - 1; // 0b1111111111111101111111111111111111111111111110 == 70_366_596_694_014
+
+    /// Return the size class of the given pointer.
+    #[inline(always)]
+    pub fn ptr_to_sc(p_addr: usize) -> u8 {
+        ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8
+    }
 }
 
 pub use i::*;
@@ -508,7 +516,9 @@ const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
 // This is how many bits hold the slotnum for the size class with the most slots (size class 2):
 const NUM_SN_BITS: u8 = NUM_SCS - 1; // 31 // We reserve 1 bit to indicate next-touched
 
-const ENTRY_NEXT_TOUCHED_BIT: u32 = 1 << 31;
+const ENTRY_NEXT_TOUCHED_BIT: u32 = 1 << NUM_SN_BITS;
+
+const ADDR_NEXT_TOUCHED_BIT: usize = 1 << (NUM_SN_BITS + NUM_UNUSED_SCS);
 
 const ENTRY_SLOTNUM_MASK: u32 = gen_mask!(NUM_SN_BITS, u32);
 
@@ -567,6 +577,28 @@ const fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
     debug_assert!(ali.is_power_of_two());
 
     (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+}
+
+/// Return the slotnum of the given pointer.
+#[inline(always)]
+fn ptr_to_slotnum(p_addr: usize) -> u32 {
+    let sc = ptr_to_sc(p_addr);
+    ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32
+}
+
+#[inline(always)]
+/// Return the sentinel slotnum for this size class.
+fn sc_to_sentinel_slotnum(sc: u8) -> u32 {
+    gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32)
+}
+
+#[inline(always)]
+/// Return the address of the flh for this slab.
+fn ptr_to_flhaddr(p_addr: usize) -> usize {
+    // The flhptr for this sizeclass and slabnum is at this location, which we can calculate by
+    // masking in the slabnum and sizeclass bits from the address and shifting them right:
+    const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
+    (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS)
 }
 
 #[cfg(test)]
