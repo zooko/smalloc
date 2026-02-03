@@ -4,7 +4,7 @@
 `mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 349 lines of Rust code. The other memory allocators
+simpler. The current implementation is only 375 lines of Rust code. The other memory allocators
 range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
@@ -165,9 +165,9 @@ bytes of data within a slot (memory addresses shown in binary notation).
 Figure 1: Memory layout of slots and slabs and free-list-heads
 
 slabs
-                                      slab sc   flh
-                                      [sla][sc ][f]
-   0   00000000000000000000000000000000000000000000       used for flh's
+                                       slab sc   flh
+                                       [sla][sc ][f]
+   0   000000000000000000000000000000000000000000000       used for flh's
 
    1   unused
 
@@ -935,9 +935,9 @@ Smalloc v7.4.9 (git commit 6ed1ae401b0ff29df3e2b14d4e86448eec1b6c2f) has the fol
 This is the last version of `smalloc` before adding Windows support and it is probably the fewest
 lines of code `smalloc` will ever be!
 
-Smalloc v7.6.3 has the following lines counts:
+Smalloc v7.6.3+ has the following lines counts:
 * docs and comments: 1580
-* implementation loc: 349 (excluding debug_asserts)
+* implementation loc: 375 (excluding debug_asserts)
 * tests loc: 804
 * benches loc: 1246
 
