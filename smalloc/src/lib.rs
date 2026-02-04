@@ -1,3 +1,6 @@
+#![cfg_attr(nightly, feature(thread_id_value))]
+#![cfg_attr(nightly, feature(current_thread_id))]
+
 //! # smalloc
 //!
 //! A simple, fast memory allocator.
@@ -22,9 +25,9 @@
 //     - Constants for calculating the total virtual address space to reserve
 //xxx update this ToC
 
-use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, AtomicBool};
+use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool};
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use core::cell::{Cell, UnsafeCell};
+use core::cell::UnsafeCell;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{copy_nonoverlapping, null_mut};
 use plat::p::sys_alloc;
@@ -234,7 +237,7 @@ pub mod i {
 
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
-            let orig_slabnum = get_slabnum();
+            let orig_slabnum = rustlevel::get_slabnum();
             let mut slabnum = orig_slabnum;
             let mut a_slab_was_full = false;
 
@@ -535,26 +538,44 @@ const BASEPTR_ALIGN: usize = (HIGHEST_SMALLOC_SLOT_BYTE_ADDR + 1).next_power_of_
 
 // --- Implementation ---
 
-static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
-const SLAB_NUM_SENTINEL: u8 = u8::MAX;
-thread_local! {
-    static SLABNUM: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
+#[cfg(nightly)]
+mod rustlevel {
+    use crate::*;
+    /// Get the slab number for this thread.
+    #[inline(always)]
+    pub fn get_slabnum() -> u8 {
+        let x = std::thread::current_id().as_u64().get();
+        (x as u8) & SLABNUM_BITS_ALONE_MASK
+    }
 }
 
-/// Get the slab number for this thread. On first call, initializes it from GLOBAL_THREAD_NUM.
-#[inline(always)]
-fn get_slabnum() -> u8 {
-    SLABNUM.with(|cell| {
-        let slabnum = cell.get();
-        if slabnum == SLAB_NUM_SENTINEL {
-            let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
-            let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK;
-            cell.set(newslabnum);
-            newslabnum
-        } else {
-            slabnum
-        }
-    })
+#[cfg(not(nightly))]
+mod rustlevel {
+    use crate::*;
+    use core::sync::atomic::AtomicU8;
+    use core::cell::Cell;
+
+    static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
+    const SLAB_NUM_SENTINEL: u8 = u8::MAX;
+    thread_local! {
+        static SLABNUM: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
+    }
+
+    /// Get the slab number for this thread.
+    #[inline(always)]
+    pub fn get_slabnum() -> u8 {
+        SLABNUM.with(|cell| {
+            let slabnum = cell.get();
+            if slabnum == SLAB_NUM_SENTINEL {
+                let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
+                let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK;
+                cell.set(newslabnum);
+                newslabnum
+            } else {
+                slabnum
+            }
+        })
+    }
 }
 
 #[doc(hidden)]
