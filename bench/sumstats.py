@@ -425,24 +425,31 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
     meta_y = svg_height - 50
 
     meta_parts = []
-    if metadata.get('commit'):
-        meta_parts.append(f"Commit: {metadata['commit'][:12]}")
-    if metadata.get('git_status'):
-        meta_parts.append(f'Git status: "{metadata["git_status"]}"')
+    if metadata.get('timestamp'):
+        meta_parts.append(f"Timestamp: {metadata['timestamp']}")
 
     if meta_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(meta_parts))}</text>\n')
 
     line2_parts = []
-    if metadata.get('cpu'):
-        line2_parts.append(f"CPU: {metadata['cpu']}")
-    if metadata.get('os'):
-        line2_parts.append(f"OS: {metadata['os']}")
-    if metadata.get('cpucount'):
-        line2_parts.append(f"CPU Count: {metadata['cpucount']}")
+    if metadata.get('commit'):
+        line2_parts.append(f"Commit: {metadata['commit'][:12]}")
+    if metadata.get('git_status'):
+        line2_parts.append(f'Git status: "{metadata["git_status"]}"')
 
     if line2_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 15}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line2_parts))}</text>\n')
+
+    line3_parts = []
+    if metadata.get('cpu'):
+        line3_parts.append(f"CPU: {metadata['cpu']}")
+    if metadata.get('os'):
+        line3_parts.append(f"OS: {metadata['os']}")
+    if metadata.get('cpucount'):
+        line3_parts.append(f"CPU Count: {metadata['cpucount']}")
+
+    if line3_parts:
+        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 30}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line3_parts))}</text>\n')
 
     # Close SVG
     svg_parts.append('</svg>\n')
@@ -456,6 +463,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
 def main():
     parser = argparse.ArgumentParser(description='Parse benchmark results and generate graphs')
     parser.add_argument('input_file', help='Benchmark output file to parse')
+    parser.add_argument('--timestamp', help='When the benchmarking process started')
     parser.add_argument('--graph', help='Base name for output graph files (without extension)')
     parser.add_argument('--commit', help='Git commit hash')
     parser.add_argument('--git-status', help='Git status (Clean or Uncommitted changes)')
@@ -530,6 +538,7 @@ def main():
     # Generate graphs if requested
     if args.graph:
         metadata = {
+            'timestamp': args.timestamp,
             'commit': args.commit,
             'git_status': args.git_status,
             'cpu': args.cpu,

@@ -38,6 +38,7 @@ GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
 mkdir -p ${OUTPUT_DIR}
 rm -f $RESF
 
+echo "TIMESTAMP: ${TIMESTAMP}" 2>&1 | tee -a $RESF
 echo "GITCOMMIT: ${GITCOMMIT}" 2>&1 | tee -a $RESF
 echo "GITCLEANSTATUS: ${GITCLEANSTATUS}" 2>&1 | tee -a $RESF
 echo "CPUTYPE: ${CPUTYPE}" 2>&1 | tee -a $RESF
@@ -59,6 +60,7 @@ cargo --locked build --release --package bench --features=$ALLOCATORS
 
 # Generate graphs with sumstats.py
 ./bench/sumstats.py "$RESF" \
+    --timestamp "$TIMESTAMP" \
     --graph "$GRAPH_BASE" \
     --commit "$GITCOMMIT" \
     --git-status "$GITCLEANSTATUS" \
