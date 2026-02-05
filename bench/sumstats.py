@@ -432,10 +432,12 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(meta_parts))}</text>\n')
 
     line2_parts = []
+    if metadata.get('source'):
+        line2_parts.append(f"Source: {metadata['source']}")
     if metadata.get('commit'):
         line2_parts.append(f"Commit: {metadata['commit'][:12]}")
     if metadata.get('git_status'):
-        line2_parts.append(f'Git status: "{metadata["git_status"]}"')
+        line2_parts.append(f'Git status: {metadata["git_status"]}')
 
     if line2_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 15}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line2_parts))}</text>\n')
@@ -451,10 +453,8 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
     if line3_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 30}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line3_parts))}</text>\n')
 
-    # Close SVG
     svg_parts.append('</svg>\n')
 
-    # Write to file
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(''.join(svg_parts))
 
@@ -464,13 +464,13 @@ def main():
     parser = argparse.ArgumentParser(description='Parse benchmark results and generate graphs')
     parser.add_argument('input_file', help='Benchmark output file to parse')
     parser.add_argument('--timestamp', help='When the benchmarking process started')
-    parser.add_argument('--graph', help='Base name for output graph files (without extension)')
+    parser.add_argument('--source', help='Source URL')
     parser.add_argument('--commit', help='Git commit hash')
     parser.add_argument('--git-status', help='Git status (Clean or Uncommitted changes)')
     parser.add_argument('--cpu', help='CPU type')
     parser.add_argument('--os', help='OS type')
     parser.add_argument('--cpucount', help='Number of CPUs')
-    parser.add_argument('--source', help='Source URL')
+    parser.add_argument('--graph', help='Base name for output graph files (without extension)')
 
     args = parser.parse_args()
 

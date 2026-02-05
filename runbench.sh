@@ -4,8 +4,12 @@ set -e
 BNAME="cargo-bench"
 
 # Collect metadata
+GITSOURCE=$(git remote get-url origin)
+[[ "$GITSOURCE" == git@* ]] && GITSOURCE=$(echo "$GITSOURCE" | sed 's|^git@\([^:]*\):\(.*\)|https://\1/\2|')
+GITSOURCE="${GITSOURCE%.git}"
+
 GITCOMMIT=$(git rev-parse HEAD)
-GITCLEANSTATUS=$( [ -z "$( git status --porcelain )" ] && echo \"Clean\" || echo \"Uncommitted changes\" )
+GITCLEANSTATUS=$( [ -z "$( git status --porcelain )" ] && echo Clean || echo Uncommitted changes )
 TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 # Detect CPU type
@@ -39,6 +43,7 @@ mkdir -p ${OUTPUT_DIR}
 rm -f $RESF
 
 echo "TIMESTAMP: ${TIMESTAMP}" 2>&1 | tee -a $RESF
+echo "GITSOURCE: ${GITSOURCE}" 2>&1 | tee -a $RESF
 echo "GITCOMMIT: ${GITCOMMIT}" 2>&1 | tee -a $RESF
 echo "GITCLEANSTATUS: ${GITCLEANSTATUS}" 2>&1 | tee -a $RESF
 echo "CPUTYPE: ${CPUTYPE}" 2>&1 | tee -a $RESF
@@ -62,6 +67,7 @@ cargo --locked build --release --package bench --features=$ALLOCATORS
 ./bench/sumstats.py "$RESF" \
     --timestamp "$TIMESTAMP" \
     --graph "$GRAPH_BASE" \
+    --source "$GITSOURCE" \
     --commit "$GITCOMMIT" \
     --git-status "$GITCLEANSTATUS" \
     --cpu "$CPUTYPE" \
