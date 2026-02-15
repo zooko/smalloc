@@ -17,7 +17,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
 
-    let (slabnum, _sn) = get_slabnum_and_stepnum();
+    let slabnum = get_slabnum();
     debug_assert!(slabnum < NUM_SLABS, "slabnum: {slabnum}, NUM_SLABS: {NUM_SLABS}");
 
     let numslots = help_numslots(sc);
@@ -100,7 +100,7 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let (slabnum, _sn) = get_slabnum_and_stepnum();
+    let slabnum = get_slabnum();
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -150,7 +150,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let (slabnum, _sn) = get_slabnum_and_stepnum();
+    let slabnum = get_slabnum();
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -208,7 +208,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let (slabnum, _sn) = get_slabnum_and_stepnum();
+    let slabnum = get_slabnum();
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -292,7 +292,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-    let (slabnum, _sn) = get_slabnum_and_stepnum();
+    let slabnum = get_slabnum();
     let orig_slabnum = slabnum;
 
     let p1 = unsafe { sm.alloc(l) };
@@ -543,7 +543,7 @@ nextest_unit_tests! {
 
         // Step 0: reach into the current slab's `flh` and set it to the max slot number (which
         // means the free list is empty).
-        let (slabnum, _sn) = get_slabnum_and_stepnum();
+        let slabnum = get_slabnum();
         sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot

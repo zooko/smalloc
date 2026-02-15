@@ -234,7 +234,7 @@ pub mod i {
 
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
-            let (orig_slabnum, stepnum) = get_slabnum_and_stepnum();
+            let orig_slabnum = get_slabnum();
             let mut slabnum = orig_slabnum;
             let mut a_slab_was_full = false;
 
@@ -331,14 +331,14 @@ pub mod i {
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
                         // slab in the same size class.
-                        slabnum = failover_slabnum(slabnum, stepnum);
+                        slabnum = failover_slabnum(slabnum);
                     }
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                     // different slab in the same size class.
 
-                    slabnum = failover_slabnum(slabnum, stepnum);
+                    slabnum = failover_slabnum(slabnum);
 
                     if slabnum != orig_slabnum {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
@@ -558,30 +558,23 @@ use core::cell::Cell;
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
 const SLAB_NUM_SENTINEL: u8 = u8::MAX;
 thread_local! {
-    // "Slab And Step NUMbers"
-    static SAS_NUMS: Cell<(u8, u8)> = const { Cell::new((0, SLAB_NUM_SENTINEL)) };
+    // "Slab And Step NUMbers" xxx
+    static SAS_NUMS: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
 }
 
-/// Get the slab number and step number for this thread. On first call, initializes both.
-/// Returns (slab_num, step_num).
+/// Get the slab number for this thread. On first call, initializes xxx
 #[inline(always)]
-fn get_slabnum_and_stepnum() -> (u8, u8) {
+fn get_slabnum() -> u8 {
 
     SAS_NUMS.with(|cell| {
-        let (slabnum, stepnum) = cell.get();
+        let slabnum = cell.get();
         if slabnum == SLAB_NUM_SENTINEL {
-            const STEP_ARRAY_IX_BITS: u8 = 5;
-            const STEP_ARRAY_LEN: u8 = 1 << STEP_ARRAY_IX_BITS; // 32
-            const STEP_ARRAY_IX_MASK: u8 = gen_mask!(STEP_ARRAY_IX_BITS, u8); // 0b11111
-            const STEPS: [u8; STEP_ARRAY_LEN as usize] = [1, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 1, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43];
-
             let threadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
             let slabnum = threadnum & SLABNUM_ALONE_MASK;
-            let stepnum = STEPS[(threadnum & STEP_ARRAY_IX_MASK) as usize];
-            cell.set((slabnum, stepnum));
-            (slabnum, stepnum)
+            cell.set(slabnum);
+            slabnum
         } else {
-            (slabnum, stepnum)
+            slabnum
         }
     })
 }
@@ -589,8 +582,7 @@ fn get_slabnum_and_stepnum() -> (u8, u8) {
 #[inline(always)]
 fn set_slab_num(slabnum: u8) {
     SAS_NUMS.with(|cell| {
-        let (_, stepnum) = cell.get();
-        cell.set((slabnum, stepnum));
+        cell.set(slabnum);
     });
 }
 
@@ -613,8 +605,9 @@ fn set_slab_num(slabnum: u8) {
 ///    minimally likely to recollide soon). This implies that d needs to be prime, which also
 ///    satisfies requirement 1 above.
 #[inline(always)]
-fn failover_slabnum(slabnum: u8, stepnum: u8) -> u8 {
-    (slabnum.wrapping_add(stepnum)) & SLABNUM_ALONE_MASK
+fn failover_slabnum(slabnum: u8) -> u8 {
+    const SLAB_FAILOVER_NUM: u8 = (1u8 << NUM_SLABS_BITS) / 3; // 21
+    (slabnum.wrapping_add(SLAB_FAILOVER_NUM)) & SLABNUM_ALONE_MASK
 }
 
 #[doc(hidden)]
