@@ -1,6 +1,3 @@
-#![cfg_attr(nightly, feature(thread_id_value))]
-#![cfg_attr(nightly, feature(current_thread_id))]
-
 //! # smalloc
 //!
 //! A simple, fast memory allocator.
@@ -237,7 +234,7 @@ pub mod i {
 
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
-            let orig_slabnum = rustlevel::get_slabnum();
+            let (orig_slabnum, stepnum) = get_slabnum_and_stepnum();
             let mut slabnum = orig_slabnum;
             let mut a_slab_was_full = false;
 
@@ -325,25 +322,30 @@ pub mod i {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
+                        if slabnum != orig_slabnum {
+                            // The slabnum changed. Save the new slabnum for next time.
+                            set_slab_num(slabnum);
+                        }
+
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
                         // slab in the same size class.
-                        slabnum = (slabnum + SLAB_FAILOVER_NUM) & SLABNUM_BITS_ALONE_MASK;
+                        slabnum = failover_slabnum(slabnum, stepnum);
                     }
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                     // different slab in the same size class.
 
-                    slabnum = (slabnum + SLAB_FAILOVER_NUM) & SLABNUM_BITS_ALONE_MASK;
+                    slabnum = failover_slabnum(slabnum, stepnum);
 
                     if slabnum != orig_slabnum {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
                         // so keep trying, but make a note that at least one of the slabs in this
                         // sizeclass was full. (Note that if orig_slabnum is the only one that is
                         // full then we'll cycle through all of them *twice* before failing over to
-                        // a bigger sizeclass. That's fine!)
+                        // a bigger sizeclass. That's fine.)
                         a_slab_was_full = true;
                     } else {
                         // ... meaning we've tried each slab in this size class at least once and
@@ -498,10 +500,7 @@ pub use i::*;
 
 // ---- Constant having to do with slab failover ----
 
-// Which next-slab do we try in case of update collision or slab exhaustion? It needs to be
-// relatively prime to 64 so it will cycle through all slabs before returning to the first one, and
-// it should be far from 1 since the next few threads will be using the next few slabs.
-const SLAB_FAILOVER_NUM: u8 = (1u8 << NUM_SLABS_BITS) / 3; // 21
+const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111111
 
 // ---- Constant having to do with slot (and free list) pointers ----
 
@@ -535,47 +534,87 @@ const HIGHEST_SMALLOC_SLOT_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_ma
 
 const BASEPTR_ALIGN: usize = (HIGHEST_SMALLOC_SLOT_BYTE_ADDR + 1).next_power_of_two(); // 0b1000000000000000000000000000000000000000000000
 
+// ---- Constants for deciding when to unmap pages ---
 
-// --- Implementation ---
+// For correctness, this has to be >= plat:::p::SC_FOR_PAGE. Since we use the first 4 bytes of the
+// slot for the next-entry-link it also has to be at least 2X that.
+//
+// For performance, there's no clear way to decide this. The cost of swapping is somewhere between
+// 10_000 X and 1_000_000 X the cost of making a few syscalls, but on the other hand swapping may be
+// very rare, be dependent on specific usage patterns and the behavior of other processes, and of
+// the kernel, and it may not happen at all in a lot of common deployments. So... how do you make a
+// fixed balance of that tradeoff? Oh, and worse, swapping could trigger swap thrash — drastically
+// slowing down the entire system and probably leading to other failures in this or other processes.
+//
+// So I guess this isn't really a performance trade-off as much as "trying to heuristically avoid a
+// worst-case-scenario at an acceptable performance cost in normal times".
+//
+// And then there's the question of memsetting memory to 0 ourselves vs having the kernel do it (using tricks like `rep stosb` with microcode optimizations, or by just mapping the zero page CoW, or viadc zva on ARM).
+//xxx
 
-#[cfg(nightly)]
-mod rustlevel {
-    use crate::*;
-    /// Get the slab number for this thread.
-    #[inline(always)]
-    pub fn get_slabnum() -> u8 {
-        let x = std::thread::current_id().as_u64().get();
-        (x as u8) & SLABNUM_BITS_ALONE_MASK
-    }
+use core::sync::atomic::AtomicU8;
+use core::cell::Cell;
+
+static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
+const SLAB_NUM_SENTINEL: u8 = u8::MAX;
+thread_local! {
+    // "Slab And Step NUMbers"
+    static SAS_NUMS: Cell<(u8, u8)> = const { Cell::new((0, SLAB_NUM_SENTINEL)) };
 }
 
-#[cfg(not(nightly))]
-mod rustlevel {
-    use crate::*;
-    use core::sync::atomic::AtomicU8;
-    use core::cell::Cell;
+/// Get the slab number and step number for this thread. On first call, initializes both.
+/// Returns (slab_num, step_num).
+#[inline(always)]
+fn get_slabnum_and_stepnum() -> (u8, u8) {
 
-    static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
-    const SLAB_NUM_SENTINEL: u8 = u8::MAX;
-    thread_local! {
-        static SLABNUM: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
-    }
+    SAS_NUMS.with(|cell| {
+        let (slabnum, stepnum) = cell.get();
+        if slabnum == SLAB_NUM_SENTINEL {
+            const STEP_ARRAY_IX_BITS: u8 = 5;
+            const STEP_ARRAY_LEN: u8 = 1 << STEP_ARRAY_IX_BITS; // 32
+            const STEP_ARRAY_IX_MASK: u8 = gen_mask!(STEP_ARRAY_IX_BITS, u8); // 0b11111
+            const STEPS: [u8; STEP_ARRAY_LEN as usize] = [1, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 1, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43];
 
-    /// Get the slab number for this thread.
-    #[inline(always)]
-    pub fn get_slabnum() -> u8 {
-        SLABNUM.with(|cell| {
-            let slabnum = cell.get();
-            if slabnum == SLAB_NUM_SENTINEL {
-                let newthreadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
-                let newslabnum = newthreadnum & SLABNUM_BITS_ALONE_MASK;
-                cell.set(newslabnum);
-                newslabnum
-            } else {
-                slabnum
-            }
-        })
-    }
+            let threadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
+            let slabnum = threadnum & SLABNUM_ALONE_MASK;
+            let stepnum = STEPS[(threadnum & STEP_ARRAY_IX_MASK) as usize];
+            cell.set((slabnum, stepnum));
+            (slabnum, stepnum)
+        } else {
+            (slabnum, stepnum)
+        }
+    })
+}
+
+#[inline(always)]
+fn set_slab_num(slabnum: u8) {
+    SAS_NUMS.with(|cell| {
+        let (_, stepnum) = cell.get();
+        cell.set((slabnum, stepnum));
+    });
+}
+
+/// Pick a new slab to fail over to. This is used in two cases in `inner_alloc()`: a. when a slab is
+/// full, and b. when there is a multithreading collision on the flh.
+///
+/// xxx made it simpler update docs xxx; Which new slabnumber shall we fail over to? A certain number, d, added to the current slab
+/// number, and d should have these properties:
+///
+/// 1. It should be relatively prime to the number of slabs so that we will try all slabs before
+///    returning to the original one.
+///
+/// 2. It should use the information from the thread number, not just the (strictly lesser)
+///    information from the original slab number.
+/// 
+/// 3. It should be relatively prime to each other d used by other threads so that multiple threads
+///    stepping at once will minimally "step" on each other (e.g. if one thread increased its slab
+///    number by 3 and another by 6, then they'd be more likely to re-collide before trying all
+///    possible slab numbers, but if they're relatively prime to each other then they'll be
+///    minimally likely to recollide soon). This implies that d needs to be prime, which also
+///    satisfies requirement 1 above.
+#[inline(always)]
+fn failover_slabnum(slabnum: u8, stepnum: u8) -> u8 {
+    (slabnum.wrapping_add(stepnum)) & SLABNUM_ALONE_MASK
 }
 
 #[doc(hidden)]
