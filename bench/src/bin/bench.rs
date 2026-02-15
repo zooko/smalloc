@@ -2,6 +2,7 @@
 
 use bench::{st_bench, mt_bench, compare_st_bench, compare_mt_bench, compare_fh_bench, multithread_hotspot, multithread_free_hotspot, compare_hs_bench};
 use std::alloc::Layout;
+use smalloc::i::NUM_SLABS_BITS;
 
 use devutils::*;
 
@@ -50,7 +51,7 @@ pub fn main() {
     // they're so fast.
     let num_st_batches = 200;
 
-    const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 64;
+    const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 1 << NUM_SLABS_BITS;
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
     // for benchmarks that are going to re-use space

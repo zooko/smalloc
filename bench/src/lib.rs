@@ -198,10 +198,10 @@ where
 /// slot then blocks. All of the hot ones then get unblocked, and proceed to perform function `f`,
 /// `iters` times.
 ///
-/// Returns median nanoseconds per batch. Not nanoseconds per (iters * hotspot_threads), nor yet
-/// nanoseconds per (iters * total_threads). Nor even nanoseconds per
-/// iter-per-batch-per-hot-thread. Median nanoseconds per batch for all hot threads and all iters in
-/// that batch. (Also the nanoseconds carries with it an extra .1 nanosecond precision.)
+/// Returns median nanoseconds per batch per hot thread. Not nanoseconds per (iters *
+/// hotspot_threads), nor yet nanoseconds per (iters * total_threads). Median nanoseconds per batch
+/// per hot thread for all iters in that batch. (Also the nanoseconds carries with it an extra .1
+/// nanosecond precision.)
 ///
 /// iters_pbpht: iters per batch per hot thread
 ///
@@ -218,7 +218,7 @@ where
     // One hot thread per X cool threads
     let total_threads: usize = hot_threads * (1 + cool_per_hot);
 
-    let mut results_ns = Vec::with_capacity(num_batches as usize);
+    let mut results_ns_pht = Vec::with_capacity(num_batches as usize);
 
     for _batch in 0..num_batches {
         let hot_done_barriers: Vec<Barrier> = (0..hot_threads)
@@ -286,18 +286,18 @@ where
             final_barrier.wait();
 
             assert!(end > start);
-            end - start
+            (end - start) / hot_threads
         });
 
-        results_ns.push(batch_ns);
+        results_ns_pht.push(batch_ns);
     }
 
-    results_ns.sort_unstable();
-    let median_ns = results_ns[results_ns.len() / 2];
-    let nspi = median_ns.per_iter(iters_pbpht);
-    println!("name: {name:>16}, threads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
+    results_ns_pht.sort_unstable();
+    let median_ns_pht = results_ns_pht[results_ns_pht.len() / 2];
+    let nspipht = median_ns_pht.per_iter(iters_pbpht);
+    println!("name: {name:>16}, hthreads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns_pht:>14}, (per ht) ns/i: {nspipht:>11}");
 
-    median_ns
+    median_ns_pht
 }
 
 /// Print comparison percentages
@@ -600,6 +600,15 @@ impl From<Nanoseconds> for u64 {
 impl From<u64> for Nanoseconds {
     fn from(val: u64) -> Nanoseconds {
         Nanoseconds(val)
+    }
+}
+
+use std::ops::Div;
+impl Div<usize> for Nanoseconds {
+    type Output = Nanoseconds;
+
+    fn div(self, rhs: usize) -> Self::Output {
+        Nanoseconds(self.0 / rhs as u64)
     }
 }
 
