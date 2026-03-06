@@ -64,16 +64,18 @@ def add_svg_metadata(args, metadata_y, svg_parts, svg_width):
         line1_parts.append(f"Commit: {args.git_commit}")
     if args.git_tag:
         line1_parts.append(f"Tag: {args.git_tag}")
-    if args.git_clean_status:
-        line1_parts.append(f"Status: {args.git_clean_status}")
 
     line2_parts = []
+    if args.git_clean_status:
+        line2_parts.append(f"Git Clean Status: {args.git_clean_status}")
+
+    line3_parts = []
     if args.cpu:
-        line2_parts.append(f"CPU: {args.cpu}")
+        line3_parts.append(f"CPU: {args.cpu}")
     if args.os:
-        line2_parts.append(f"OS: {args.os}")
+        line3_parts.append(f"OS: {args.os}")
     if args.cpu_count:
-        line2_parts.append(f"CPU count: {args.cpu_count}")
+        line3_parts.append(f"CPU count: {args.cpu_count}")
 
     if line0_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line0_parts))}</text>\n')
@@ -81,3 +83,5 @@ def add_svg_metadata(args, metadata_y, svg_parts, svg_width):
         svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 14}" class="metadata" text-anchor="middle">{" · ".join(line1_parts)}</text>\n')
     if line2_parts:
         svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 28}" class="metadata" text-anchor="middle">{" · ".join(line2_parts)}</text>\n')
+    if line3_parts:
+        svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 42}" class="metadata" text-anchor="middle">{" · ".join(line3_parts)}</text>\n')

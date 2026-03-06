@@ -39,18 +39,18 @@ gather_and_print_git_metadata() {
 get_cpu_type_str() {
     if command -v lscpu >/dev/null 2>&1; then
         # Linux, but John's little raspbi has better information in lscpu than in /proc/cpuinfo
-        CPUTYPE=$(lscpu 2>/dev/null | grep -i "model name" | cut -d':' -f2-)
+        CPU_TYPE=$(lscpu 2>/dev/null | grep -i "model name" | cut -d':' -f2-)
     elif command -v sysctl >/dev/null 2>&1; then
         # macOS
-        CPUTYPE=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
+        CPU_TYPE=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
     elif [ -f /proc/cpuinfo ]; then
         # Linux in case it didn't have lscpu, and also mingw64 on Windows provides /proc/cpuifo
-        CPUTYPE=$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2-)
+        CPU_TYPE=$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2-)
     fi
-    CPUTYPE=${CPUTYPE:-Unknown}
-    CPUTYPE=${CPUTYPE## }  # Trim leading space
+    CPU_TYPE=${CPU_TYPE:-Unknown}
+    CPU_TYPE=${CPU_TYPE## }  # Trim leading space
 
-    echo "${CPUTYPE//[^[:alnum:]]/}"
+    echo "${CPU_TYPE//[^[:alnum:]]/}"
 }
 CPU_TYPE_STR=$(get_cpu_type_str)
 
@@ -78,7 +78,7 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --git-commit "$GIT_COMMIT"
   --git-clean-status "$GIT_CLEAN_STATUS"
   --git-tag "$GIT_TAG"
-  --cpu "$CPUTYPE"
+  --cpu "$CPU_TYPE_STR"
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
 )
