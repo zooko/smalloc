@@ -6,24 +6,10 @@ import re
 import argparse
 import math
 
-# Allocator colors
-ALLOCATOR_COLORS = {
-    'default': '#78909c',   # blue-grey (distinct from smalloc green)
-    'glibc': '#5c6bc0',     # indigo
-    'jemalloc': '#66bb6a',  # green
-    'snmalloc': '#ab47bc',  # purple
-    'mimalloc': '#ffca28',  # amber
-    'rpmalloc': '#ff7043',  # deep orange
-    'smalloc': '#42a5f5',   # blue
-    'smalloc + ffi': '#93c2f9', # light blue
-}
-UNKNOWN_ALLOCATOR_COLOR = '#9e9e9e'  # gray
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Allocator ordering
-ALLOCATOR_ORDER = ['default', 'jemalloc', 'snmalloc', 'mimalloc', 'rpmalloc', 'smalloc']
-
-def get_color(name):
-    return ALLOCATOR_COLORS.get(name, UNKNOWN_ALLOCATOR_COLOR)
+import metadata
 
 def parse_benchmark_output(filename):
     """Parse the benchmark output file and return structured data."""
@@ -43,16 +29,7 @@ def parse_benchmark_output(filename):
         threads = int(match.group(4).replace(',', ''))
         ns_per_iter = float(match.group(5).replace(',', ''))
 
-        # Map allocator prefixes to names
-        allocator_map = {
-            'mi': 'mimalloc',
-            'je': 'jemalloc',
-            'sn': 'snmalloc',
-            'rp': 'rpmalloc',
-            'sm': 'smalloc',
-            'de': 'default',
-        }
-        allocator = allocator_map.get(allocator_prefix, allocator_prefix)
+        allocator = metadata.allocator_prefix_to_name(allocator_prefix)
 
         # Create test name: thread_type + test_suffix (e.g., "st_a" or "mt_adrww-64")
         test_name = f"{thread_type}_{test_suffix}"
@@ -80,14 +57,6 @@ def compute_ratios(results, baseline='default'):
 
     return ratios
 
-def sort_allocators(allocators):
-    """Sort allocators in canonical order."""
-    def sort_key(name):
-        if name in ALLOCATOR_ORDER:
-            return (0, ALLOCATOR_ORDER.index(name))
-        return (1, name)
-    return sorted(allocators, key=sort_key)
-
 def format_ns_truncated(ns_value):
     """Format nanoseconds as truncated whole number with appropriate unit."""
     if ns_value >= 1_000_000:
@@ -109,10 +78,6 @@ def format_pct_diff(ratio):
         return f"+{int(round(pct_diff))}%"
     else:
         return f"{int(round(pct_diff))}%"
-
-def escape_xml(text):
-    """Escape special XML characters."""
-    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 def rounded_rect_path(x, y, width, height, radius):
     """Generate SVG path for rectangle with only top corners rounded."""
@@ -145,10 +110,10 @@ def needs_log_scale(ratios, tests, allocators):
                 return True
     return False
 
-def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
+def generate_detailed_graph(ratios, results, test_type, output_file, metadata_dict):
     """Generate detailed bar chart showing each test's performance."""
     # Filter tests for this type (st or mt)
-    allocators = sort_allocators([a for a in ratios.keys() if ratios[a]])
+    allocators = metadata.sort_allocators([a for a in ratios.keys() if ratios[a]])
 
     # Get all test names for this type
     all_tests = set()
@@ -377,7 +342,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
                 bar_height = 2
                 bar_top_y = chart_bottom_y - bar_height
 
-            color = get_color(allocator)
+            color = metadata.get_color(allocator)
 
             # Draw bar with rounded top corners
             corner_radius = 3
@@ -388,18 +353,18 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
             bar_center_x = bar_x + (bar_width - 1) / 2
             if ns_val > 0:
                 label = format_ns_truncated(ns_val)
-                svg_parts.append(f'  <text x="{bar_center_x}" y="{bar_top_y - 5}" class="bar-label-value" text-anchor="middle">{escape_xml(label)}</text>\n')
+                svg_parts.append(f'  <text x="{bar_center_x}" y="{bar_top_y - 5}" class="bar-label-value" text-anchor="middle">{metadata.escape_xml(label)}</text>\n')
 
             # Percentage diff inside bar - skip for baseline
             if allocator != 'default' and bar_height > 20:
                 pct_label = format_pct_diff(ratio)
                 pct_y = bar_top_y + 14
-                svg_parts.append(f'  <text x="{bar_center_x}" y="{pct_y}" class="bar-label-pct" text-anchor="middle">{escape_xml(pct_label)}</text>\n')
+                svg_parts.append(f'  <text x="{bar_center_x}" y="{pct_y}" class="bar-label-pct" text-anchor="middle">{metadata.escape_xml(pct_label)}</text>\n')
 
         # Test label below group
         group_center_x = group_x + (n_allocators * bar_width) / 2
         test_label = test.split('_', 1)[1] if '_' in test else test
-        svg_parts.append(f'  <text x="{group_center_x}" y="{chart_bottom_y + 20}" class="test-label" text-anchor="middle">{escape_xml(test_label)}</text>\n')
+        svg_parts.append(f'  <text x="{group_center_x}" y="{chart_bottom_y + 20}" class="test-label" text-anchor="middle">{metadata.escape_xml(test_label)}</text>\n')
 
     # Legend
     legend_x = margin_left + chart_width + 20
@@ -409,49 +374,19 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
 
     for i, allocator in enumerate(allocators):
         item_y = legend_y + i * legend_item_height
-        color = get_color(allocator)
+        color = metadata.get_color(allocator)
 
         # Color box with rounded corners
         svg_parts.append(f'  <rect x="{legend_x}" y="{item_y}" width="{legend_box_size}" height="{legend_box_size}" fill="{color}" rx="2"/>\n')
         # Label
-        svg_parts.append(f'  <text x="{legend_x + legend_box_size + 6}" y="{item_y + 10}" class="legend-text">{escape_xml(allocator)}</text>\n')
+        svg_parts.append(f'  <text x="{legend_x + legend_box_size + 6}" y="{item_y + 10}" class="legend-text">{metadata.escape_xml(allocator)}</text>\n')
 
     # Key for test abbreviations
     key_y = svg_height - 75
     key_text = "Tests: adrww=alloc/dealloc/realloc and write, adww=alloc/dealloc and write, aww=alloc and write"
-    svg_parts.append(f'  <text x="{svg_width/2}" y="{key_y}" class="key-text" text-anchor="middle">{escape_xml(key_text)}</text>\n')
+    svg_parts.append(f'  <text x="{svg_width/2}" y="{key_y}" class="key-text" text-anchor="middle">{metadata.escape_xml(key_text)}</text>\n')
 
-    # Metadata
-    meta_y = svg_height - 50
-
-    meta_parts = []
-    if metadata.get('timestamp'):
-        meta_parts.append(f"Timestamp: {metadata['timestamp']}")
-
-    if meta_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(meta_parts))}</text>\n')
-
-    line2_parts = []
-    if metadata.get('source'):
-        line2_parts.append(f"Source: {metadata['source']}")
-    if metadata.get('commit'):
-        line2_parts.append(f"Commit: {metadata['commit'][:12]}")
-    if metadata.get('git_status'):
-        line2_parts.append(f'Git status: {metadata["git_status"]}')
-
-    if line2_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 15}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line2_parts))}</text>\n')
-
-    line3_parts = []
-    if metadata.get('cpu'):
-        line3_parts.append(f"CPU: {metadata['cpu']}")
-    if metadata.get('os'):
-        line3_parts.append(f"OS: {metadata['os']}")
-    if metadata.get('cpucount'):
-        line3_parts.append(f"CPU Count: {metadata['cpucount']}")
-
-    if line3_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{meta_y + 30}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line3_parts))}</text>\n')
+    metadata.add_svg_metadata(metadata_dict, svg_height - 50, svg_parts, svg_width)
 
     svg_parts.append('</svg>\n')
 
@@ -463,14 +398,8 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata):
 def main():
     parser = argparse.ArgumentParser(description='Parse benchmark results and generate graphs')
     parser.add_argument('input_file', help='Benchmark output file to parse')
-    parser.add_argument('--timestamp', help='When the benchmarking process started')
-    parser.add_argument('--source', help='Source URL')
-    parser.add_argument('--commit', help='Git commit hash')
-    parser.add_argument('--git-status', help='Git status (Clean or Uncommitted changes)')
-    parser.add_argument('--cpu', help='CPU type')
-    parser.add_argument('--os', help='OS type')
-    parser.add_argument('--cpucount', help='Number of CPUs')
-    parser.add_argument('--graph', help='Base name for output graph files (without extension)')
+
+    metadata.add_parse_args(parser)
 
     args = parser.parse_args()
 
@@ -504,14 +433,14 @@ def main():
 
     if means_st:
         print("\nSingle-Threaded - Arithmetic mean of time ratios (1.0 = baseline):")
-        for alloc in sort_allocators(means_st.keys()):
+        for alloc in metadata.sort_allocators(means_st.keys()):
             mean = means_st[alloc]
             pct = (mean - 1.0) * 100
             print(f"  {alloc:12s}: {mean:.3f} ({pct:+.1f}%)")
 
     if means_mt:
         print("\nMulti-Threaded - Arithmetic mean of time ratios (1.0 = baseline):")
-        for alloc in sort_allocators(means_mt.keys()):
+        for alloc in metadata.sort_allocators(means_mt.keys()):
             mean = means_mt[alloc]
             pct = (mean - 1.0) * 100
             print(f"  {alloc:12s}: {mean:.3f} ({pct:+.1f}%)")
@@ -520,7 +449,7 @@ def main():
     if 'smalloc' in means_st:
         print("\nSingle-Threaded smalloc vs others:")
         sm = means_st['smalloc']
-        for alloc in sort_allocators(means_st.keys()):
+        for alloc in metadata.sort_allocators(means_st.keys()):
             if alloc != 'smalloc':
                 other = means_st[alloc]
                 diff = (sm - other) / other * 100
@@ -529,7 +458,7 @@ def main():
     if 'smalloc' in means_mt:
         print("\nMulti-Threaded smalloc vs others:")
         sm = means_mt['smalloc']
-        for alloc in sort_allocators(means_mt.keys()):
+        for alloc in metadata.sort_allocators(means_mt.keys()):
             if alloc != 'smalloc':
                 other = means_mt[alloc]
                 diff = (sm - other) / other * 100
@@ -537,27 +466,17 @@ def main():
 
     # Generate graphs if requested
     if args.graph:
-        metadata = {
-            'timestamp': args.timestamp,
-            'commit': args.commit,
-            'git_status': args.git_status,
-            'cpu': args.cpu,
-            'os': args.os,
-            'cpucount': args.cpucount,
-            'source': args.source,
-        }
-
         base_name = args.graph
 
         # Detailed graphs
         if means_st:
             gfname = f'{base_name}st.svg'
-            generate_detailed_graph(ratios, results, 'st', gfname, metadata)
+            generate_detailed_graph(ratios, results, 'st', gfname, args)
             print("Singlethreaded benchmarks graph is in %s" % gfname)
 
         if means_mt:
             gfname = f'{base_name}mt.svg'
-            generate_detailed_graph(ratios, results, 'mt', gfname, metadata)
+            generate_detailed_graph(ratios, results, 'mt', gfname, args)
             print("Multithreaded benchmarks graph is in %s" % gfname)
 
 if __name__ == '__main__':
