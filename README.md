@@ -4,7 +4,7 @@
 `mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 375 lines of Rust code. The other memory allocators
+simpler. The current implementation is only 390 lines of Rust code. The other memory allocators
 range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
@@ -530,13 +530,12 @@ important goal for a memory manager, what *are* good goals? `smalloc` was design
 following goals, written here in roughly descending order of importance:
 
 1. Be simple. This helps greatly to ensure correctness -- always a critical issue in
-   computing. "Simplicity is the inevitable price that we must pay for correctness."--Tony Hoare
-   (paraphrased)
+   computing. "Simplicity is the unavoidable price which we must pay for reliability."--Tony Hoare
+   (citation needed: https://x.com/zooko/status/3744567164)
 
-   In addition to "correctness", simplicity also helps make the performance and the failure modes
-   more consistent and debuggable, because there are fewer modes.
-
-   Simplicity also facilitates making improvements to the codebase and learning from the codebase.
+   Simplicity helps make the performance and the failure modes more consistent and debuggable,
+   because there are fewer modes. Simplicity also facilitates making improvements to the codebase
+   and learning from the codebase.
 
    I've tried to pay the price of keeping `smalloc` simple while designing and implementing it.
 
@@ -937,7 +936,7 @@ lines of code `smalloc` will ever be!
 
 Smalloc v7.6.3+ has the following lines counts:
 * docs and comments: 1580
-* implementation loc: 375 (excluding debug_asserts)
+* implementation loc: 390 (excluding debug_asserts)
 * tests loc: 804
 * benches loc: 1246
 
