@@ -33,6 +33,11 @@ use plat::p::sys_alloc;
 use plat::p::sys_commit;
 
 
+type SizeClass = u8;
+type SlabNum = u8;
+type SlotNum = u32;
+
+
 // --- Public structs and methods ---
 
 /// A simple, fast memory allocator.
@@ -228,7 +233,7 @@ pub mod i {
 
         #[inline(always)]
         /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
-        pub fn alloc(&self, orig_sc: u8, zeromem: bool) -> *mut u8 {
+        pub fn alloc(&self, orig_sc: SizeClass, zeromem: bool) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
             debug_assert!(orig_sc < NUM_SCS);
 
@@ -403,7 +408,7 @@ pub mod i {
                 debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
                 // Write it into the new slot's link
-                unsafe { *(p_addr as *mut u32) = curfirstentry };
+                unsafe { *(p_addr as *mut SlotNum) = curfirstentry };
 
                 // The high-order 4-byte word is the push counter. Increment it.
                 let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
@@ -442,18 +447,18 @@ pub mod i {
 
     // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
     // we re-use that unused space to hold flh's.
-    pub const NUM_UNUSED_SCS: u8 = 2;
+    pub const NUM_UNUSED_SCS: SizeClass = 2;
 
     // The size class to move "growers" to when they get reallocated to a size too large to pack
     // more than one of them into a single memory page:
-    pub const GROWERS_SC: u8 = 22;
+    pub const GROWERS_SC: SizeClass = 22;
 
 
     // --- Constants determined by the constants above ---
 
     // See the ASCII-art map in `README.md` for where these bits fit into addresses.
 
-    pub const NUM_SCS: u8 = 1 << NUM_SC_BITS; // 32
+    pub const NUM_SCS: SizeClass = 1 << NUM_SC_BITS; // 32
 
     pub const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS, usize); // 0b11
 
@@ -490,8 +495,8 @@ pub mod i {
 
     /// Return the size class of the given pointer.
     #[inline(always)]
-    pub fn ptr_to_sc(p_addr: usize) -> u8 {
-        ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as u8
+    pub fn ptr_to_sc(p_addr: usize) -> SizeClass {
+        ((p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS) as SizeClass
     }
 }
 
@@ -556,15 +561,15 @@ use core::sync::atomic::AtomicU8;
 use core::cell::Cell;
 
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
-const SLAB_NUM_SENTINEL: u8 = u8::MAX;
+const SLAB_NUM_SENTINEL: SlabNum = SlabNum::MAX;
 thread_local! {
     // "Slab And Step NUMbers" xxx
-    static SAS_NUMS: Cell<u8> = const { Cell::new(SLAB_NUM_SENTINEL) };
+    static SAS_NUMS: Cell<SlabNum> = const { Cell::new(SLAB_NUM_SENTINEL) };
 }
 
 /// Get the slab number for this thread. On first call, initializes xxx
 #[inline(always)]
-fn get_slabnum() -> u8 {
+fn get_slabnum() -> SlabNum {
 
     SAS_NUMS.with(|cell| {
         let slabnum = cell.get();
@@ -580,7 +585,7 @@ fn get_slabnum() -> u8 {
 }
 
 #[inline(always)]
-fn set_slab_num(slabnum: u8) {
+fn set_slab_num(slabnum: SlabNum) {
     SAS_NUMS.with(|cell| {
         cell.set(slabnum);
     });
@@ -605,8 +610,8 @@ fn set_slab_num(slabnum: u8) {
 ///    minimally likely to recollide soon). This implies that d needs to be prime, which also
 ///    satisfies requirement 1 above.
 #[inline(always)]
-fn failover_slabnum(slabnum: u8) -> u8 {
-    const SLAB_FAILOVER_NUM: u8 = (1u8 << NUM_SLABS_BITS) / 3; // 21
+fn failover_slabnum(slabnum: SlabNum) -> SlabNum {
+    const SLAB_FAILOVER_NUM: SlabNum = (1u8 << NUM_SLABS_BITS) / 3; // 21
     (slabnum.wrapping_add(SLAB_FAILOVER_NUM)) & SLABNUM_ALONE_MASK
 }
 
@@ -622,26 +627,26 @@ impl Default for Smalloc {
 
 /// Return the size class for the aligned size.
 #[inline(always)]
-const fn reqali_to_sc(siz: usize, ali: usize) -> u8 {
+const fn reqali_to_sc(siz: usize, ali: usize) -> SizeClass {
     debug_assert!(siz > 0);
     debug_assert!(ali > 0);
     debug_assert!(ali < 1 << NUM_SCS);
     debug_assert!(ali.is_power_of_two());
 
-    (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as u8
+    (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as SizeClass
 }
 
 /// Return the slotnum of the given pointer.
 #[inline(always)]
-fn ptr_to_slotnum(p_addr: usize) -> u32 {
+fn ptr_to_slotnum(p_addr: usize) -> SlotNum {
     let sc = ptr_to_sc(p_addr);
-    ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as u32
+    ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as SlotNum
 }
 
 #[inline(always)]
 /// Return the sentinel slotnum for this size class.
-fn sc_to_sentinel_slotnum(sc: u8) -> u32 {
-    gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), u32)
+fn sc_to_sentinel_slotnum(sc: SizeClass) -> SlotNum {
+    gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), SlotNum)
 }
 
 #[inline(always)]
