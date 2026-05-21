@@ -12,15 +12,10 @@
 
 // Table of contents of this file:
 //
-// * Public structs and methods
+// * Public type aliases, structs and methods
 // * Private implementation code 
 //   + Fixed constants chosen for the design
 //   + Constants determined by the constants above
-//     - Constants having to do with the use of slot (and free list) pointers
-//     - Constants having to do with the use of flh pointers
-//     - Constants having to do with the use of flh words
-//     - Constants for calculating the total virtual address space to reserve
-//xxx update this ToC
 
 use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool};
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
@@ -33,12 +28,11 @@ use plat::p::sys_alloc;
 use plat::p::sys_commit;
 
 
+// --- Public type aliases, structs and methods ---
+
 type SizeClass = u8;
 type SlabNum = u8;
 type SlotNum = u32;
-
-
-// --- Public structs and methods ---
 
 /// A simple, fast memory allocator.
 ///
