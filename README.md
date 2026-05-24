@@ -24,41 +24,29 @@ management bugs.
     
 (Click on the image.)
 
-Benchmark results (difference in time elapsed — lower is better):
-
-```text
-Multi-Threaded smalloc vs others:
-  smalloc vs default     : -89.7%
-  smalloc vs jemalloc    : -98.8%
-  smalloc vs snmalloc    : -91.3%
-  smalloc vs mimalloc    : -84.0%
-  smalloc vs rpmalloc    : -95.9%
-```
-
 See the [bench-allocators](https://github.com/zooko/bench-allocators/blob/main/README.md) repo for
 more benchmark results and how to generate them yourself.
 
 # Limitations
 
-There are two limitations:
+There are three limitations:
 
-1. You can't allocate more than 2 GiB in a single `malloc()`. You can only have at most 192
-   simultaneous allocations larger than 1 GiB, plus at most 448 simultaneous allocations larger than
-   512 MiB, plus at most 960 simultaneous allocations larger than 256 MiB, plus at most 1,984
-   simultaneous allocations larger than 128 MiB and so on (see `Figure 1` for details). If all of
-   smalloc's slots are exhausted so that it cannot deliver a requested allocation, then it will
-   return a null pointer.
+1. You can't allocate more than 2 GiB in a single `alloc()`.
+
+2. You can have at most 192 simultaneous allocations larger than 1 GiB, plus at most 448
+   simultaneous allocations larger than 512 MiB, plus at most 960 simultaneous allocations larger
+   than 256 MiB, and so on (see `Figure 1` for details).
    
-   It would be possible to change smalloc to fall back to the default allocator or to `mmap` in that
-   case (as some other memory allocators do), but that would result in performance degradation and
-   possibly in less predictable failure modes. I want smalloc to have consistent performance and
-   failure modes so I choose to return a null pointer in that case.
+If you have reached these limits, so that `smalloc` cannot deliver a requested allocation, then it
+will return a null pointer. It would be possible to change `smalloc` to fall back to the default
+allocator in that case, but that would result in performance degradation and less predictable
+failure modes, so `smalloc` returns a null pointer in that case.
 
-2. You can't instantiate more than one instance of `smalloc` in a single process.
+3. You can't instantiate more than one instance of `smalloc` in a single process.
 
-If you run into either of these limitations in practice, please open an issue on the `smalloc`
-github repository. It would be possible in theory to lift these limitations, but I'd like to know
-more about the user's needs in practice before changing the code to do so.
+If you run into any of these limitations in practice, please open an issue on the `smalloc` github
+repository. It would be possible in theory to lift these limitations, but I'd like to know more
+about the user's needs in practice before changing the code to do so.
 
 # Usage in Rust Code
 
@@ -164,37 +152,42 @@ bytes of data within a slot (memory addresses shown in binary notation).
 ```text
 Figure 1: Memory layout of slots and slabs and free-list-heads
 
-slabs
-                                       slab sc   flh
-                                       [sla][sc ][f]
-   0   000000000000000000000000000000000000000000000       used for flh's
+free list head pointers
 
-   1   unused
+                                         sla sc   flh
+       ---------------------------------------------
+                                        [sl][sc ][f]
+       000000000000000000000000000000000------------
+
+slabs
+   0 unused (space reused for flh's as shown above)
+
+   1 unused
 
                   .- reserved for touched bit
         slab  sc  | slotnum                     data
   sc   [    ][   ]v[                          ][   ] slotsize slots slabs
   --   --------------------------------------------- -------- ----- -----
        [slab][sc ] [slotnum                      ][]
-   2   000000000100000000000000000000000000000000000     2^ 2  2^31   2^6
+   2   ------00010----------------------------------     2^ 2  2^31   2^6
 
        [slab][sc ] [slotnum                     ][d]
-   3   000000000110000000000000000000000000000000000     2^ 3  2^30   2^6
+   3   ------00011----------------------------------     2^ 3  2^30   2^6
 
        [slab][sc ] [slotnum                    ][da]
-   4   000000001000000000000000000000000000000000000     2^ 4  2^29   2^6
+   4   ------00100----------------------------------     2^ 4  2^29   2^6
 
        [slab][sc ] [slotnum                   ][dat]
-   5   000000001010000000000000000000000000000000000     2^ 5  2^28   2^6
+   5   ------00101----------------------------------     2^ 5  2^28   2^6
 
        [slab][sc ] [slotn                    ][data]
-   6   000000001100000000000000000000000000000000000     2^ 6  2^27   2^6
+   6   ------00110----------------------------------     2^ 6  2^27   2^6
 
        [slab][sc ] [slotnum                 ][data ]
-   7   000000001110000000000000000000000000000000000     2^ 7  2^26   2^6
+   7   ------00111----------------------------------     2^ 7  2^26   2^6
 
        [slab][sc ] [slotnum                ][data  ]
-   8   000000010000000000000000000000000000000000000     2^ 8  2^25   2^6
+   8   ------01000----------------------------------     2^ 8  2^25   2^6
    9                                                     2^ 9  2^24   2^6
   10                                                     2^10  2^23   2^6
   11                                                     2^11  2^22   2^6
@@ -217,13 +210,13 @@ slabs
   28                                                     2^28  2^ 5   2^6
  
        [slab][sc ] [sl][data                       ]
-  29   000000111010000000000000000000000000000000000     2^29  2^ 4   2^6
+  29   ------11101----------------------------------     2^29  2^ 4   2^6
 
        [slab][sc ] [s][data                        ]
-  30   000000111100000000000000000000000000000000000     2^30  2^ 3   2^6
+  30   ------11110----------------------------------     2^30  2^ 3   2^6
 
        [slab][sc ] [][data                         ]
-  31   000000111110000000000000000000000000000000000     2^31  2^ 2   2^6
+  31   ------11111----------------------------------     2^31  2^ 2   2^6
 ```
 
 ### Free-Lists
@@ -372,9 +365,9 @@ thread-safe updates to `flh`. Use a simple loop with atomic compare-and-exchange
    number of the first entry in the free list ("entry a" in `Figure 2`).
 2. If it is the sentinel value, meaning that the free list is empty, return. (See below about
    "Handling Overflows" for how this `malloc()` request will be handled in this case.)
-3. Load the value from first entry into a local variable/register, called `nextslotnum`. This is the
-   slot number of the next entry in the free list (i.e. the second free-list entry, "entry b" in
-   `Figure 2`), or a sentinel value there is if none.
+3. Load the value from the memory pointed to by `firstslotnum` into a local variable/register,
+   called `nextslotnum`. This is the slot number of the next entry in the free list (i.e. the second
+   free-list entry, "entry b" in `Figure 2`), or a sentinel value there is if none.
 4. Atomically compare-and-exchange the value from `nextslotnum` into `flh` if `flh` still contains
    the value from `firstslotnum`.
 5. If the compare-and-exchange failed (meaning the value of `flh` has changed since you read it in

@@ -2,7 +2,7 @@
 // On linux (e.g. Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20GHz) I could allocate at least 93,971,598,389,248 bytes.
 // On a Windows 11 machine, I was able to reserve at least 138,072,720,605,184 bytes.
 //
-// The current smalloc (v7.5.5) requires 70,366,596,694,014 bytes of virtual address space.
+// The current smalloc (v7.5.6) requires 70,358,006,755,328 bytes of virtual address space.
 
 use thousands::Separable;
 fn dev_find_max_vm_space_allocatable() {

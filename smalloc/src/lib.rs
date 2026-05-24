@@ -429,19 +429,17 @@ pub mod i {
 
     // --- Fixed constants chosen for the design ---
 
-    // NUM_SC_BITS is the main constant determining the rest of smalloc's layout. It is equal to 5
-    // because that means there are 32 size classes, and the first one (that is used -- see below)
-    // has 2^31 slots. This is the largest number of slots that we can put their slot numbers into a
-    // 4-byte slot, which means that our smallest slots can be 4 bytes and we can pack more
-    // allocations of 1, 2, 3, or 4 bytes into each cache line.
-    pub const NUM_SC_BITS: u8 = 5;
+    // We can consistently allocate at least this many bytes from the operating system (see
+    // find_max_vm_addresses_reservable.rs for details).
+    pub const ALLOCATABLE: usize = 93_000_000_000_000;
 
-    // NUM_SLABS_BITS is the other constant. There are 2^NUM_SLABS_BITS slabs in each size class.
-    pub const NUM_SLABS_BITS: u8 = 6;
+    // The smallest slot size holds 2^2 bytes, i.e. 4 bytes.
+    pub const SMALLEST_SLOT_SIZE_BITS: u8 = 2;
 
-    // The first two size classes (which would hold 1-byte and 2-byte slots) are not used. In fact,
-    // we re-use that unused space to hold flh's.
-    pub const NUM_UNUSED_SCS: SizeClass = 2;
+    // SMALLEST_SLOT_SIZE_BITS is also the number of size classes not used — size classes 0 and 1
+    // (which would hold 1-byte and 2-byte slots) are not used. (The space for size class 0 is
+    // re-used for the flh's.)
+    pub const NUM_UNUSED_SCS: u8 = SMALLEST_SLOT_SIZE_BITS;
 
     // The size class to move "growers" to when they get reallocated to a size too large to pack
     // more than one of them into a single memory page:
@@ -452,18 +450,44 @@ pub mod i {
 
     // See the ASCII-art map in `README.md` for where these bits fit into addresses.
 
-    pub const NUM_SCS: SizeClass = 1 << NUM_SC_BITS; // 32
+    // NUM_SC_BITS is the constant which mostly determines the rest of shmalloc's layout. It is
+    // equal to 5 because that means there are 32 size classes, and the first one (that is used) has
+    // 2^31 slots. This means we can fit two slotnums (plus each of their next-is-touched bit) into
+    // a 64-bit word so we can do atomic operations on them without having to reach for 128-bit
+    // atomics. This also means we can have slots as small as 4 bytes each and pack more allocations
+    // of 1, 2, 3, or 4 bytes into each cache line.
+    const fn bits_needed(n: u32) -> u8 {
+        assert!(n > 0);
+        (u32::BITS - (n - 1).leading_zeros()) as u8
+    }
+    pub const NUM_SC_BITS: u8 = bits_needed(usize::BITS / 2); // 5
 
-    pub const UNUSED_SC_MASK: usize = gen_mask!(NUM_UNUSED_SCS, usize); // 0b11
+    pub const NUM_SCS: SizeClass = 1 << NUM_SC_BITS; // 32
 
     // This is how many bits hold the data, the slotnum, and the next-touched-bit:
     pub const NUM_SN_D_T_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
 
-    pub const SLABNUM_BITS_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b11111
+    const fn bits_holdable(n: usize) -> u8 {
+        assert!(n > 0);
+        (usize::BITS - (n - 1).leading_zeros() - 1) as u8
+    }
+    // The - 1 is because we have to allocate up to twice as much space so that we can align the
+    // smalloc region to have all of its trailing bits 0 so that we can do nice bitwise arithmetic
+    // on smalloc pointers.
+    pub const SMALLOC_REGION_BITS: u8 = bits_holdable(ALLOCATABLE) - 1;
+
+    // There are 2^NUM_SLABS_BITS slabs in each size class. Here we calculate the the largest number
+    // of slabs we can accomodate within the limits of the virtual memory address space, given the
+    // 31 bits of slotnums chosen above by NUM_SC_BITS, the 16 byte smallest slot size chosen above
+    // by SMALLEST_SLOT_SIZE_BITS, the 1 bit for next-is-touched, and the 5 bits for sizeclass.
+    pub const NUM_SLABS_BITS: u8 = SMALLOC_REGION_BITS - NUM_SN_D_T_BITS - NUM_SC_BITS; // 6
+
+    pub const SMALLEST_SLOT_SIZE_BITS_MASK: usize = gen_mask!(SMALLEST_SLOT_SIZE_BITS, usize); // 0b11
+
+    pub const SLABNUM_BITS_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111111
 
     // This is how many bits to shift a slabnum to fit it into a slot/data address:
     pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SN_D_T_BITS + NUM_SC_BITS; // 39
-
     // Mask of the bits of the slabnum in a slot's or data byte's address:
     pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_BITS_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b11111000000000000000000000000000000000000000
 
@@ -471,11 +495,11 @@ pub mod i {
     pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SN_D_T_BITS; // 0b111110000000000000000000000000000000000
 
     // The following constants are just for calculating lowest and highest addresses which are used
-    // for bounds checking, and also used to calculate the total virtual memory address space we
-    // need to reserve.
+    // for bounds checking. The highest address is also used to calculate the total virtual memory
+    // address space we need to reserve.
     
-    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << (NUM_UNUSED_SCS + 1); // 8
-    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 6; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
+    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << NUM_UNUSED_SCS; // 4
+    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 2; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
 
     pub const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
 
@@ -485,7 +509,7 @@ pub mod i {
     // The smalloc address of the slot with the highest address is:
     pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
 
-    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_SLOT_BYTE_ADDR + BASEPTR_ALIGN - 1; // 0b1111111111111101111111111111111111111111111110 == 70_366_596_694_014
+    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_BYTE_ADDR + 1 + EXTRA_ALLOC_FOR_ALIGN; // 0b1111111111110101111111111111111111000000000000 == 70_358_006_755_328
 
     /// Return the size class of the given pointer.
     #[inline(always)]
@@ -526,12 +550,14 @@ const ENTRY_SLOTNUM_MASK: u32 = gen_mask!(NUM_SN_BITS, u32);
 // ---- Constants for calculating the total virtual address space to reserve ----
 
 // The smalloc address of the highest-addressed byte of a smalloc slot is:
-const HIGHEST_SMALLOC_SLOT_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111111111101111111111111111111111111111111
+const HIGHEST_SMALLOC_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111111111101111111111111111111111111111111
 
 // We need to allocate extra bytes so that we can align the smalloc base pointer so that all of the
 // trailing bits of the smalloc base pointer are zeros.
 
-const BASEPTR_ALIGN: usize = (HIGHEST_SMALLOC_SLOT_BYTE_ADDR + 1).next_power_of_two(); // 0b1000000000000000000000000000000000000000000000
+const BASEPTR_ALIGN: usize = HIGHEST_SMALLOC_BYTE_ADDR.next_power_of_two(); // 0b1000000000000000000000000000000000000000000000
+const MIN_PAGE_SIZE: usize = 1 << 12; // 4096 Pointers returned by system alloc will be aligned to at least this.
+const EXTRA_ALLOC_FOR_ALIGN: usize = BASEPTR_ALIGN - MIN_PAGE_SIZE; // 0b1111111111111111111111111111111111000000000000
 
 // ---- Constants for deciding when to unmap pages ---
 
@@ -627,7 +653,7 @@ const fn reqali_to_sc(siz: usize, ali: usize) -> SizeClass {
     debug_assert!(ali < 1 << NUM_SCS);
     debug_assert!(ali.is_power_of_two());
 
-    (((siz - 1) | (ali - 1) | UNUSED_SC_MASK).ilog2() + 1) as SizeClass
+    (((siz - 1) | (ali - 1) | SMALLEST_SLOT_SIZE_BITS_MASK).ilog2() + 1) as SizeClass
 }
 
 /// Return the slotnum of the given pointer.
