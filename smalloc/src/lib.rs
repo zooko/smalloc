@@ -33,6 +33,8 @@ use plat::p::sys_commit;
 type SizeClass = u8;
 type SlabNum = u8;
 type SlotNum = u32;
+type NextLinkEntry = u32; // includes the next-entry-touched bit
+type Flh = u64;
 
 /// A simple, fast memory allocator.
 ///
@@ -168,13 +170,14 @@ unsafe impl GlobalAlloc for Smalloc {
 // gen_mask macro for readability
 macro_rules! gen_mask { ($bits:expr, $ty:ty) => { ((!0 as $ty) >> (<$ty>::BITS - ($bits) as u32)) }; }
 
+/// Everything in this `i` ("internal") module is for the use of the shmalloc core lib (this file)
+/// and for the use of the shmalloc-ffi-c-api and shmalloc-ffi-windows-heap-api packages.
 #[doc(hidden)]
 pub mod i {
     use crate::*;
+    use crate::plat::p::sys_random_bytes;
+    use crate::tagmac::Tag;
     pub mod plat;
-
-    // Everything in this `i` ("internal") module is for the use of the smalloc core lib (this file)
-    // and for the use of the smalloc-ffi package.
 
     pub struct SmallocInner {
         pub smbp: AtomicUsize,
@@ -187,7 +190,7 @@ pub mod i {
         pub fn is_smalloc_ptr(&self, p_addr: usize) -> bool {
             let smbp = self.smbp.load(Relaxed);
 
-            p_addr >= smbp + LOWEST_SMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR &&
+            p_addr >= smbp + LOWEST_SHMALLOC_SLOT_ADDR && p_addr <= smbp + HIGHEST_SHMALLOC_SLOT_ADDR &&
                 ptr_to_sc(p_addr) >= NUM_UNUSED_SCS &&
                 p_addr.trailing_zeros() >= ptr_to_sc(p_addr) as u32 &&
                 ptr_to_slotnum(p_addr) != sc_to_sentinel_slotnum(ptr_to_sc(p_addr)) &&
@@ -216,6 +219,11 @@ pub mod i {
                         let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
                         sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
                     }
+
+                    let mut key = 0u128;
+                    sys_random_bytes((&mut key as *mut u128).cast(), size_of::<u128>());
+
+                    unsafe { ((smbp + TAGMAC_KEY_ADDR) as *mut tagmac::TagMACKey).write(key); }
 
                     self.smbp.store(smbp, Release);
                 }
@@ -263,7 +271,7 @@ pub mod i {
                 debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
                 // If the curfirstentry next-slotnum is the sentinel slotnum, then the
-                // next-has-been-touched bit must be false. (You can't ever touch—read or
+                // next-has-been-touched bit must be false. (You can't ever touch—i.e. read or
                 // write—the memory of the sentinel slot.)
                 debug_assert!(if curfirstentryslotnum == sentinel_slotnum { curfirstentrynexttouchedbit == 0 } else { true });
 
@@ -274,18 +282,63 @@ pub mod i {
                     let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SN_D_T_BITS) | (curfirstentryslotnum as usize) << sc;
                     debug_assert!(self.is_smalloc_ptr(curfirstentry_p), "curfirstentry_p: {curfirstentry_p}/{curfirstentry_p:b}");
 
-                    let next_entry = if curfirstentrynexttouchedbit != 0 {
-                        // Read the bits from the first entry's space (which are about the second
-                        // entry). These bits might be invalid, if the flh has changed since we read
-                        // it above and another thread has started using this memory for something
-                        // else (e.g. user data or another linked list update). That's okay because
-                        // in that case our attempt to update the flh (since the flh must have
-                        // changed) below will fail, so information derived from the invalid bits
-                        // will not get stored.
-                        unsafe { *(curfirstentry_p as *mut u32) }
+                    if curfirstentrynexttouchedbit != 0 {
+                        // Read the bits from the first entry's metadata area (which are about the
+                        // second entry). These bits might be invalid, if the flh has changed since
+                        // we read it above and another thread has used this metadata area
+                        // (i.e. another linked list update). That's okay because in that case our
+                        // attempt to update the flh below will fail (since the flh must have
+                        // changed), so information derived from the invalidated bits will not get
+                        // stored.
+
+                        // The location of this slot's metadata is the final (highest-addressed) 16
+                        // bytes of the slot, which we can compute by turning on all the bits of the
+                        // address within the slot except for the least-significant 4 bits:
+                        let slot_metadata_p = (curfirstentry_p | gen_mask!(sc, usize) & !15usize) as *const Tag;
+            
+                        // Read the tag from there.
+                        let tag = unsafe { *slot_metadata_p };
+
+                        let next_entry = (tag >> 96) as NextLinkEntry; // xxx symbolify
+                        //xxxeprintln!("in alloc(), next_entry: 0b{next_entry:032b} read from {slot_metadata_p:p}");
+
+                        // Put the new first entry (which is the old second entry) in place of
+                        // the old first entry (which is going to be the return value) in our
+                        // local copy of flhword, leaving the push-counter bits unchanged.
+                        let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry as u64;
+
+                        // Compare and exchange
+                        if flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok() { 
+                            debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
+                            debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum, "next_entry: {next_entry:b}, ENTRY_SLOTNUM_MASK: {ENTRY_SLOTNUM_MASK:b}, sentinel_slotnum: {sentinel_slotnum:b}, sc: {sc}");
+
+                            // Check the current tag
+                            assert!(tagmac::freed_tag_check(tagmac_key(smbp), slabnum, sc, curfirstentryslotnum, next_entry, tag));
+
+                            // Okay we've successfully allocated a slot!
+
+                            // If `zeromem` is requested and this slot has previously been touched
+                            // then we have to zero its contents.
+                            // xxx redo this with zero-on-free instead
+                            if zeromem && curfirstentrynexttouchedbit != 0 {
+                                unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, (1<<sc) - FREE_SLOT_METADATA_BYTES); }
+                            }
+
+                            // Write the new tag.
+                            unsafe {
+                                *(slot_metadata_p as *mut Tag) = tagmac::alloced_tag(tagmac_key(smbp), slabnum, sc, curfirstentryslotnum);
+                            }
+
+                            if slabnum != orig_slabnum {
+                                // The slabnum changed. Save the new slabnum for next time.
+                                set_slab_num(slabnum);
+                            }
+
+                            break curfirstentry_p as *mut u8;
+                        }
                     } else {
-                        // If this entry has never been touched (read or written), then its
-                        // next-entry link is equal to its slotnum + 1 (with the touched bit unset).
+                        // This entry has never been touched (read or written), so its next-entry
+                        // link is equal to its slotnum + 1 (with the touched bit unset).
 
                         #[cfg(any(target_os = "windows", doc))]
                         {
@@ -302,36 +355,40 @@ pub mod i {
                             }
                         }
 
-                        curfirstentryslotnum + 1
+                        // Put the new first entry (which is the old second entry) in place of the
+                        // old first entry (which is going to be the return value) in our local copy
+                        // of flhword, leaving the push-counter bits unchanged.
+                        let next_entry = curfirstentryslotnum + 1;
+                        let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry as u64;
+
+                        if flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok() {
+                            debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
+                            debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
+                            
+                            
+                            // Okay we've successfully allocated a slot!
+
+                            let slot_size = 1usize << sc;
+                            let slot_end = curfirstentry_p + slot_size;
+
+                            // Write the new tag.
+                            unsafe {
+                                *((slot_end - FREE_SLOT_METADATA_BYTES) as *mut Tag) = tagmac::alloced_tag(tagmac_key(smbp), slabnum, sc, curfirstentryslotnum);
+                            }
+
+                            if slabnum != orig_slabnum {
+                                // The slabnum changed. Save the new slabnum for next time.
+                                set_slab_num(slabnum);
+                            }
+
+                            break curfirstentry_p as *mut u8;
+                        }
                     };
 
-                    // Put the new first entry (which is the old second entry) in place of the old
-                    // first entry (which is going to be the return value) in our local copy of
-                    // flhword, leaving the push-counter bits unchanged.
-                    let newflhword = (flhword & FLHWORD_PUSH_COUNTER_MASK) | next_entry as u64;
-
-                    // Compare and exchange
-                    if flh.compare_exchange_weak(flhword, newflhword, Acquire, Relaxed).is_ok() { 
-                        debug_assert!(next_entry & ENTRY_SLOTNUM_MASK != curfirstentryslotnum);
-                        debug_assert!(next_entry & ENTRY_SLOTNUM_MASK <= sentinel_slotnum);
-
-                        // Okay we've successfully allocated a slot! If `zeromem` is requested and
-                        // this slot has previously been touched then we have to zero its contents.
-                        if zeromem && curfirstentrynexttouchedbit != 0 {
-                            unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
-                        }
-
-                        if slabnum != orig_slabnum {
-                            // The slabnum changed. Save the new slabnum for next time.
-                            set_slab_num(slabnum);
-                        }
-
-                        break curfirstentry_p as *mut u8;
-                    } else {
-                        // We encountered an update collision on the flh. Fail over to a different
-                        // slab in the same size class.
-                        slabnum = failover_slabnum(slabnum);
-                    }
+                    // Since neither of the breaks in the if-else above triggered, this means we
+                    // encountered an update collision on the flh. Fail over to a different slab in
+                    // the same size class.
+                    slabnum = failover_slabnum(slabnum);
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
@@ -381,7 +438,21 @@ pub mod i {
             debug_assert!(sc >= NUM_UNUSED_SCS);
             debug_assert!(sc < NUM_SCS);
 
-            let flhptr = self.smbp.load(Relaxed) | ptr_to_flhaddr(p_addr);
+            let smbp = self.smbp.load(Relaxed);
+            let slabnum = ptr_to_slabnum(p_addr);
+
+            // The location of this slot's metadata is the final (highest-addressed) 16 bytes of the
+            // slot, which we can compute by turning on all the bits of the address within the slot
+            // except for the least-significant 4 bits:
+            let slot_metadata_p = p_addr | gen_mask!(sc, usize) & !15usize;
+            
+            // Read the tag from there.
+            let tag = unsafe { *(slot_metadata_p as *const Tag) };
+
+            // Check that the tag is correct (for this slot when it is allocated).
+            assert!(tagmac::alloced_tag_check(tagmac_key(smbp), slabnum, sc, ptr_to_slotnum(p_addr), tag));
+
+            let flhptr = smbp | ptr_to_flhaddr(p_addr);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
             let newslotnum = ptr_to_slotnum(p_addr);
@@ -390,19 +461,22 @@ pub mod i {
 
             loop {
                 // Load the value (current first entry slotnum and next-entry-touched bit) from the
-                // flh
+                // flh.
                 let flhword = flh.load(Relaxed);
 
                 // The low-order 4-byte word is the slotnum and the touched-bit of the first entry
-                let curfirstentry = flhword as u32;
+                let curfirstentry = flhword as NextLinkEntry;
                 let curfirstentryslotnum = curfirstentry & ENTRY_SLOTNUM_MASK;
 
                 debug_assert!(newslotnum != curfirstentryslotnum);
                 // The curfirstentryslotnum can be the sentinel slotnum but not greater.
                 debug_assert!(curfirstentryslotnum <= sentinel_slotnum);
 
-                // Write it into the new slot's link
-                unsafe { *(p_addr as *mut SlotNum) = curfirstentry };
+                unsafe {
+                    // xxx replace with STZG on MTE
+                    //xxxeprintln!("in dealloc(), next_entry: 0b{curfirstentryslotnum:032b}, tag: 0b{:0128b}, written to {:p}", tagmac::freed_tag(tagmac_key(smbp), slabnum, sc, newslotnum, curfirstentry), slot_metadata_p as *const u8);
+                    *(slot_metadata_p as *mut Tag) = tagmac::freed_tag(tagmac_key(smbp), slabnum, sc, newslotnum, curfirstentry);
+                }
 
                 // The high-order 4-byte word is the push counter. Increment it.
                 let push_counter = (flhword & FLHWORD_PUSH_COUNTER_MASK).wrapping_add(FLHWORD_PUSH_COUNTER_INCR);
@@ -433,13 +507,9 @@ pub mod i {
     // find_max_vm_addresses_reservable.rs for details).
     pub const ALLOCATABLE: usize = 93_000_000_000_000;
 
-    // The smallest slot size holds 2^2 bytes, i.e. 4 bytes.
-    pub const SMALLEST_SLOT_SIZE_BITS: u8 = 2;
-
-    // SMALLEST_SLOT_SIZE_BITS is also the number of size classes not used — size classes 0 and 1
-    // (which would hold 1-byte and 2-byte slots) are not used. (The space for size class 0 is
-    // re-used for the flh's.)
-    pub const NUM_UNUSED_SCS: u8 = SMALLEST_SLOT_SIZE_BITS;
+    // The smallest slots (which also have to contain the 16-byte metadata) hold 2^5 bytes, i.e. 32
+    // bytes.
+    pub const SMALLEST_SLOT_SIZE_BITS: u8 = 5;
 
     // The size class to move "growers" to when they get reallocated to a size too large to pack
     // more than one of them into a single memory page:
@@ -450,66 +520,75 @@ pub mod i {
 
     // See the ASCII-art map in `README.md` for where these bits fit into addresses.
 
-    // NUM_SC_BITS is the constant which mostly determines the rest of shmalloc's layout. It is
-    // equal to 5 because that means there are 32 size classes, and the first one (that is used) has
-    // 2^31 slots. This means we can fit two slotnums (plus each of their next-is-touched bit) into
-    // a 64-bit word so we can do atomic operations on them without having to reach for 128-bit
-    // atomics. This also means we can have slots as small as 4 bytes each and pack more allocations
-    // of 1, 2, 3, or 4 bytes into each cache line.
+    /// How many bits do we need to encode all numbers [0..n)?
     const fn bits_needed(n: u32) -> u8 {
         assert!(n > 0);
         (u32::BITS - (n - 1).leading_zeros()) as u8
     }
+
+    // NUM_SC_BITS is the constant which mostly determines the rest of shmalloc's layout. It is
+    // equal to 5 because that means there are 32 size classes, and the first one (that is used) has
+    // 2^31 slots. This means we can fit two slotnums (plus each of their next-is-touched bit) into
+    // a 64-bit word so we can do atomic operations on them without having to reach for 128-bit
+    // atomics.
     pub const NUM_SC_BITS: u8 = bits_needed(usize::BITS / 2); // 5
 
     pub const NUM_SCS: SizeClass = 1 << NUM_SC_BITS; // 32
 
-    // This is how many bits hold the data, the slotnum, and the next-touched-bit:
-    pub const NUM_SN_D_T_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
+    // This is how many bits hold the data, and the slotnum:
+    pub const NUM_SN_D_BITS: u8 = SMALLEST_SLOT_SIZE_BITS + NUM_SN_BITS; // 37
 
+    // This is how many bits hold the data, the slotnum, and the next-touched-bit:
+    pub const NUM_SN_D_T_BITS: u8 = NUM_SN_D_BITS + 1; // 38
+
+    /// How many bits of an address can we freely use (each bit can be 0 or 1 as we need) if we have
+    /// n addresses reserved?
     const fn bits_holdable(n: usize) -> u8 {
         assert!(n > 0);
         (usize::BITS - (n - 1).leading_zeros() - 1) as u8
     }
     // The - 1 is because we have to allocate up to twice as much space so that we can align the
-    // smalloc region to have all of its trailing bits 0 so that we can do nice bitwise arithmetic
-    // on smalloc pointers.
-    pub const SMALLOC_REGION_BITS: u8 = bits_holdable(ALLOCATABLE) - 1;
+    // shmalloc region to have all of its trailing bits 0 so that we can do nice bitwise arithmetic
+    // on shmalloc pointers.
+    pub const SHMALLOC_REGION_BITS: u8 = bits_holdable(ALLOCATABLE) - 1;
 
     // There are 2^NUM_SLABS_BITS slabs in each size class. Here we calculate the the largest number
     // of slabs we can accomodate within the limits of the virtual memory address space, given the
-    // 31 bits of slotnums chosen above by NUM_SC_BITS, the 16 byte smallest slot size chosen above
+    // 31 bits of slotnums chosen above by NUM_SC_BITS, the 32-byte smallest slot size chosen above
     // by SMALLEST_SLOT_SIZE_BITS, the 1 bit for next-is-touched, and the 5 bits for sizeclass.
-    pub const NUM_SLABS_BITS: u8 = SMALLOC_REGION_BITS - NUM_SN_D_T_BITS - NUM_SC_BITS; // 6
+    pub const NUM_SLABS_BITS: u8 = SHMALLOC_REGION_BITS - NUM_SN_D_T_BITS - NUM_SC_BITS; // 3 xxx is this actually 3? Some AI or me or some other human: double-check this
 
-    pub const SMALLEST_SLOT_SIZE_BITS_MASK: usize = gen_mask!(SMALLEST_SLOT_SIZE_BITS, usize); // 0b11
+    pub const SMALLEST_SLOT_SIZE_BITS_MASK: usize = gen_mask!(SMALLEST_SLOT_SIZE_BITS, usize); // 0b11111
 
-    pub const SLABNUM_BITS_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111111
+    // SMALLEST_SLOT_SIZE_BITS is also the number of size classes not used — size classes [0–4] are
+    // not used. (The space for size class 0 is re-used for the free list pointers.)
+    pub const NUM_UNUSED_SCS: u8 = SMALLEST_SLOT_SIZE_BITS;
 
     // This is how many bits to shift a slabnum to fit it into a slot/data address:
-    pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SN_D_T_BITS + NUM_SC_BITS; // 39
+    pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SN_D_T_BITS + NUM_SC_BITS; // 41
+
     // Mask of the bits of the slabnum in a slot's or data byte's address:
-    pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_BITS_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b11111000000000000000000000000000000000000000
+    pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b111100000000000000000000000000000000000000000
 
     // Mask of the bits of the sizeclass in a slot's address:
-    pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SN_D_T_BITS; // 0b111110000000000000000000000000000000000
+    pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SN_D_T_BITS; // 0b11111000000000000000000000000000000000000
 
     // The following constants are just for calculating lowest and highest addresses which are used
     // for bounds checking. The highest address is also used to calculate the total virtual memory
     // address space we need to reserve.
-    
-    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << NUM_UNUSED_SCS; // 4
-    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 2; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
+
+    pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << SMALLEST_SLOT_SIZE_BITS; // 32
+    pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 30; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
 
     pub const DATA_ADDR_BITS_IN_HIGHEST_SC: u8 = NUM_SCS - 1; // 31
 
     // The smalloc address of the slot with the lowest address is:
-    pub const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << NUM_SN_D_T_BITS; // 0b100000000000000000000000000000000000
+    pub const LOWEST_SHMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << NUM_SN_D_T_BITS; // 0b100000000000000000000000000000000000 // xxx update this comment to reflect the value generated by these const exprs
 
     // The smalloc address of the slot with the highest address is:
-    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b11111111111100000000000000000000000000000000
+    pub const HIGHEST_SHMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111011111100000000000000000000000000000000
 
-    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_BYTE_ADDR + 1 + EXTRA_ALLOC_FOR_ALIGN; // 0b1111111111110101111111111111111111000000000000 == 70_358_006_755_328
+    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SHMALLOC_BYTE_ADDR + 1 + EXTRA_ALLOC_FOR_ALIGN;
 
     /// Return the size class of the given pointer.
     #[inline(always)]
@@ -523,39 +602,54 @@ pub use i::*;
 
 // ---- Constant having to do with slab failover ----
 
-const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111111
+const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111
 
 // ---- Constant having to do with slot (and free list) pointers ----
 
-const SLOTNUM_AND_DATA_ADDR_MASK: u64 = gen_mask!(NUM_SN_D_T_BITS, u64); // 0b1111111111111111111111111111111111
+// Mask of the slotnum and data bits
+const SN_D_ADDR_MASK: u64 = gen_mask!(NUM_SN_D_BITS, u64); // 0b111111111111111111111111111111111
 
 // ---- Constant having to do with flh pointers ----
 
 const FLHWORD_SIZE_BITS: u8 = 3; // 3 bits ie 8-byte sized flh words
+const PUSH_COUNTER_BITS: u8 = Flh::BITS as u8 - NUM_SCS; // 32 // bits in the push counter
 
 // ---- Constants having to do with flh words and free list entries ----
 
-const FLHWORD_PUSH_COUNTER_MASK: u64 = gen_mask!(32, u64) << 32;
-const FLHWORD_PUSH_COUNTER_INCR: u64 = 1 << 32;
+const FLHWORD_PUSH_COUNTER_MASK: Flh = gen_mask!(PUSH_COUNTER_BITS, Flh) << NUM_SCS;
+const FLHWORD_PUSH_COUNTER_INCR: Flh = 1 << NUM_SCS;
 
-// This is how many bits hold the slotnum for the size class with the most slots (size class 2):
-const NUM_SN_BITS: u8 = NUM_SCS - 1; // 31 // We reserve 1 bit to indicate next-touched
+// How many bits to encode a next-link entry and next-is-touched bit?
+const NUM_LINK_BITS: u8 = NUM_SCS;
 
-const ENTRY_NEXT_TOUCHED_BIT: u32 = 1 << NUM_SN_BITS;
+// This is how many bits hold the slotnum for the size class with the most slots:
+const NUM_SN_BITS: u8 = NUM_LINK_BITS - 1; // 31 // We reserve 1 bit to indicate next-touched
+
+const ENTRY_NEXT_TOUCHED_BIT: NextLinkEntry = 1 << NUM_SN_BITS;
 
 const ADDR_NEXT_TOUCHED_BIT: usize = 1 << (NUM_SN_BITS + NUM_UNUSED_SCS);
 
-const ENTRY_SLOTNUM_MASK: u32 = gen_mask!(NUM_SN_BITS, u32);
+// mask of the slotnum bits (but not the next-is-touched bit) in an entry
+const ENTRY_SLOTNUM_MASK: NextLinkEntry = gen_mask!(NUM_SN_BITS, NextLinkEntry);
+
+// ---- Constants having to do with the MAC tags
+
+// The 32-bit word of all 1-bits can never be a valid next-entry-link, so we can use it as a
+// sentinel to mean that this is not a next-entry-link.
+const ENTRY_SENTINEL: NextLinkEntry = gen_mask!(NUM_SN_BITS + 1, NextLinkEntry);
+
+// Bytes for the Message-Authentication-Code tag.
+const FREE_SLOT_METADATA_BYTES: usize = 16; // 16
+
 
 // ---- Constants for calculating the total virtual address space to reserve ----
 
 // The smalloc address of the highest-addressed byte of a smalloc slot is:
-const HIGHEST_SMALLOC_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111111111101111111111111111111111111111111
+const HIGHEST_SHMALLOC_BYTE_ADDR: usize = HIGHEST_SHMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111011111101111111111111111111111111111111
 
-// We need to allocate extra bytes so that we can align the smalloc base pointer so that all of the
-// trailing bits of the smalloc base pointer are zeros.
-
-const BASEPTR_ALIGN: usize = HIGHEST_SMALLOC_BYTE_ADDR.next_power_of_two(); // 0b1000000000000000000000000000000000000000000000
+// We need to allocate this extra bytes so that we can align the shmalloc base pointer so that all
+// of the trailing bits of the shmalloc base pointer are zeros.
+const BASEPTR_ALIGN: usize = HIGHEST_SHMALLOC_BYTE_ADDR.next_power_of_two(); // 0b10000000000000000000000000000000000000000000000
 const MIN_PAGE_SIZE: usize = 1 << 12; // 4096 Pointers returned by system alloc will be aligned to at least this.
 const EXTRA_ALLOC_FOR_ALIGN: usize = BASEPTR_ALIGN - MIN_PAGE_SIZE; // 0b1111111111111111111111111111111111000000000000
 
@@ -590,7 +684,6 @@ thread_local! {
 /// Get the slab number for this thread. On first call, initializes xxx
 #[inline(always)]
 fn get_slabnum() -> SlabNum {
-
     SAS_NUMS.with(|cell| {
         let slabnum = cell.get();
         if slabnum == SLAB_NUM_SENTINEL {
@@ -606,6 +699,7 @@ fn get_slabnum() -> SlabNum {
 
 #[inline(always)]
 fn set_slab_num(slabnum: SlabNum) {
+    debug_assert!((slabnum & !SLABNUM_ALONE_MASK) == 0);
     SAS_NUMS.with(|cell| {
         cell.set(slabnum);
     });
@@ -653,14 +747,15 @@ const fn reqali_to_sc(siz: usize, ali: usize) -> SizeClass {
     debug_assert!(ali < 1 << NUM_SCS);
     debug_assert!(ali.is_power_of_two());
 
-    (((siz - 1) | (ali - 1) | SMALLEST_SLOT_SIZE_BITS_MASK).ilog2() + 1) as SizeClass
+    // 16 bytes extra space for the metadata (next-link entry and tag)
+    (((siz + FREE_SLOT_METADATA_BYTES - 1) | (ali - 1) | SMALLEST_SLOT_SIZE_BITS_MASK).ilog2() + 1) as SizeClass
 }
 
 /// Return the slotnum of the given pointer.
 #[inline(always)]
 fn ptr_to_slotnum(p_addr: usize) -> SlotNum {
     let sc = ptr_to_sc(p_addr);
-    ((p_addr as u64 & SLOTNUM_AND_DATA_ADDR_MASK) >> sc) as SlotNum
+    ((p_addr as u64 & SN_D_ADDR_MASK) >> sc) as SlotNum
 }
 
 #[inline(always)]
@@ -676,6 +771,160 @@ fn ptr_to_flhaddr(p_addr: usize) -> usize {
     // masking in the slabnum and sizeclass bits from the address and shifting them right:
     const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
     (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS)
+}
+
+#[inline(always)]
+fn ptr_to_slabnum(p_addr: usize) -> SlabNum {
+    ((p_addr & SLABNUM_BITS_ADDR_MASK) >> SLABNUM_ADDR_SHIFT_BITS) as SlabNum
+}
+
+use core::mem::align_of;
+const TAGMAC_KEY_ADDR: usize = 0b0000_0000_0000_0000_0000_0000_0000_1000_0000_0000;
+const _: () = assert!(TAGMAC_KEY_ADDR.is_multiple_of(align_of::<tagmac::TagMACKey>()));
+#[inline(always)]
+fn tagmac_key(smbp: usize) -> tagmac::TagMACKey {
+    unsafe { ((smbp | TAGMAC_KEY_ADDR) as *const tagmac::TagMACKey).read() }
+}
+
+mod tagmac {
+    //! This is a tiny SipHash-0-3-like MAC specialized for shmalloc's two tag shapes. There is no
+    //! notion of a variable-length "message" — instead each of the two shapes take fixed-arity,
+    //! fixed-size inputs, and we simply XOR the inputs into the key.
+    //!
+    //! - allocated-slot tag: `NEXT_LINK_SENTINEL + 0b*32 + ShmipHash(key ⊕ (slabnum, sc, slotnum, NEXT_LINK_SENTINEL))`
+    //! - freed-slot tag: `next_link + 0b*32 + ShmipHash(key ⊕ (slabnum, sc, slotnum, next_link))`
+    //!
+    //! This is intentionally not general-purpose SipHash:
+    //!
+    //! - it doesn't take messages, only the key — no compression round(s) at all (just XOR)
+    //! - domain separation (allocated vs free) is done by a sentinel value
+    //! - no SipHash length-finalization word is used;
+    //! - copy the 32b next_link/NEXT_LINK_SENTINEL into the top 32b of the tag
+
+    use super::{SizeClass, SlabNum, SlotNum, SLABNUM_ALONE_MASK, NUM_UNUSED_SCS, NUM_SCS, sc_to_sentinel_slotnum, NextLinkEntry, ENTRY_SENTINEL, ENTRY_SLOTNUM_MASK, ENTRY_NEXT_TOUCHED_BIT};
+
+    pub(super) type TagMACKey = u128;
+
+    /// 128-bit metadata authentication tag (top 32 bits are next_link)
+    pub(super) type Tag = u128;
+
+    macro_rules! sipround {
+        ($v0:ident, $v1:ident, $v2:ident, $v3:ident) => {{
+            $v0 = $v0.wrapping_add($v1);
+            $v1 = $v1.rotate_left(13);
+            $v1 ^= $v0;
+            $v0 = $v0.rotate_left(32);
+
+            $v2 = $v2.wrapping_add($v3);
+            $v3 = $v3.rotate_left(16);
+            $v3 ^= $v2;
+
+            $v0 = $v0.wrapping_add($v3);
+            $v3 = $v3.rotate_left(21);
+            $v3 ^= $v0;
+
+            $v2 = $v2.wrapping_add($v1);
+            $v1 = $v1.rotate_left(17);
+            $v1 ^= $v2;
+            $v2 = $v2.rotate_left(32);
+        }};
+    }
+
+    #[inline(always)]
+    /// If this is an allocated-slot MAC, then `nextlink` is ENTRY_SENTINEL. If this is a freed-slot
+    /// MAC, then `nextlink` is the nextlink (which can never be ENTRY_SENTINEL).
+    fn mac(key: TagMACKey, slabnum: SlabNum, sc: SizeClass, slotnum: SlotNum, nextlink: NextLinkEntry) -> Tag {
+        debug_assert!(slabnum <= SLABNUM_ALONE_MASK);
+        debug_assert!(sc >= NUM_UNUSED_SCS);
+        debug_assert!(sc < NUM_SCS);
+        debug_assert!(slotnum < sc_to_sentinel_slotnum(sc));
+        debug_assert!(
+            if nextlink != ENTRY_SENTINEL {
+                let next_slotnum = nextlink & ENTRY_SLOTNUM_MASK;
+                let next_touched = nextlink & ENTRY_NEXT_TOUCHED_BIT;
+                let sentinel_slotnum = sc_to_sentinel_slotnum(sc);
+
+                if next_touched != 0 {
+                    next_slotnum < sentinel_slotnum
+                } else {
+                    next_slotnum <= sentinel_slotnum
+                }
+            } else {
+                true
+            }
+        );
+
+        // “ShmipHash-0-3”
+        let mut k0 = (key >> 64) as u64;
+        let mut k1 = key as u64;
+
+        k0 ^= (slabnum as u64) << 32;
+        k0 ^= sc as u64;
+        k1 ^= (slotnum as u64) << 32;
+        k1 ^= nextlink as u64;
+
+        let mut v0 = k0 ^ 0x736f_6d65_7073_6575;
+        let mut v1 = k1 ^ 0x646f_7261_6e64_6f6d;
+        let mut v2 = k0 ^ 0x6c79_6765_6e65_7261;
+        let mut v3 = k1 ^ 0x7465_6462_7974_6573;
+
+        sipround!(v0, v1, v2, v3);
+        sipround!(v0, v1, v2, v3);
+        sipround!(v0, v1, v2, v3);
+
+        (nextlink as Tag) << 96 | (v0 ^ v1 ^ v2 ^ v3) as Tag // symbolify the 96
+    }
+
+    /// Return the tag for a currently allocated slot.
+    #[inline(always)]
+    pub(super) fn alloced_tag(
+        key: TagMACKey,
+        slabnum: SlabNum,
+        sc: SizeClass,
+        slotnum: SlotNum,
+    ) -> Tag {
+        mac(key, slabnum, sc, slotnum, ENTRY_SENTINEL)
+    }
+
+    /// Return the tag for a freed slot containing `next_link`.
+    #[inline(always)]
+    pub(super) fn freed_tag(
+        key: TagMACKey,
+        slabnum: SlabNum,
+        sc: SizeClass,
+        slotnum: SlotNum,
+        next_link: NextLinkEntry,
+    ) -> Tag {
+        mac(key, slabnum, sc, slotnum, next_link)
+    }
+
+    /// Check the tag for a currently allocated slot.
+    #[inline(always)]
+    pub(super) fn alloced_tag_check(
+        key: TagMACKey,
+        slabnum: SlabNum,
+        sc: SizeClass,
+        slotnum: SlotNum,
+        tag: Tag,
+    ) -> bool {
+        alloced_tag(key, slabnum, sc, slotnum) == tag
+    }
+
+    /// Check the tag for a freed slot containing `next_link`.
+    #[inline(always)]
+    pub(super) fn freed_tag_check(
+        key: TagMACKey,
+        slabnum: SlabNum,
+        sc: SizeClass,
+        slotnum: SlotNum,
+        next_link: NextLinkEntry,
+        tag: Tag,
+    ) -> bool {
+        //xxxif freed_tag(key, slabnum, sc, slotnum, next_link) != tag {
+        //xxx    eprintln!("key: 0b{key:0128b}, slabnum: {slabnum}, slotnum: {slotnum}, next_link: {next_link}, tag: 0x{tag:x}, computed-tag: 0x{:x}", freed_tag(key, slabnum, sc, slotnum, next_link));
+        //xxx}
+        freed_tag(key, slabnum, sc, slotnum, next_link) == tag
+    }
 }
 
 #[cfg(test)]

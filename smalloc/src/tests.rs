@@ -38,7 +38,7 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     assert!(!p1.is_null());
 
     let (sc1, slabnum1, slotnum1) = sm.help_ptr_to_loc(p1);
-    assert_eq!(sc1, sc, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}, SLABNUM_ALONE_MASK: {SLABNUM_BITS_ALONE_MASK:b}");
+    assert_eq!(sc1, sc, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}, SLABNUM_ALONE_MASK: {SLABNUM_ALONE_MASK:b}");
     assert_eq!(slotnum1, i, "p1: {p1:?}, sc: {sc}, sc1: {sc1}, slabnum: {slabnum}, slabnum1: {slabnum1}");
 
     i += 1;
@@ -345,76 +345,112 @@ fn highest_slotnum(sc: u8) -> u32 {
 
 use std::cmp::max;
 nextest_unit_tests! {
+    fn test_sc_to_sentinel_slotnum() {
+        let test_cases = [
+            (5, 0b1111111111111111111111111111111),
+            (6, 0b111111111111111111111111111111),
+            (31, 0b11111),
+        ];
+
+        for (sc, sentinel) in test_cases {
+            assert!(sc_to_sentinel_slotnum(sc) == sentinel, "sc_to_sentinel_slotnum({sc}) should equal {:0b} not {:0b}", sentinel, sc_to_sentinel_slotnum(sc));
+        }
+    }
+
     fn test_reqali_to_sc() {
         let test_cases = [
-            (1, 1, max(0, NUM_UNUSED_SCS)),
-            (2, 1, max(1, NUM_UNUSED_SCS)),
-            (3, 1, max(2, NUM_UNUSED_SCS)),
-            (4, 1, max(2, NUM_UNUSED_SCS)),
-            (5, 1, max(3, NUM_UNUSED_SCS)),
-            (7, 1, max(3, NUM_UNUSED_SCS)),
-            (8, 1, max(3, NUM_UNUSED_SCS)),
-            (9, 1, max(4, NUM_UNUSED_SCS)),
+            (1, 1, max(5, NUM_UNUSED_SCS)),
+            (2, 1, max(5, NUM_UNUSED_SCS)),
+            (3, 1, max(5, NUM_UNUSED_SCS)),
+            (4, 1, max(5, NUM_UNUSED_SCS)),
+            (5, 1, max(5, NUM_UNUSED_SCS)),
+            (8, 1, max(5, NUM_UNUSED_SCS)),
+            (9, 1, max(5, NUM_UNUSED_SCS)),
+            (15, 1, max(5, NUM_UNUSED_SCS)),
+            (16, 1, max(5, NUM_UNUSED_SCS)),
+            (17, 1, max(6, NUM_UNUSED_SCS)),
+            (31, 1, max(6, NUM_UNUSED_SCS)),
+            (32, 1, max(6, NUM_UNUSED_SCS)),
+            (33, 1, max(6, NUM_UNUSED_SCS)),
+            (48, 1, max(6, NUM_UNUSED_SCS)),
+            (49, 1, max(7, NUM_UNUSED_SCS)),
+            (112, 1, max(7, NUM_UNUSED_SCS)),
+            (113, 1, max(8, NUM_UNUSED_SCS)),
 
-            (1, 2, max(1, NUM_UNUSED_SCS)),
-            (2, 2, max(1, NUM_UNUSED_SCS)),
-            (3, 2, max(2, NUM_UNUSED_SCS)),
-            (4, 2, max(2, NUM_UNUSED_SCS)),
-            (5, 2, max(3, NUM_UNUSED_SCS)),
-            (7, 2, max(3, NUM_UNUSED_SCS)),
-            (8, 2, max(3, NUM_UNUSED_SCS)),
-            (9, 2, max(4, NUM_UNUSED_SCS)),
+            (1, 2, max(5, NUM_UNUSED_SCS)),
+            (2, 2, max(5, NUM_UNUSED_SCS)),
+            (3, 2, max(5, NUM_UNUSED_SCS)),
+            (4, 2, max(5, NUM_UNUSED_SCS)),
+            (5, 2, max(5, NUM_UNUSED_SCS)),
+            (8, 2, max(5, NUM_UNUSED_SCS)),
+            (9, 2, max(5, NUM_UNUSED_SCS)),
+            (15, 2, max(5, NUM_UNUSED_SCS)),
+            (16, 2, max(5, NUM_UNUSED_SCS)),
+            (17, 2, max(6, NUM_UNUSED_SCS)),
+            (31, 2, max(6, NUM_UNUSED_SCS)),
+            (32, 2, max(6, NUM_UNUSED_SCS)),
+            (33, 2, max(6, NUM_UNUSED_SCS)),
+            (48, 2, max(6, NUM_UNUSED_SCS)),
+            (49, 2, max(7, NUM_UNUSED_SCS)),
+            (112, 2, max(7, NUM_UNUSED_SCS)),
+            (113, 2, max(8, NUM_UNUSED_SCS)),
 
-            (1, 4, max(2, NUM_UNUSED_SCS)),
-            (2, 4, max(2, NUM_UNUSED_SCS)),
-            (3, 4, max(2, NUM_UNUSED_SCS)),
-            (4, 4, max(2, NUM_UNUSED_SCS)),
-            (5, 4, max(3, NUM_UNUSED_SCS)),
-            (7, 4, max(3, NUM_UNUSED_SCS)),
-            (8, 4, max(3, NUM_UNUSED_SCS)),
-            (9, 4, max(4, NUM_UNUSED_SCS)),
-
-            (1, 8, max(3, NUM_UNUSED_SCS)),
-            (2, 8, max(3, NUM_UNUSED_SCS)),
-            (3, 8, max(3, NUM_UNUSED_SCS)),
-            (4, 8, max(3, NUM_UNUSED_SCS)),
-            (5, 8, max(3, NUM_UNUSED_SCS)),
-            (7, 8, max(3, NUM_UNUSED_SCS)),
-            (8, 8, max(3, NUM_UNUSED_SCS)),
-            (9, 8, max(4, NUM_UNUSED_SCS)),
-
-            (1, 16, max(4, NUM_UNUSED_SCS)),
-            (2, 16, max(4, NUM_UNUSED_SCS)),
-            (3, 16, max(4, NUM_UNUSED_SCS)),
-            (4, 16, max(4, NUM_UNUSED_SCS)),
-            (5, 16, max(4, NUM_UNUSED_SCS)),
-            (7, 16, max(4, NUM_UNUSED_SCS)),
-            (8, 16, max(4, NUM_UNUSED_SCS)),
-            (9, 16, max(4, NUM_UNUSED_SCS)),
-            (15, 16, max(4, NUM_UNUSED_SCS)),
-            (16, 16, max(4, NUM_UNUSED_SCS)),
-            (17, 16, max(5, NUM_UNUSED_SCS)),
+            (1, 4, max(5, NUM_UNUSED_SCS)),
+            (2, 4, max(5, NUM_UNUSED_SCS)),
+            (3, 4, max(5, NUM_UNUSED_SCS)),
+            (4, 4, max(5, NUM_UNUSED_SCS)),
+            (5, 4, max(5, NUM_UNUSED_SCS)),
+            (8, 4, max(5, NUM_UNUSED_SCS)),
+            (9, 4, max(5, NUM_UNUSED_SCS)),
+            (15, 4, max(5, NUM_UNUSED_SCS)),
+            (16, 4, max(5, NUM_UNUSED_SCS)),
+            (17, 4, max(6, NUM_UNUSED_SCS)),
+            (31, 4, max(6, NUM_UNUSED_SCS)),
+            (32, 4, max(6, NUM_UNUSED_SCS)),
+            (33, 4, max(6, NUM_UNUSED_SCS)),
+            (48, 4, max(6, NUM_UNUSED_SCS)),
+            (49, 4, max(7, NUM_UNUSED_SCS)),
+            (112, 4, max(7, NUM_UNUSED_SCS)),
+            (113, 4, max(8, NUM_UNUSED_SCS)),
 
             (1, 32, max(5, NUM_UNUSED_SCS)),
             (2, 32, max(5, NUM_UNUSED_SCS)),
             (3, 32, max(5, NUM_UNUSED_SCS)),
             (4, 32, max(5, NUM_UNUSED_SCS)),
             (5, 32, max(5, NUM_UNUSED_SCS)),
-            (7, 32, max(5, NUM_UNUSED_SCS)),
             (8, 32, max(5, NUM_UNUSED_SCS)),
             (9, 32, max(5, NUM_UNUSED_SCS)),
             (15, 32, max(5, NUM_UNUSED_SCS)),
             (16, 32, max(5, NUM_UNUSED_SCS)),
-            (17, 32, max(5, NUM_UNUSED_SCS)),
-            (30, 32, max(5, NUM_UNUSED_SCS)),
-            (31, 32, max(5, NUM_UNUSED_SCS)),
-            (32, 32, max(5, NUM_UNUSED_SCS)),
-
+            (17, 32, max(6, NUM_UNUSED_SCS)),
+            (31, 32, max(6, NUM_UNUSED_SCS)),
+            (32, 32, max(6, NUM_UNUSED_SCS)),
             (33, 32, max(6, NUM_UNUSED_SCS)),
+            (48, 32, max(6, NUM_UNUSED_SCS)),
+            (49, 32, max(7, NUM_UNUSED_SCS)),
+            (112, 32, max(7, NUM_UNUSED_SCS)),
+            (113, 32, max(8, NUM_UNUSED_SCS)),
+
+            (1, 64, max(6, NUM_UNUSED_SCS)),
+            (2, 64, max(6, NUM_UNUSED_SCS)),
+            (3, 64, max(6, NUM_UNUSED_SCS)),
+            (4, 64, max(6, NUM_UNUSED_SCS)),
+            (5, 64, max(6, NUM_UNUSED_SCS)),
+            (8, 64, max(6, NUM_UNUSED_SCS)),
+            (9, 64, max(6, NUM_UNUSED_SCS)),
+            (15, 64, max(6, NUM_UNUSED_SCS)),
+            (16, 64, max(6, NUM_UNUSED_SCS)),
+            (17, 64, max(6, NUM_UNUSED_SCS)),
+            (31, 64, max(6, NUM_UNUSED_SCS)),
             (32, 64, max(6, NUM_UNUSED_SCS)),
             (33, 64, max(6, NUM_UNUSED_SCS)),
+            (48, 64, max(6, NUM_UNUSED_SCS)),
+            (49, 64, max(7, NUM_UNUSED_SCS)),
+            (112, 64, max(7, NUM_UNUSED_SCS)),
+            (113, 64, max(8, NUM_UNUSED_SCS)),
 
-            (2usize.pow(31), 4, 31),
+            (2usize.pow(31)-FREE_SLOT_METADATA_BYTES, 4, 31),
+            (2usize.pow(32)-FREE_SLOT_METADATA_BYTES, 4, 32),
             (4, 2usize.pow(31), 31),
         ];
 
@@ -491,7 +527,7 @@ nextest_unit_tests! {
     /// If we've allocated all of the slots from all slabs of this sizeclass, the subsequent
     /// allocations come from a bigger sizeclass, and then if we do that again it will work again.
     fn overflow_to_other_sizeclass_twice_in_a_row() {
-       // Have to skip every other sc since it was used up by the previous iteration of the tests...
+        // Have to skip every other sc since it was used up by the previous iteration of the tests...
         for sc in (NUM_UNUSED_SCS..NUM_SCS - 2).step_by(2) {
             help_test_overflow_to_other_sizeclass_twice_in_a_row(sc);
         }
@@ -500,7 +536,7 @@ nextest_unit_tests! {
     /// If we've allocated all of the slots from all slabs of this sizeclass and the next sizeclass,
     /// the subsequent allocations come from *next* next sizeclass
     fn overflow_to_other_sizeclass_twice_at_once() {
-       // Have to skip every other sc since it was used up by the previous iteration of the tests...
+        // Have to skip every other sc since it was used up by the previous iteration of the tests...
         for sc in (NUM_UNUSED_SCS..NUM_SCS - 3).step_by(2) {
             help_test_overflow_to_other_sizeclass_twice_at_once(sc);
         }
@@ -561,6 +597,40 @@ nextest_unit_tests! {
             help_alloc_diff_size_and_alignment_singlethreaded(sm, sc);
         }
     }
+
+    /// Allocate the highest-addressed valid slot in the smalloc region and write the last byte of that
+    /// slot. This catches bugs where `HIGHEST_SHMALLOC_SLOT_ADDR` or `HIGHEST_SHMALLOC_BYTE_ADDR` fail
+    /// to cover the largest slab, largest sizeclass, and largest non-sentinel slot number.
+    fn test_highest_addressed_slot_last_byte_is_writable() {
+        let sm = get_testsmalloc();
+        sm.inner().idempotent_init();
+
+        let sc = NUM_SCS - 1;
+        let siz = help_slotsize(sc);
+        let l = Layout::from_size_align(siz, 1).unwrap();
+
+        let slabnum = NUM_SLABS - 1;
+        debug_assert!(slabnum & !SLABNUM_ALONE_MASK == 0);
+
+        let numslots = help_numslots(sc);
+        let slotnum = numslots - 2;
+
+        set_slab_num(slabnum);
+        sm.help_set_flh_singlethreaded(sc, slotnum, slabnum);
+
+        let p = unsafe { sm.alloc(l) };
+        assert!(!p.is_null());
+
+        let (sc1, slabnum1, slotnum1) = sm.help_ptr_to_loc(p);
+        assert_eq!(sc1, sc, "p: {p:?}, sc: {sc}, sc1: {sc1}");
+        assert_eq!(slabnum1, slabnum, "p: {p:?}, slabnum: {slabnum}, slabnum1: {slabnum1}");
+        assert_eq!(slotnum1, slotnum, "p: {p:?}, slotnum: {slotnum}, slotnum1: {slotnum1}");
+
+        unsafe {
+            p.add(siz - 1).write_volatile(0xa5);
+            sm.dealloc(p, l);
+        }
+    }
 }
 
 impl Smalloc {
@@ -597,11 +667,11 @@ impl Smalloc {
 
         let p_addr = ptr.addr();
 
-        assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SMALLOC_SLOT_ADDR));
+        assert!((p_addr >= smbp) && (p_addr <= smbp + HIGHEST_SHMALLOC_SLOT_ADDR));
 
         let slabnum = (p_addr & SLABNUM_BITS_ADDR_MASK) >> SLABNUM_ADDR_SHIFT_BITS;
         let sc = (p_addr & SC_BITS_ADDR_MASK) >> NUM_SN_D_T_BITS;
-        let slotnum = (p_addr & SLOTNUM_AND_DATA_ADDR_MASK as usize) >> sc;
+        let slotnum = (p_addr & SN_D_ADDR_MASK as usize) >> sc;
         debug_assert!(slabnum < NUM_SLABS as usize);
 
         (sc as u8, slabnum as u8, slotnum as u32)
@@ -614,7 +684,7 @@ fn help_numslots(sc: u8) -> u32 {
 }
 
 fn help_slotsize(sc: u8) -> usize {
-    help_pow2_usize(sc)
+    help_pow2_usize(sc) - FREE_SLOT_METADATA_BYTES
 }
 
 const fn help_pow2_usize(bits: u8) -> usize {

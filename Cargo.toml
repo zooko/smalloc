@@ -1,5 +1,5 @@
 [workspace]
-members = ["smalloc", "smalloc-ffi", "hellosmalloc", "bench", "find_max_vm_addresses_reservable"]
+members = ["smalloc", "hellosmalloc", "bench", "find_max_vm_addresses_reservable"]
 default-members = ["smalloc"]
 resolver = "3"
 

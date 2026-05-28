@@ -16,6 +16,7 @@ impl fmt::Display for AllocFailed {
 pub mod p {
     use super::AllocFailed;
     use windows_sys::Win32::System::Memory::{VirtualAlloc2, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PAGE_NOACCESS};
+    use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
     const MEM_64K_PAGES: u32 = 0x20400000;
     use windows_sys::Win32::Foundation::GetLastError;
     use core::ffi::c_void;
@@ -61,6 +62,24 @@ pub mod p {
             Err(AllocFailed)
         }
     }
+
+    #[allow(unsafe_code)]
+    pub fn sys_random_bytes(pout: *mut u8, len: usize) {
+        assert!(!pout.is_null());
+        assert!(len > 0);
+        assert!(len <= u32::MAX as usize);
+
+        let status = unsafe {
+            BCryptGenRandom(
+                null_mut(),
+                pout,
+                len as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+
+        assert!(status == 0);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -68,6 +87,7 @@ pub mod p {
     use super::AllocFailed;
     use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
     use std::ptr;
+    use rustix::rand::{getrandom, GetRandomFlags};
 
     // The size class necessary to hold a memory page, since memory pages on Linux (except in cases
     // of "huge pages") are 4 KiB.
@@ -82,6 +102,18 @@ pub mod p {
             Err(_) => Err(AllocFailed),
         }
     }
+
+    #[allow(unsafe_code)]
+    pub fn sys_random_bytes(pout: *mut u8, len: usize) {
+        assert!(!pout.is_null());
+        assert!(len > 0);
+        assert!(len <= 256);
+
+        let buf = unsafe { core::slice::from_raw_parts_mut(pout, len) };
+        let n = getrandom(buf, GetRandomFlags::empty()).unwrap();
+
+        assert!(n == len);
+    }
 }
 
 #[cfg(target_vendor = "apple")]
@@ -93,6 +125,7 @@ pub mod p {
     use mach_sys::vm::mach_vm_allocate;
     use mach_sys::vm_statistics::VM_FLAGS_ANYWHERE;
     use mach_sys::vm_types::{mach_vm_address_t, mach_vm_size_t};
+    use core::ffi::{c_int, c_void};
 
     // The size class necessary to hold a memory page, since memory pages on Macos are 16 KiB.
     pub const SC_FOR_PAGE: u8 = crate::reqali_to_sc(16_384, 16_384);
@@ -112,6 +145,21 @@ pub mod p {
         } else {
             Err(AllocFailed)
         }
+    }
+
+    unsafe extern "C" {
+        fn getentropy(buf: *mut c_void, buflen: usize) -> c_int;
+    }
+
+    #[allow(unsafe_code)]
+    pub fn sys_random_bytes(pout: *mut u8, len: usize) {
+        assert!(!pout.is_null());
+        assert!(len > 0);
+        assert!(len <= 256);
+
+        let r = unsafe { getentropy(pout.cast(), len) };
+
+        assert!(r == 0);
     }
 }
 

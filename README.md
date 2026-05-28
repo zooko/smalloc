@@ -139,85 +139,92 @@ fixed-length "slots" of bytes. Every pointer returned by a call to `malloc()` or
 pointer to the beginning of one of those slots, and that slot is used exclusively for that memory
 allocation until it is `free()`'ed.
 
-Each slab holds slots of a specific fixed length, called a "size class". Size class 2 contains
-4-byte slots, size class 3 contains 8-byte slots, and so on with each size class having slots twice
-as big as the size class before.
+Each slab holds slots of a specific fixed length, called a "size class". Size class 4 contains
+16-byte slots, size class 5 contains 32-byte slots, and so on with each size class having slots
+twice as big as the size class before.
 
-Within each size class there are 64 separate slabs holding slots of that size. (See below for why.)
+Within each size class there are 16 separate slabs holding slots of that size. (See below for why.)
 
-Sizeclasses 0 and 1 are unused and the space reserved for them is repurposed to hold "free list
-heads" (see below). Here is how the information is encoded into memory addresses of slots and of
-bytes of data within a slot (memory addresses shown in binary notation).
+Sizeclasses 0, 1, 2, and 3 are unused and the space reserved for them is repurposed to hold "free
+list pointers" (see below). Here is how the information is encoded into memory addresses of slots
+and of bytes of data within a slot (memory addresses shown in binary notation).
 
 ```text
 Figure 1: Memory layout of slots and slabs and free-list-heads
 
-free list head pointers
+free list pointers
 
-                                         sla sc   flh
+                                            .- push/pop
+                                            |
+                                         sl v     flp
        ---------------------------------------------
-                                        [sl][sc ][f]
+                                        [sl] [sc][f]
        000000000000000000000000000000000------------
 
+key
+
+                                                 key 
+       ---------------------------------------------
+                                                [ke]
+       00000000000000000000000000000000100000000----
+
 slabs
-   0 unused (space reused for flh's as shown above)
+   0 unused (space reused for free list pointers and key as shown above)
 
    1 unused
 
-                  .- reserved for touched bit
-        slab  sc  | slotnum                     data
-  sc   [    ][   ]v[                          ][   ] slotsize slots slabs
+   2 unused
+
+   3 unused
+
+   4 unused
+
+                .- reserved for next-is-touched bit
+        sl sc  | slotnum                       data
+  sc   [ ][   ]v[                            ][   ] slotsize slots slabs
   --   --------------------------------------------- -------- ----- -----
-       [slab][sc ] [slotnum                      ][]
-   2   ------00010----------------------------------     2^ 2  2^31   2^6
+       [s][sc ] [slotnum                      ][dat]
+   5   ---00101-------------------------------------     2^ 5  2^31   2^3
 
-       [slab][sc ] [slotnum                     ][d]
-   3   ------00011----------------------------------     2^ 3  2^30   2^6
+       [s][sc ] [slotnum                     ][data]
+   6   ---00110-------------------------------------     2^ 6  2^30   2^3
 
-       [slab][sc ] [slotnum                    ][da]
-   4   ------00100----------------------------------     2^ 4  2^29   2^6
+       [s][sc ] [slotnum                    ][data ]
+   7   ---00111-------------------------------------     2^ 7  2^29   2^3
 
-       [slab][sc ] [slotnum                   ][dat]
-   5   ------00101----------------------------------     2^ 5  2^28   2^6
+       [s][sc ] [slotnum                   ][data  ]
+   8   ---01000-------------------------------------     2^ 8  2^28   2^3
 
-       [slab][sc ] [slotn                    ][data]
-   6   ------00110----------------------------------     2^ 6  2^27   2^6
+       [s][sc ] [slotnum                  ][data   ]
+   9   ---01001-------------------------------------     2^ 9  2^27   2^3
+  10                                                     2^10  2^26   2^3
+  11                                                     2^11  2^25   2^3
+  12                                                     2^12  2^24   2^3
+  13                                                     2^13  2^23   2^3
+  14                                                     2^14  2^22   2^3
+  15                                                     2^15  2^21   2^3
+  16                                                     2^16  2^20   2^3
+  17                                                     2^17  2^19   2^3
+  18                                                     2^18  2^18   2^3
+  19                                                     2^19  2^17   2^3
+  20                                                     2^20  2^16   2^3
+  21                                                     2^21  2^15   2^3
+  22                                                     2^22  2^14   2^3
+  23                                                     2^23  2^13   2^3
+  24                                                     2^24  2^12   2^3
+  25                                                     2^25  2^11   2^3
+  26                                                     2^26  2^10   2^3
+  27                                                     2^27  2^ 9   2^3
+  28                                                     2^28  2^ 8   2^3
+  29                                                     2^29  2^ 7   2^3
 
-       [slab][sc ] [slotnum                 ][data ]
-   7   ------00111----------------------------------     2^ 7  2^26   2^6
+       [s][sc ] [slot][data                        ]
+  30   ---11110-------------------------------------     2^30  2^ 6   2^3
 
-       [slab][sc ] [slotnum                ][data  ]
-   8   ------01000----------------------------------     2^ 8  2^25   2^6
-   9                                                     2^ 9  2^24   2^6
-  10                                                     2^10  2^23   2^6
-  11                                                     2^11  2^22   2^6
-  12                                                     2^12  2^21   2^6
-  13                                                     2^13  2^20   2^6
-  14                                                     2^14  2^19   2^6
-  15                                                     2^15  2^18   2^6
-  16                                                     2^16  2^17   2^6
-  17                                                     2^17  2^16   2^6
-  18                                                     2^18  2^15   2^6
-  19                                                     2^19  2^14   2^6
-  20                                                     2^20  2^13   2^6
-  21                                                     2^21  2^12   2^6
-  22                                                     2^22  2^11   2^6
-  23                                                     2^23  2^10   2^6
-  24                                                     2^24  2^ 9   2^6
-  25                                                     2^25  2^ 8   2^6
-  26                                                     2^26  2^ 7   2^6
-  27                                                     2^27  2^ 6   2^6
-  28                                                     2^28  2^ 5   2^6
- 
-       [slab][sc ] [sl][data                       ]
-  29   ------11101----------------------------------     2^29  2^ 4   2^6
-
-       [slab][sc ] [s][data                        ]
-  30   ------11110----------------------------------     2^30  2^ 3   2^6
-
-       [slab][sc ] [][data                         ]
-  31   ------11111----------------------------------     2^31  2^ 2   2^6
+       [s][sc ] [slo][data                         ]
+  31   ---11111-------------------------------------     2^31  2^ 5   2^3
 ```
+
 
 ### Free-Lists
 
@@ -228,6 +235,8 @@ subsequently `free()`'ed). When referring to a slot's fixed position within the 
 time as slots get removed from and added to the free list), call that a "free list entry". A free
 list entry contains the slot number of the next free list entry (or a sentinel value if there is no
 next free list entry, i.e. this entry is the end of the free list).
+
+xxx document flup's vs flop's
 
 For each slab there is one additional associated variable, which holds the slot number of the first
 free list entry (or the sentinel value if there are no entries in the list). This variable is called
@@ -275,11 +284,8 @@ where the data goes when the slot is in use! Each slot is either currently freed
 use its space to hold the slot number of the next free list entry, or currently allocated, meaning
 it is not in the free list and doesn't have any next free list entry.
 
-(This is also why not to use size class 0 -- 1-byte slots -- or size class 1 -- 2-byte slots:
-because you need at least 4 bytes in each slot to store the slot number of the next entry.)
-
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
-colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
+colleagues at Shielded Labs (makers of fine Zcash software), for explaining this to me.
 
 So to satisfy a `malloc()` by popping the first entry from the free list, read the value from the
 `flh`, which is the slot number of the first entry in the free list, and then read the *contents* of
@@ -522,6 +528,8 @@ If you accept the Big Idea that "avoiding reserving too much virtual address spa
 important goal for a memory manager, what *are* good goals? `smalloc` was designed with the
 following goals, written here in roughly descending order of importance:
 
+0. Hardening see below xxx fill this in
+
 1. Be simple. This helps greatly to ensure correctness -- always a critical issue in
    computing. "Simplicity is the unavoidable price which we must pay for reliability."--Tony Hoare
    (citation needed: https://x.com/zooko/status/3744567164)
@@ -726,16 +734,66 @@ following goals, written here in roughly descending order of importance:
 `smalloc` appears to have achieved all five of these goals. If so, it may turn out to be a very
 useful tool!
 
+# Hardening
+
+  + quick startup self-test
+
+  + quarantine—per slab, FIFO
+  + guard pages
+
+  + checked memset/memcpy/memmove
+  + call-site segregation (mix [rsp] into slabnum)
+  + debugasserts
+
+  + canaries, double-free-detection, zeroing, MTE:
+    * there are two kinds of tags -- allocated-slot tags and free-slot tags, each is 96b
+      - allocated-slot tag: `ShmipHash(key ⊕ (slabnum, sc, slotnum, NEXT_LINK_SENTINEL))`
+        * Purpose is to prevent double-free or OOBW
+          * ... unless they can skip over or restore the tag
+      - freed-slot tag: `ShmipHash(key ⊕ (slabnum, sc, slotnum, next_link))`
+        * Purpose is to prevent double-free, OOBW, or free list corruption
+          * ... unless they can skip over or restore the tag or a previously seen tag
+    * on alloc of already-touched (already-initialized) slot:
+      - if this is an already-touched (already-initialized) slot:
+        - read tag out of the trailing 96 bits
+        - read next-link out of the earlier (lower-addressed) 32 bits
+        - compute free-slot tag, compare, abort if invalid
+        - abort if the remaining bits (outside of the next-link and tag space) of the last few cache lines worth of the slot are not all 0
+        - write 0's over the next-link space
+      - whether or not this is an already-touched slot or a never-yet-touched slot:
+        - compute and write the allocated-slot tag over the tag space
+        - if the slot is small enough, reroll the MTE tags and zero (STZG)
+    * on free:
+      - read tag out of the trailing 96 bits
+      - compute allocated-slot tag, compare, abort if invalid
+      - if the slot is small enough, reroll the MTE tag bits and zero (STZG)
+      - set the next-link
+      - compute free-slot tag
+      - write 0's over the remaining bits (outside of the next-link and tag space) of the last few cache lines worth of the slot
+      - compute and write the free-slot tag into the tag slot
+    ? What can we add in to auth input -- ABA prevention counter? anything else?
+
+ + checked-arithmetic, checked-whatever-else -- recommend users to add? :-/
+ + docs and recommendations
+
+ + rename smalloc to shmalloc everywhere
+
+ + move ffi to shmalloc and remove from smalloc and remove the "mod i" workaround in smalloc
+
+ + TigerStyle names of constants
+   - high-order bit first, counts, and qualifiers next
+   - synonyms and antonyms, code haiku, same number of characters
+   - indexes are 0-based and counts are 1-based, use different "type"s (variable names)
+  
 # Open Issues / Future Work
+
+* try LL-SC instead of CAS, per “A study on the performance implications of AArch64 Atomics” by
+  Ricardo Jesus and Michèle Weiland
+
+* reconsider putting mmap-fallback back ?
 
 * Port to iOS (you just need to give your app the entitlement named
   `com.apple.developer.kernel.extended-virtual-addressing`), Android
-
-* Experiment with making it FIFO instead of LIFO -- this would potentially harden against bugs like
-  double-frees and buffer overflows, it might improve multithreading performance (because pushes
-  would be updating a different pointer than pops), it would maybe improved cache-friendliness for
-  FIFO-oriented usage patterns, but it would potentially probably worse load on the virtual memory
-  subsystem
 
 * Port to Cheri, add capability-safety
 
@@ -839,7 +897,12 @@ useful tool!
   * https://github.com/GJDuck/GC -- uses large amount of vm addresses (3 TiB)
   * https://ckirsch.github.io/publications/conferences/OOPSLA15-Scalloc.pdf / https://github.com/cksystemsgroup/scalloc?tab=readme-ov-file -- using the "sparsely-used virtual memory" approach
 
+* reconsider putting mmap-fallback back ?
+
 # Acknowledgments
+
+* Thanks to Jean-Philippe Aumasson for helpful discussion about the requirements of the
+  canaries/tags, and SipHash.
 
 * Thanks to Andrew Reece and Sam Smith from Shielded Labs for some specific suggestions that I
   implemented (see notes in documentation above). Thanks also to Andrew Reece for suggesting (at the

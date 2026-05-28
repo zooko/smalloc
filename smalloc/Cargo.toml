@@ -14,13 +14,13 @@ categories.workspace = true
 [dependencies]
 
 [target.'cfg(target_os="windows")'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_System_Memory"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security_Cryptography"] }
 
 [target.'cfg(target_vendor="apple")'.dependencies]
 mach-sys = "0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.0.7", features = ["mm"] }
+rustix = { version = "1.0.7", features = ["mm", "rand"] }
 
 [dev-dependencies]
 devutils = { path = "../devutils" }
