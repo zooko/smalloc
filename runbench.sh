@@ -33,6 +33,6 @@ cargo --locked build --release --package bench --features=$ALLOCATORS
 ./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
 
 # Generate graphs with sumstats.py
-./bench/sumstats.py "$RESF" --graph "$GRAPH_BASE" "${METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT[@]}"
+./bench/sumstats.py "$RESF" --graph "$GRAPH_BASE" "${METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT[@]}" 2>&1 | tee -a $RESF
 
 echo "# Data results (text) are in \"${RESF}\" ."
