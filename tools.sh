@@ -24,8 +24,13 @@ get_git_tag() {
 }
 GIT_TAG=$(get_git_tag)
 
+get_git_commit_of_tag() {
+    git rev-parse $(get_git_tag)^{commit}
+}
+GIT_COMMIT_OF_TAG=$(get_git_commit_of_tag)
+
 get_git_clean_status() {
-    [ -z "$(git status --porcelain)" ] && echo Clean || echo Uncommitted changes
+    [ -z "$(git status --porcelain)" ] && echo clean || echo dirty
 }
 GIT_CLEAN_STATUS=$(get_git_clean_status)
 
@@ -70,7 +75,19 @@ print_machine_metadata() {
     echo "OS type: $OS_TYPE_STR"
 }
 
+get_smalloc_dep_version() {
+    cargo metadata --format-version 1 --features smalloc 2>/dev/null | \
+        jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null
+}
+SMALLOC_DEP_VERSION=$(get_smalloc_dep_version)
+
+gather_and_print_smalloc_dep_version() {
+    echo "smalloc dep v: $(get_smalloc_dep_version)"
+}
+
 CPUSTR_DOT_OSSTR="${CPU_TYPE_STR}.${OS_TYPE_STR}"
+
+OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}/${CPUSTR_DOT_OSSTR}"
 
 METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --timestamp "$TIMESTAMP"
@@ -82,3 +99,61 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
 )
+
+parse_bench_args() {
+    SMALLOC_ONLY=""
+    EXTRA_CARGO_CONFIGS=()
+    POSITIONAL_ARGS=()
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --smalloc-only)
+                SMALLOC_ONLY=--smalloc-only
+                shift
+                ;;
+
+            --extra-cargo-config)
+                if [ "$#" -lt 2 ]; then
+                    echo "error: --extra-cargo-config requires an argument" >&2
+                    exit 1
+                fi
+                EXTRA_CARGO_CONFIGS+=("$2")
+                shift 2
+                ;;
+
+            --extra-cargo-config=*)
+                EXTRA_CARGO_CONFIGS+=("${1#--extra-cargo-config=}")
+                shift
+                ;;
+
+            --)
+                shift
+                POSITIONAL_ARGS+=("$@")
+                break
+                ;;
+
+            *)
+                POSITIONAL_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    CARGO_CONFIG_ARGS=()
+    for cfg in "${EXTRA_CARGO_CONFIGS[@]}"; do
+        CARGO_CONFIG_ARGS+=(--config "$cfg")
+    done
+
+    ALLOCATOR_LIST=()
+
+    if [ -z "$SMALLOC_ONLY" ]; then
+        if [ "x${OSTYPE}" = "xmsys" ]; then
+            # no jemalloc or snmalloc on windows
+            ALLOCATOR_LIST=(mimalloc rpmalloc)
+        else
+            ALLOCATOR_LIST=(jemalloc snmalloc mimalloc rpmalloc)
+        fi
+    fi
+
+    ALLOCATORS="${ALLOCATOR_LIST[*]}"
+}

@@ -42,7 +42,7 @@ pub fn main() {
 
     println!("Using seed: {}", seed);
     
-    let compare = std::env::args().any(|arg| arg == "--compare");
+    let smalloconly = std::env::args().any(|arg| arg == "--smalloc-only");
     let thorough = std::env::args().any(|arg| arg == "--thorough");
 
     let num_batches = 30;
@@ -65,7 +65,56 @@ pub fn main() {
     // iters_many
     const ITERS_FEW: u64 = 10_000;
 
-    if compare {
+    if smalloconly {
+        if thorough {
+            mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
+            st_bench!(a, ITERS_FEW, num_st_batches, seed);
+
+            mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            st_bench!(ad, iters_st_many, num_st_batches, seed);
+
+            mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+            st_bench!(adr, iters_st_many, num_st_batches, seed);
+
+            let l = Layout::from_size_align(32, 1).unwrap();
+            let sm = devutils::get_devsmalloc!();
+
+            // These consistently crash the OS (!) on macOS Tahoe 26.2 on Apple M4 Max. :-(
+            if !is_macos() {
+                multithread_hotspot!(one_ad, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
+                multithread_hotspot!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
+                multithread_hotspot!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
+                multithread_hotspot!(a, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
+                multithread_hotspot!(a, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
+                multithread_hotspot!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
+            }
+
+            const TOT_ITERS: u64 = 100_000;
+            for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
+                let iters_per_thread = TOT_ITERS / numthreads as u64;
+                let l = Layout::from_size_align(8, 1).unwrap();
+                multithread_free_hotspot!(numthreads, iters_per_thread, num_batches, sm, l);
+            }
+
+            println!();
+
+            mt_bench!(adrww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
+            mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
+            mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
+            mt_bench!(ad, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
+            mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
+            mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
+        }
+        
+        mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+        st_bench!(adrww, iters_st_many, num_st_batches, seed);
+
+        mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
+        st_bench!(adww, iters_st_many, num_st_batches, seed);
+
+        mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
+        st_bench!(aww, ITERS_FEW, num_st_batches, seed);
+    } else {
         if thorough {
             compare_mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
             compare_st_bench!(a, ITERS_FEW, num_st_batches, seed);
@@ -137,54 +186,5 @@ pub fn main() {
 
         compare_mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
         compare_st_bench!(aww, ITERS_FEW, num_st_batches, seed);
-    } else {
-        if thorough {
-            mt_bench!(a, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-            st_bench!(a, ITERS_FEW, num_st_batches, seed);
-
-            mt_bench!(ad, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-            st_bench!(ad, iters_st_many, num_st_batches, seed);
-
-            mt_bench!(adr, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-            st_bench!(adr, iters_st_many, num_st_batches, seed);
-
-            let l = Layout::from_size_align(32, 1).unwrap();
-            let sm = devutils::get_devsmalloc!();
-
-            // These consistently crash the OS (!) on macOS Tahoe 26.2 on Apple M4 Max. :-(
-            if !is_macos() {
-                multithread_hotspot!(one_ad, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
-                multithread_hotspot!(one_ad, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
-                multithread_hotspot!(one_ad, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, iters_many, num_batches, sm, l);
-                multithread_hotspot!(a, 100, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
-                multithread_hotspot!(a, 200, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
-                multithread_hotspot!(a, 400, THREADS_THAT_CAN_FIT_INTO_SLABS-1, ITERS_FEW, num_batches, sm, l);
-            }
-
-            const TOT_ITERS: u64 = 100_000;
-            for numthreads in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 100] {
-                let iters_per_thread = TOT_ITERS / numthreads as u64;
-                let l = Layout::from_size_align(8, 1).unwrap();
-                multithread_free_hotspot!(numthreads, iters_per_thread, num_batches, sm, l);
-            }
-
-            println!();
-
-            mt_bench!(adrww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
-            mt_bench!(adr, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
-            mt_bench!(adww, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
-            mt_bench!(ad, THREADS_WAY_TOO_MANY, iters_many, num_batches, seed);
-            mt_bench!(aww, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
-            mt_bench!(a, THREADS_WAY_TOO_MANY, ITERS_FEW, num_batches, seed);
-        }
-        
-        mt_bench!(adrww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        st_bench!(adrww, iters_st_many, num_st_batches, seed);
-
-        mt_bench!(adww, THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, num_batches, seed);
-        st_bench!(adww, iters_st_many, num_st_batches, seed);
-
-        mt_bench!(aww, THREADS_THAT_CAN_FIT_INTO_SLABS, ITERS_FEW, num_batches, seed);
-        st_bench!(aww, ITERS_FEW, num_st_batches, seed);
     }
 }

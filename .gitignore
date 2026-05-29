@@ -1,5 +1,5 @@
 .DS_Store
 target
 tmp
-bench/results
+benchmark-results
 __pycache__
