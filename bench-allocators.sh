@@ -5,6 +5,7 @@ source "$(dirname "$0")/tools.sh"
 
 BNAME="smalloc"
 
+# Output files
 RESF="${OUTPUT_DIR}/${BNAME}.result.txt"
 GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
 
@@ -17,7 +18,7 @@ print_machine_metadata 2>&1 | tee -a $RESF
 
 ALLOCATORS=$(IFS=,; echo "${ALLOCATOR_LIST[*]}")
 
-cargo --locked build --release --package bench --features=$ALLOCATORS
+cargo --offline build --release --package bench --features=$ALLOCATORS
 
 ./target/release/bench "${SMALLOC_ONLY}" ${*} 2>&1 | tee -a $RESF
 
