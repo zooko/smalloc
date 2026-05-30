@@ -1,12 +1,8 @@
 #!/bin/bash
 
-if [ -n "$(git status --porcelain)" ] ; then
-    echo "Error: current working directory is git-status-dirty"
-    echo "exiting"
-    exit 1
-fi
+source "$(dirname "$0")/tools.sh"
 
-CURRENT_TAG=$(git describe --tags --abbrev=0)
+CURRENT_TAG=$(get_git_tag)
 if [[ ! "$CURRENT_TAG" =~ ^v ]]; then
     echo "Error: current tag must start with 'v'. Got: '$CURRENT_TAG'" >&2
     echo "exiting"
@@ -41,7 +37,6 @@ assert_version_greater() {
         return 1
     fi
 
-    # Optional: Check for equality explicitly if sort -V behavior on your system is ambiguous for equals
     if [ "$v1" = "$v2" ]; then
         echo "Error: Version '$v2' is equal to '$v1', not greater." >&2
         echo "exiting"
@@ -54,6 +49,11 @@ assert_version_greater() {
 
 assert_version_greater "$CURRENT_TAG_WITHOUT_V" "$NEW_VERSION" || exit 1
 
+GIT_DIRTY=$(get_git_clean_status)
+if [[ "${GIT_DIRTY}" == "dirty" ]] ; then
+    NEW_VERSION="${NEW_VERSION}+dirty"
+fi
+
 # Okay now write the new version into Cargo.toml
 if [[ "$OSTYPE" == "darwin"* ]]; then
     sed -i '' "s/^version = .*/version = \"$NEW_VERSION\"/" Cargo.toml
@@ -64,12 +64,18 @@ fi
 # … and update Cargo.lock
 cargo update -w --offline
 
+if [[ "${GIT_DIRTY}" == "dirty" ]] ; then
+    echo "Current working directory is git-dirty, so I'm skipping the final git committing and tagging steps."
+    echo "exiting"
+    exit 1
+fi
+
 # … and commit Cargo.toml and Cargo.lock
 git add Cargo.toml Cargo.lock
 git commit -m "Update the Cargo.toml version number and Cargo.lock files to reflect version $NEW_VERSION (automated commit by gen-ver.sh)"
 
 # Now get the commit
-CURRENT_COMMIT=$(git rev-parse HEAD)
+CURRENT_COMMIT=$(get_git_commit)
 
 # Append the commit to the version in the "build metadata" slot
 NEW_FULL_VERSION="${NEW_VERSION}+${CURRENT_COMMIT}"
