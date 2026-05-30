@@ -47,6 +47,7 @@ def add_parse_args(parser):
     parser.add_argument('--cpu', help='CPU type')
     parser.add_argument('--os', help='OS type')
     parser.add_argument('--cpu-count', help='Number of CPUs')
+    parser.add_argument('--smalloc-dep-version', help='Version number of smalloc dependency (from cargo metadata)')
 
 def escape_xml(text):
     """Escape special XML characters."""

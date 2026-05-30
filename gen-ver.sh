@@ -66,7 +66,7 @@ cargo update -w --offline
 
 # … and commit Cargo.toml and Cargo.lock
 git add Cargo.toml Cargo.lock
-git commit -m "Update the Cargo.toml version number and Cargo.lock files to reflect version $NEW_VERSION"
+git commit -m "Update the Cargo.toml version number and Cargo.lock files to reflect version $NEW_VERSION (automated commit by gen-ver.sh)"
 
 # Now get the commit
 CURRENT_COMMIT=$(git rev-parse HEAD)
@@ -86,7 +86,7 @@ cargo update -w --offline
 
 # … and commit Cargo.toml and Cargo.lock
 git add Cargo.toml Cargo.lock
-git commit -m "Update the Cargo.toml version number and Cargo.lock files to reflect version $NEW_FULL_VERSION"
+git commit -m "Update the Cargo.toml version number and Cargo.lock files to reflect version $NEW_FULL_VERSION (automated commit by gen-ver.sh)"
 
 # Now git tag it with $NEW_FULL_VERSION
 git tag v${NEW_FULL_VERSION}

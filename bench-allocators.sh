@@ -3,10 +3,6 @@ set -e
 
 source "$(dirname "$0")/tools.sh"
 
-parse_bench_args "$@"
-
-set -- "${POSITIONAL_ARGS[@]}"
-
 BNAME="smalloc"
 
 RESF="${OUTPUT_DIR}/${BNAME}.result.txt"

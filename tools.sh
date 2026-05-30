@@ -76,8 +76,7 @@ print_machine_metadata() {
 }
 
 get_smalloc_dep_version() {
-    cargo metadata --format-version 1 --features smalloc 2>/dev/null | \
-        jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null
+    cargo --frozen metadata --format-version 1 --features smalloc 2>/dev/null | jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null
 }
 SMALLOC_DEP_VERSION=$(get_smalloc_dep_version)
 
@@ -98,50 +97,17 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --cpu "$CPU_TYPE_STR"
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
+  --smalloc-dep-version "$SMALLOC_DEP_VERSION"
 )
 
 parse_bench_args() {
     SMALLOC_ONLY=""
-    EXTRA_CARGO_CONFIGS=()
-    POSITIONAL_ARGS=()
 
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --smalloc-only)
-                SMALLOC_ONLY=--smalloc-only
-                shift
-                ;;
-
-            --extra-cargo-config)
-                if [ "$#" -lt 2 ]; then
-                    echo "error: --extra-cargo-config requires an argument" >&2
-                    exit 1
-                fi
-                EXTRA_CARGO_CONFIGS+=("$2")
-                shift 2
-                ;;
-
-            --extra-cargo-config=*)
-                EXTRA_CARGO_CONFIGS+=("${1#--extra-cargo-config=}")
-                shift
-                ;;
-
-            --)
-                shift
-                POSITIONAL_ARGS+=("$@")
-                break
-                ;;
-
-            *)
-                POSITIONAL_ARGS+=("$1")
-                shift
-                ;;
-        esac
-    done
-
-    CARGO_CONFIG_ARGS=()
-    for cfg in "${EXTRA_CARGO_CONFIGS[@]}"; do
-        CARGO_CONFIG_ARGS+=(--config "$cfg")
+    for arg in "$@"; do
+        if [ "$arg" = "--smalloc-only" ]; then
+            SMALLOC_ONLY="--smalloc-only"
+            break
+        fi
     done
 
     ALLOCATOR_LIST=()
@@ -157,3 +123,5 @@ parse_bench_args() {
 
     ALLOCATORS="${ALLOCATOR_LIST[*]}"
 }
+
+parse_bench_args "$@"
