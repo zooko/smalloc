@@ -71,12 +71,14 @@ print_machine_metadata() {
 }
 
 get_smalloc_dep_version() {
-    cargo --offline metadata --format-version 1 --features smalloc 2>/dev/null | jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null
-}
-SMALLOC_DEP_VERSION=$(get_smalloc_dep_version)
-
-gather_and_print_smalloc_dep_version() {
-    echo "smalloc dep v: $(get_smalloc_dep_version)"
+    local subdir=$1
+    pushd $subdir >/dev/null
+    RESULT=$(cargo --offline metadata --format-version 1 --features smalloc 2>/dev/null | jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null)
+    if [[ -z "${RESULT}" ]]; then
+        RESULT=$(cargo --offline metadata --format-version 1 2>/dev/null | jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null)
+    fi
+    popd >/dev/null
+    echo "${RESULT}"
 }
 
 CPUSTR_DOT_OSSTR="${CPU_TYPE_STR}.${OS_TYPE_STR}"
@@ -92,7 +94,6 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --cpu "$CPU_TYPE_STR"
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
-  --smalloc-dep-version "$SMALLOC_DEP_VERSION"
 )
 
 SMALLOC_ONLY=""

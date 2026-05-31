@@ -262,13 +262,6 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
                 if y_min <= minor_val <= y_max and minor_val not in major_ticks:
                     minor_ticks.append(minor_val)
 
-        # Also add ticks at the actual min and max if they're nice numbers
-        for val in [y_min, y_max]:
-            rounded = round(val)
-            if abs(rounded - val) < 0.1 * val:
-                if rounded not in major_ticks and rounded not in minor_ticks:
-                    minor_ticks.append(rounded)
-
         # Draw minor grid lines first (so they're behind major ones)
         for tick in sorted(minor_ticks):
             y_pos = pct_to_y(tick)
@@ -312,7 +305,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
     # Baseline line at 100%
     if y_min <= 100 <= y_max:
         baseline_y = pct_to_y(100)
-        svg_parts.append(f'  <line x1="{margin_left}" y1="{baseline_y}" x2="{margin_left + chart_width}" y2="{baseline_y}" class="grid-line-line"/>\n')
+        svg_parts.append(f'  <line x1="{margin_left}" y1="{baseline_y}" x2="{margin_left + chart_width}" y2="{baseline_y}" class="grid-line-major"/>\n')
 
     # X-axis line at bottom
     svg_parts.append(f'  <line x1="{margin_left}" y1="{chart_bottom_y}" x2="{margin_left + chart_width}" y2="{chart_bottom_y}" stroke="#333333" stroke-width="1"/>\n')
