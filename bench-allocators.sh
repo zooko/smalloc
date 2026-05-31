@@ -1,14 +1,11 @@
 #!/bin/bash
 set -e
 
-source "$(dirname "$0")/gather-metadata.sh"
+source "$(dirname "$0")/tools.sh"
 
-BNAME="cargo-bench"
+BNAME="smalloc"
 
-ARGS=$*
-
-OUTPUT_DIR="${OUTPUT_DIR:-./bench/results}/${CPUSTR_DOT_OSSTR}"
-
+# Output files
 RESF="${OUTPUT_DIR}/${BNAME}.result.txt"
 GRAPH_BASE="${OUTPUT_DIR}/${BNAME}.graph-"
 
@@ -19,18 +16,11 @@ echo "TIMESTAMP: ${TIMESTAMP}" 2>&1 | tee -a $RESF
 gather_and_print_git_metadata 2>&1 | tee -a $RESF
 print_machine_metadata 2>&1 | tee -a $RESF
 
-mkdir -p ${OUTPUT_DIR}
+ALLOCATORS=$(IFS=,; echo "${ALLOCATOR_LIST[*]}")
 
-if [ "x${OSTYPE}" = "xmsys" ]; then
-    # no jemalloc or snmalloc on windows
-    ALLOCATORS=mimalloc,rpmalloc
-else
-    ALLOCATORS=jemalloc,snmalloc,mimalloc,rpmalloc
-fi
+cargo --offline build --release --package bench --features=$ALLOCATORS
 
-cargo --locked build --release --package bench --features=$ALLOCATORS
-
-./target/release/bench --compare ${ARGS} 2>&1 | tee -a $RESF
+./target/release/bench "${SMALLOC_ONLY}" ${*} 2>&1 | tee -a $RESF
 
 # Generate graphs with sumstats.py
 ./bench/sumstats.py "$RESF" --graph "$GRAPH_BASE" "${METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT[@]}" 2>&1 | tee -a $RESF

@@ -25,7 +25,7 @@ get_git_tag() {
 GIT_TAG=$(get_git_tag)
 
 get_git_clean_status() {
-    [ -z "$(git status --porcelain)" ] && echo Clean || echo Uncommitted changes
+    [ -z "$(git status --porcelain)" ] && echo clean || echo dirty
 }
 GIT_CLEAN_STATUS=$(get_git_clean_status)
 
@@ -70,7 +70,18 @@ print_machine_metadata() {
     echo "OS type: $OS_TYPE_STR"
 }
 
+get_smalloc_dep_version() {
+    cargo --offline metadata --format-version 1 --features smalloc 2>/dev/null | jq -r '.packages[] | select(.name == "smmalloc") | .version' 2>/dev/null
+}
+SMALLOC_DEP_VERSION=$(get_smalloc_dep_version)
+
+gather_and_print_smalloc_dep_version() {
+    echo "smalloc dep v: $(get_smalloc_dep_version)"
+}
+
 CPUSTR_DOT_OSSTR="${CPU_TYPE_STR}.${OS_TYPE_STR}"
+
+OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}/${CPUSTR_DOT_OSSTR}"
 
 METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --timestamp "$TIMESTAMP"
@@ -81,4 +92,26 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --cpu "$CPU_TYPE_STR"
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
+  --smalloc-dep-version "$SMALLOC_DEP_VERSION"
 )
+
+original_count=$#
+SMALLOC_ONLY=""
+
+filtered_args=(${@//--smalloc-only/})
+set -- "${filtered_args[@]}"
+
+if [ "$original_count" -ne "$#" ]; then
+    SMALLOC_ONLY="--smalloc-only"
+fi
+
+ALLOCATOR_LIST=()
+
+if [ -z "$SMALLOC_ONLY" ]; then
+    if [ "x${OSTYPE}" = "xmsys" ]; then
+        # no jemalloc or snmalloc on windows
+        ALLOCATOR_LIST=(mimalloc rpmalloc)
+    else
+        ALLOCATOR_LIST=(jemalloc snmalloc mimalloc rpmalloc)
+    fi
+fi
