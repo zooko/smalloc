@@ -95,15 +95,18 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --smalloc-dep-version "$SMALLOC_DEP_VERSION"
 )
 
-original_count=$#
 SMALLOC_ONLY=""
+new_args=()
 
-filtered_args=(${@//--smalloc-only/})
-set -- "${filtered_args[@]}"
+for arg in "$@"; do
+    if [[ "$arg" == "--smalloc-only" ]]; then
+        SMALLOC_ONLY="--smalloc-only"
+    else
+        new_args+=("$arg")
+    fi
+done
 
-if [ "$original_count" -ne "$#" ]; then
-    SMALLOC_ONLY="--smalloc-only"
-fi
+set -- "${new_args[@]}"
 
 ALLOCATOR_LIST=()
 
@@ -115,5 +118,3 @@ if [ -z "$SMALLOC_ONLY" ]; then
         ALLOCATOR_LIST=(jemalloc snmalloc mimalloc rpmalloc)
     fi
 fi
-
-ALLOCATORS="${ALLOCATOR_LIST[*]}"
