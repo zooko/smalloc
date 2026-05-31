@@ -375,11 +375,11 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
         svg_parts.append(f'  <text x="{legend_x + legend_box_size + 6}" y="{item_y + 10}" class="legend-text">{metadata.escape_xml(allocator)}</text>\n')
 
     # Key for test abbreviations
-    key_y = svg_height - 75
+    key_y = svg_height - 90
     key_text = "Tests: adrww=alloc/dealloc/realloc and write, adww=alloc/dealloc and write, aww=alloc and write"
     svg_parts.append(f'  <text x="{svg_width/2}" y="{key_y}" class="key-text" text-anchor="middle">{metadata.escape_xml(key_text)}</text>\n')
 
-    metadata.add_svg_metadata(metadata_dict, svg_height - 50, svg_parts, svg_width)
+    metadata.add_svg_metadata(metadata_dict, svg_height - 64, svg_parts, svg_width)
 
     svg_parts.append('</svg>\n')
 
