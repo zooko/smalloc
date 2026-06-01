@@ -19,7 +19,7 @@ management bugs.
 # Performance
 
 <a href="https://github.com/zooko/bench-allocators/blob/main/benchmark-results/AppleM4Max.darwin25/COMBINED-REPORT.md">
-    <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc-mt.graph.svg" width="600">
+    <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc.graph-mt.svg" width="600">
 </a>
     
 (Click on the image.)
