@@ -1,3 +1,8 @@
+Warning: I haven't been maintaining smalloc-ffi-windows-heap-api for the last few releases, since I
+decided it isn't safe to deploy code written in a memory-unsafe programming language with a
+non-hardened allocator, and started experimenting with adding hardening features to smalloc. (Which
+experiments are not yet complete.) So it might have bit-rotted.
+
 This is not yet fully implemented.
 
 * go back and prune out unused System* functions that smalloc doesn't need to use after all

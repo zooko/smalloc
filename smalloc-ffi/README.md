@@ -1,5 +1,10 @@
 # smalloc-ffi -- a simple memory allocator for C/C++/native code
 
+Warning: I haven't been maintaining smalloc-ffi for the last few releases, since I decided it isn't
+safe to deploy code written in a memory-unsafe programming language with a non-hardened allocator,
+and started experimenting with adding hardening features to smalloc. (Which experiments are not yet
+complete.) So it might have bit-rotted.
+
 Build the `smalloc-ffi` crate, which produces shared and static libs. Arrange linking so that uses
 of `malloc`, `free`, and `realloc` will link to those functions.
 

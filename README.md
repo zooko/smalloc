@@ -1,11 +1,11 @@
 # smalloc -- a simple memory allocator
 
 `smalloc` is suitable as a drop-in replacement for the glibc memory allocator, `jemalloc`,
-`mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
+`mimalloc`, `snmalloc`, `rpmalloc`, etc — *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 390 lines of Rust code. The other memory allocators
-range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
+simpler. The current implementation is only 406 lines of Rust code. The other memory allocators
+range from 2,513 lines of C code (`rpmalloc`) to 26,164 lines of C code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
 
@@ -50,7 +50,8 @@ about the user's needs in practice before changing the code to do so.
 
 # Usage in Rust Code
 
-Add `smalloc` to your Cargo.toml by executing `cargo add smmalloc --rename smalloc`, then add this to your code:
+Add `smalloc` to your Cargo.toml by executing `cargo add smmalloc --rename smalloc`, then add this
+to your code:
 
 ```
 use smalloc::Smalloc;
@@ -932,6 +933,12 @@ Smalloc v7.6.3+ has the following lines counts:
 * implementation loc: 390 (excluding debug_asserts)
 * tests loc: 804
 * benches loc: 1246
+
+Smalloc v7.6.10 (excluding smalloc-ffi*) has the following lines counts:
+* docs and comments: 1472
+* implementation loc: 406 (excluding debug_asserts)
+* tests loc: 809
+* benches loc: 1221
 
 (I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
 each of them.)
