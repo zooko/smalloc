@@ -1,24 +1,25 @@
 # Allocator colors
 ALLOCATOR_COLORS = {
-    'default': '#78909c',   # blue-grey (distinct from smalloc green)
-    'glibc': '#5c6bc0',     # indigo
-    'jemalloc': '#66bb6a',  # green
-    'snmalloc': '#ab47bc',  # purple
-    'mimalloc': '#ffca28',  # amber
-    'rpmalloc': '#ff7043',  # deep orange
-    'smalloc': '#42a5f5',   # blue
-    'smalloc + ffi': '#93c2f9', # light blue
+    'default': '#8a969e',        # duller blue-grey
+    'glibc': '#6f76a3',          # duller indigo
+    'jemalloc': '#7faa82',       # duller green
+    'snmalloc': '#a06bab',       # duller purple
+    'mimalloc': '#e0bd5e',       # duller amber
+    'rpmalloc': '#d98567',       # duller deep orange
+    'smalloc': '#42a5f5',        # blue (vivid)
+    'smalloc + ffi': '#93c2f9',  # light blue (vivid)
 }
 UNKNOWN_ALLOCATOR_COLOR = '#9e9e9e'  # gray
 
 # Canonical allocator ordering
-ALLOCATOR_ORDER = ['default', 'jemalloc', 'snmalloc', 'mimalloc', 'rpmalloc', 'smalloc']
+ALLOCATOR_ORDER = ['smalloc', 'rpmalloc', 'mimalloc', 'snmalloc', 'jemalloc', 'glibc', 'default']
 
 def get_color(name):
     return ALLOCATOR_COLORS.get(name, UNKNOWN_ALLOCATOR_COLOR)
 
 def sort_allocators(names):
-    """Sort allocator names in canonical order: default, known allocators, unknown, smalloc last."""
+    """Sort allocator names in canonical order: smalloc first, known allocators, unknown
+    allocators, default."""
     def sort_key(name):
         if name in ALLOCATOR_ORDER:
             return (0, ALLOCATOR_ORDER.index(name))

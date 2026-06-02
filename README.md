@@ -1,11 +1,11 @@
 # smalloc -- a simple memory allocator
 
 `smalloc` is suitable as a drop-in replacement for the glibc memory allocator, `jemalloc`,
-`mimalloc`, `snmalloc`, `rpmalloc`, etc -- *except* for security-hardening features.
+`mimalloc`, `snmalloc`, `rpmalloc`, etc — *except* for security-hardening features.
 
 `smalloc` performs comparably or even better than those other memory managers, while being much
-simpler. The current implementation is only 390 lines of Rust code. The other memory allocators
-range from 2,509 lines of C code (`rpmalloc`) to 25,713 lines of C code (`jemalloc`).
+simpler. The current implementation is only 406 lines of Rust code. The other memory allocators
+range from 2,513 lines of C code (`rpmalloc`) to 26,164 lines of C code (`jemalloc`).
 
 Fewer lines of code means fewer bugs, and it also means more consistent and debuggable behavior.
 
@@ -19,7 +19,7 @@ management bugs.
 # Performance
 
 <a href="https://github.com/zooko/bench-allocators/blob/main/benchmark-results/AppleM4Max.darwin25/COMBINED-REPORT.md">
-    <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc-mt.graph.svg" width="600">
+    <img src="https://raw.githubusercontent.com/zooko/bench-allocators/refs/heads/main/benchmark-results/AppleM4Max.darwin25/smalloc.graph-mt.svg" width="600">
 </a>
     
 (Click on the image.)
@@ -50,7 +50,8 @@ about the user's needs in practice before changing the code to do so.
 
 # Usage in Rust Code
 
-Add `smalloc` to your Cargo.toml by executing `cargo add smmalloc --rename smalloc`, then add this to your code:
+Add `smalloc` to your Cargo.toml by executing `cargo add smmalloc --rename smalloc`, then add this
+to your code:
 
 ```
 use smalloc::Smalloc;
@@ -231,18 +232,19 @@ slabs
 For each slab, there is a free list, which is a singly-linked list of slots that are not currently
 in use (i.e. either they've never yet been `malloc()`'ed, or they've been `malloc()`'ed and then
 subsequently `free()`'ed). When referring to a slot's fixed position within the slab, call that its
-"slot number", and when referring to a slot's position within the free list (which can change over
-time as slots get removed from and added to the free list), call that a "free list entry". A free
-list entry contains the slot number of the next free list entry (or a sentinel value if there is no
-next free list entry, i.e. this entry is the end of the free list).
+"slot number", and when referring to a slot's within the free list (which can change over time as
+slots get removed from and added to the free list), call that a "free list entry". A free list entry
+contains the slot number of the next free list entry (or a sentinel value if there is no next free
+list entry, i.e. this entry is the last one at the end of the free list).
 
 xxx document flup's vs flop's
 
-For each slab there is one additional associated variable, which holds the slot number of the first
-free list entry (or the sentinel value if there are no entries in the list). This variable is called
-the "free-list head" and is abbreviated `flh`. The contents of the free list head is the only
-additional information you need to read or write beside the information present in the pointers
-themselves.
+For each slab there are two additional associated variable. The first one is called the "free list
+pop pointer", or `flop`, and it holds the slot number of the first free list entry (or the sentinel
+value if there are no entries in the list).
+
+The contents of the free list head is the only additional information you need to
+read or write beside the information present in the pointers themselves.
 
 That's it! Those are all the data elements in `smalloc`.
 
@@ -285,7 +287,7 @@ use its space to hold the slot number of the next free list entry, or currently 
 it is not in the free list and doesn't have any next free list entry.
 
 This technique is known as an "intrusive free list". Thanks to Andrew Reece and Sam Smith, my
-colleagues at Shielded Labs (makers of fine Zcash software), for explaining this to me.
+colleagues at Shielded Labs (makers of fine Zcash protocol upgrades), for explaining this to me.
 
 So to satisfy a `malloc()` by popping the first entry from the free list, read the value from the
 `flh`, which is the slot number of the first entry in the free list, and then read the *contents* of
@@ -995,6 +997,12 @@ Smalloc v7.6.3+ has the following lines counts:
 * implementation loc: 390 (excluding debug_asserts)
 * tests loc: 804
 * benches loc: 1246
+
+Smalloc v7.6.10 (excluding smalloc-ffi*) has the following lines counts:
+* docs and comments: 1472
+* implementation loc: 406 (excluding debug_asserts)
+* tests loc: 809
+* benches loc: 1221
 
 (I got those numbers for tests and benches by attributing 1/2 of the lines of code in devutils to
 each of them.)
