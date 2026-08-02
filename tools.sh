@@ -90,11 +90,11 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
   --git-source "$GIT_SOURCE"
   --git-commit "$GIT_COMMIT"
   --git-clean-status "$GIT_CLEAN_STATUS"
-  --git-tag "$GIT_TAG"
   --cpu "$CPU_TYPE_STR"
   --os "$OSTYPE"
   --cpu-count "$CPU_COUNT"
 )
+[[ -n ${GIT_TAG//[[:space:]]/} ]] && METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT+=(--git-tag "${GIT_TAG//[[:space:]]/}")
 
 SMALLOC_ONLY=""
 new_args=()
