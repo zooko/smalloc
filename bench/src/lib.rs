@@ -26,6 +26,26 @@ macro_rules! with_all_allocators {
     };
 }
 
+pub fn format_u64(n: u64) -> String {
+    let (n, suffix) = if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
+        (n / 1_000_000, " M")
+    } else if n >= 1_000 && n % 1_000 == 0 {
+        (n / 1_000, " k")
+    } else {
+        (n, "")
+    };
+
+    let mut result = n.to_string();
+    let mut index = result.len();
+
+    while index > 3 {
+        index -= 3;
+        result.insert(index, ',');
+    }
+
+    result + suffix
+}
+
 unsafe impl GlobalAlloc for GlobalAllocWrap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe { System.alloc(layout) }
@@ -63,7 +83,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads:     1, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
+    println!("name: {name:>16}, threads:     1, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}", format_u64(iters_per_batch));
 
     median_ns
 }
@@ -97,7 +117,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads: {threads:>5}, iters: {iters_per_batch:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
+    println!("name: {name:>16}, threads: {threads:>5}, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}", format_u64(iters_per_batch));
 
     median_ns
 }
@@ -170,7 +190,7 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(tot_iters_pb as u64);
-    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {tot_iters_pb:>9}, ns: {median_ns:>14}, ns/i: {nspi:>11}");
+    println!("name: {name:>16}, threads: {numthreads:>5}, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}", format_u64(tot_iters_pb as u64));
 
     median_ns
 }
@@ -279,7 +299,7 @@ where
     results_ns_pht.sort_unstable();
     let median_ns_pht = results_ns_pht[results_ns_pht.len() / 2];
     let nspipht = median_ns_pht.per_iter(iters_pbpht);
-    println!("name: {name:>16}, hthreads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {iters_pbpht:>9}, ns: {median_ns_pht:>14}, (per ht) ns/i: {nspipht:>11}");
+    println!("name: {name:>16}, hthreads: {hot_threads:>5}, coolts: {cool_per_hot:>3}, its/ht: {:>10}, ns: {median_ns_pht:>14}, (per ht) ns/i: {nspipht:>11}", format_u64(iters_pbpht));
 
     median_ns_pht
 }

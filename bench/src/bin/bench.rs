@@ -1,4 +1,4 @@
-use bench::{compare_st_bench, compare_mt_bench, compare_fh_bench, compare_hs_bench};
+use bench::{compare_st_bench, compare_mt_bench, compare_fh_bench, compare_hs_bench, format_u64};
 use std::alloc::Layout;
 use smalloc::i::NUM_SLABS_BITS;
 
@@ -48,61 +48,92 @@ macro_rules! extra_ops_mt {
     };
 }
 
-pub fn main() {
-    let seed: u64 = std::env::args()
-        .find_map(|arg| arg.strip_prefix("--seed=").map(|s| s.to_string()))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            // No --seed= found; catch the easy-to-make "--seed VALUE" mistake.
-            let args: Vec<String> = std::env::args().collect();
-            if let Some(w) = args.windows(2).find(|w| w[0] == "--seed" && w[1].parse::<u64>().is_ok()) {
-                eprintln!("Error: use --seed={} instead of --seed {}", w[1], w[1]);
-                std::process::exit(1);
-            }
-            0
+fn parse_u64_arg(args: &[String], option: &str, default: u64) -> u64 {
+    let prefix = format!("{option}=");
+
+    if let Some(value) = args.iter().find_map(|arg| arg.strip_prefix(&prefix)) {
+        return value.replace(['_', ','], "").parse().unwrap_or_else(|_| {
+            eprintln!("Error: invalid value for {option}: {value:?}");
+            std::process::exit(1);
         });
+    }
 
-    println!("Using seed: {}", seed);
+    if let Some(index) = args.iter().position(|arg| arg == option) {
+        if let Some(value) = args.get(index + 1) {
+            eprintln!("Error: use {option}={value} instead of {option} {value}");
+        } else {
+            eprintln!("Error: {option} requires a value");
+        }
 
-    let smalloconly = std::env::args().any(|arg| arg == "--smalloc-only");
-    let thorough = std::env::args().any(|arg| arg == "--thorough");
+        std::process::exit(1);
+    }
 
-    let num_batches: u16 = 30;
+    default
+}
 
-    // Single-threaded benchmarks are so fast we can afford many more iters/batches
-    // without making the user wait.
-    let num_st_batches: u16 = 200;
-    let iters_st_many: u64 = 500_000;
+fn print_help(program: &str) {
+    println!(
+        "Usage: {program} [OPTIONS]
 
-    let iters_many: u64 = 100_000;
+Options:
+  --seed=NUMBER     Random seed used by the benchmarks (default: 0)
+  --iters=NUMBER    Base iteration count (default: 10_000)
+  --smalloc-only    Benchmark only smalloc
+  --thorough        Run extra operations, thread counts, and hotspot tests
+  --help            Print this help"
+    );
+}
 
+pub fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|arg| arg == "--help") {
+        print_help(&args[0]);
+        return;
+    }
+
+    let seed = parse_u64_arg(&args, "--seed", 0);
+    let iters_few = parse_u64_arg(&args, "--iters", 10_000);
+
+    println!("Using seed: {}", format_u64(seed));
+    println!("Using base iteration count: {}", format_u64(iters_few));
+
+    let smalloconly = args.iter().any(|arg| arg == "--smalloc-only");
+    let thorough = args.iter().any(|arg| arg == "--thorough");
+
+    let num_batches: u16 = 10;
     // Ops that never free won't re-use space, so they'd exhaust the heap at iters_many.
-    const ITERS_FEW: u64 = 10_000;
+    let iters_many: u64 = iters_few * 10;
+
+    // Single-threaded benchmarks are so fast we can afford many more iters and batches without
+    // making the user wait.
+    let num_batches_st: u16 = num_batches * 10;
+    let iters_many_st: u64 = iters_many * 10;
 
     const DEFAULT_THREADS: u32 = 32;
     const THREADS_THAT_CAN_FIT_INTO_SLABS: u32 = 1 << NUM_SLABS_BITS;
     const THREADS_WAY_TOO_MANY: u32 = 1024;
 
     // ---- Single-threaded ----
-    main_ops_st!(iters_st_many, ITERS_FEW, num_st_batches, seed, smalloconly);
+    main_ops_st!(iters_many_st, iters_few, num_batches_st, seed, smalloconly);
     if thorough {
-        extra_ops_st!(iters_st_many, ITERS_FEW, num_st_batches, seed, smalloconly);
+        extra_ops_st!(iters_many_st, iters_few, num_batches_st, seed, smalloconly);
     }
 
     // ---- Multi-threaded, light concurrency, ALWAYS run ----
     // DEFAULT_THREADS (8) ≈ the median core count of machines in the world,
     // so it's the one multithreaded count we measure even in non-thorough runs.
-    main_ops_mt!(DEFAULT_THREADS, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
+    main_ops_mt!(DEFAULT_THREADS, iters_many, iters_few, num_batches, seed, smalloconly);
     if thorough {
-        extra_ops_mt!(DEFAULT_THREADS, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
+        extra_ops_mt!(DEFAULT_THREADS, iters_many, iters_few, num_batches, seed, smalloconly);
     }
 
     // ---- Multi-threaded, one thread per slab lane (the standard concurrency target) ----
     // FIT is derived from slab geometry and may change in a smalloc variant; skip it
     // if it collapses to DEFAULT_THREADS so we don't measure the same count twice.
     if thorough && THREADS_THAT_CAN_FIT_INTO_SLABS != DEFAULT_THREADS {
-        main_ops_mt!(THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
-        extra_ops_mt!(THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
+        main_ops_mt!(THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, iters_few, num_batches, seed, smalloconly);
+        extra_ops_mt!(THREADS_THAT_CAN_FIT_INTO_SLABS, iters_many, iters_few, num_batches, seed, smalloconly);
     }
 
     if thorough {
@@ -116,8 +147,8 @@ pub fn main() {
         // alloc fail over to another slab on flh-collision.
         //
         // Note: `aww` here makes the *default* allocator on Windows return a NULL pointer.
-        main_ops_mt!(THREADS_WAY_TOO_MANY, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
-        extra_ops_mt!(THREADS_WAY_TOO_MANY, iters_many, ITERS_FEW, num_batches, seed, smalloconly);
+        main_ops_mt!(THREADS_WAY_TOO_MANY, iters_many, iters_few, num_batches, seed, smalloconly);
+        extra_ops_mt!(THREADS_WAY_TOO_MANY, iters_many, iters_few, num_batches, seed, smalloconly);
 
         println!();
 
@@ -135,13 +166,13 @@ pub fn main() {
         let cool = THREADS_THAT_CAN_FIT_INTO_SLABS - 1;
         if !is_macos() {
             compare_hs_bench!(one_ad, 100, cool, iters_many, num_batches, smalloconly);
-            compare_hs_bench!(a, 100, cool, ITERS_FEW, num_batches, smalloconly);
+            compare_hs_bench!(a, 100, cool, iters_few, num_batches, smalloconly);
             // Windows ran out of resources (i.e. threads) running the 200/400 cases:
             if !is_windows() {
                 compare_hs_bench!(one_ad, 200, cool, iters_many, num_batches, smalloconly);
                 compare_hs_bench!(one_ad, 400, cool, iters_many, num_batches, smalloconly);
-                compare_hs_bench!(a, 200, cool, ITERS_FEW, num_batches, smalloconly);
-                compare_hs_bench!(a, 400, cool, ITERS_FEW, num_batches, smalloconly);
+                compare_hs_bench!(a, 200, cool, iters_few, num_batches, smalloconly);
+                compare_hs_bench!(a, 400, cool, iters_few, num_batches, smalloconly);
             }
         }
 
