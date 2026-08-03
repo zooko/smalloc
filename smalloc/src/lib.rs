@@ -17,7 +17,7 @@
 //   + Fixed constants chosen for the design
 //   + Constants determined by the constants above
 
-use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool};
+use core::sync::atomic::{AtomicU64, AtomicUsize};
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::cell::UnsafeCell;
 use core::alloc::{GlobalAlloc, Layout};
@@ -51,7 +51,6 @@ impl Smalloc {
     pub const fn new() -> Self { Self {
         inner: UnsafeCell::new(SmallocInner {
             smbp: AtomicUsize::new(0),
-            initlock: AtomicBool::new(false),
         }),
     } }
 }
@@ -72,8 +71,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             let inner = self.inner();
-            inner.idempotent_init();
-            inner.alloc(sc, false)
+            inner.alloc(sc, false, inner.get_or_init_smbp())
         }
     }
 
@@ -99,8 +97,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             let inner = self.inner();
-            inner.idempotent_init();
-            inner.alloc(sc, true)
+            inner.alloc(sc, true, inner.get_or_init_smbp())
         }
     }
 
@@ -145,7 +142,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // The "Growers" strategy.
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
-            let newp = inner.alloc(reqsc, false);
+            let newp = inner.alloc(reqsc, false, inner.get_or_init_smbp());
             if newp.is_null() {
                 // smalloc slots must be exhausted
                 return newp;
@@ -178,9 +175,11 @@ pub mod i {
 
     pub struct SmallocInner {
         pub smbp: AtomicUsize,
-        pub initlock: AtomicBool
     }
 
+    const UNINITIALIZED: usize = 0;
+    const INITIALIZING: usize = 1;
+    
     impl SmallocInner {
         /// Returns true if and only if this is a valid pointer to a smalloc slot.
         #[inline(always)]
@@ -195,39 +194,52 @@ pub mod i {
         }
 
         #[inline(always)]
-        pub fn idempotent_init(&self) {
-            let smbpval = self.smbp.load(Relaxed);
-            if smbpval == 0 {
-                // acquire the spin lock
-                loop {
-                    if self.initlock.compare_exchange_weak(false, true, Acquire, Relaxed).is_ok() {
-                        break;
-                    }
-                }
+        pub fn get_or_init_smbp(&self) -> usize {
+            let smbp = self.smbp.load(Acquire);
 
-                let smbpval = self.smbp.load(Relaxed);
-                if smbpval == 0 {
-                    let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
-                    assert!(sysbp != 0);
-                    let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
-
-                    #[cfg(any(target_os = "windows", doc))]
-                    {
-                        let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
-                        sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
-                    }
-
-                    self.smbp.store(smbp, Release);
-                }
-
-                // release the spin lock
-                self.initlock.store(false, Release);
+            if smbp > INITIALIZING {
+                smbp
+            } else {
+                self.initialize_smbp()
             }
         }
 
+        // AI usage note: this design of initialization was co-designed by GPT-5.6 Sol and me, and
+        // this implementation was written by GPT-5.6 Sol and then I manually retyped it from the
+        // chat window into here one character at a time to change it to my preferred style and to
+        // make sure I understood it. :-)
+        #[cold]
+        #[inline(never)]
+        pub fn initialize_smbp(&self) -> usize {
+            loop {
+                match self.smbp.load(Acquire) {
+                    UNINITIALIZED => {
+                        if self.smbp.compare_exchange(UNINITIALIZED, INITIALIZING, Relaxed, Relaxed).is_err() {
+                            continue;
+                        }
+
+                        let sysbp = sys_alloc(TOTAL_VIRTUAL_MEMORY).unwrap().addr();
+                        assert!(sysbp != 0);
+
+                        let smbp = sysbp.next_multiple_of(BASEPTR_ALIGN);
+
+                        #[cfg(any(target_os = "windows", doc))] {
+                            let size_of_flh_area = (1usize << FLHWORD_SIZE_BITS) * (1usize << NUM_SLABS_BITS) * NUM_SCS as usize;
+                            sys_commit(smbp as *mut u8, size_of_flh_area).unwrap();
+                        }
+
+                        self.smbp.store(smbp, Release);
+                        return smbp;
+                    }
+                    INITIALIZING => core::hint::spin_loop(),
+                    smbp => return smbp,
+                }
+            }
+        }
+        
         #[inline(always)]
         /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
-        pub fn alloc(&self, orig_sc: SizeClass, zeromem: bool) -> *mut u8 {
+        pub fn alloc(&self, orig_sc: SizeClass, zeromem: bool, smbp: usize) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
             debug_assert!(orig_sc < NUM_SCS);
 
@@ -239,8 +251,6 @@ pub mod i {
 
             // If all slabs in the sizeclass are full, we'll switch to the next sizeclass.
             let mut sc = orig_sc;
-
-            let smbp = self.smbp.load(Acquire);
 
             loop {
                 // The flhptr for this sizeclass and slabnum is at this location:
@@ -381,7 +391,7 @@ pub mod i {
             debug_assert!(sc >= NUM_UNUSED_SCS);
             debug_assert!(sc < NUM_SCS);
 
-            let flhptr = self.smbp.load(Relaxed) | ptr_to_flhaddr(p_addr);
+            let flhptr = ptr_to_flhaddr(p_addr);
             let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
 
             let newslotnum = ptr_to_slotnum(p_addr);
@@ -467,6 +477,7 @@ pub mod i {
     // This is how many bits hold the data, the slotnum, and the next-touched-bit:
     pub const NUM_SN_D_T_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
 
+    // How many bits that we can independently control fit into the allocatable space?
     const fn bits_holdable(n: usize) -> u8 {
         assert!(n > 0);
         (usize::BITS - (n - 1).leading_zeros() - 1) as u8
@@ -675,7 +686,13 @@ fn ptr_to_flhaddr(p_addr: usize) -> usize {
     // The flhptr for this sizeclass and slabnum is at this location, which we can calculate by
     // masking in the slabnum and sizeclass bits from the address and shifting them right:
     const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
-    (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS)
+    let flhbits = (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
+
+    // Now zero out all the smalloc-addr bits from the p_addr, then OR in the flhoffset and you've
+    // got your flh addr.
+    const MASK_SMALLOC_ADDRS: usize = gen_mask!(SMALLOC_REGION_BITS, usize);
+
+    (p_addr & !MASK_SMALLOC_ADDRS) | flhbits
 }
 
 #[cfg(test)]
