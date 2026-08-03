@@ -88,7 +88,7 @@ cargo nextest run
 
 # Map of the Source Code
 
-## Packages within the workspace
+## Rust packages within the workspace
 
 This workspace contains six packages:
 
@@ -120,6 +120,11 @@ These two files contain test code:
  * _smalloc/src/tests.rs_: transparent-box tests that use internals of the core to test it
  * _smalloc/tests/integration.rs_: opaque-box tests that use only the public API
  
+## Tools
+
+ * _tools_: bash and Python scripts for differential benchmarking (different from the comparative
+   benchmarks in `_bench_`) and for tagging releases
+
 # How it works
 
 ## The Big Idea

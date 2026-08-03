@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env pypy3
 # Thanks to Claude (Opus 4.5 & Sonnet 4.5) for writing this to my specifications.
 
 import sys
@@ -11,32 +11,49 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import metadata
 
+def parse_integer(text):
+    """Parse integers with optional separators and k/M suffixes."""
+    text = text.strip().replace(",", "").replace("_", "").replace(" ", "")
+
+    if text.endswith("k"):
+        return int(text[:-1]) * 1_000
+    if text.endswith("M"):
+        return int(text[:-1]) * 1_000_000
+
+    return int(text)
+
+
 def parse_benchmark_output(filename):
     """Parse the benchmark output file and return structured data."""
-    results = {}  # {allocator: {test_name: time_ns}}
+    results = {}
 
-    with open(filename, 'r', encoding='utf-8') as f:
-        content = f.read()
+    with open(filename, encoding="utf-8") as file:
+        content = file.read()
 
-    # Pattern to match benchmark lines like:
-    # name: de_mt_adrww-64, threads: 64, iters: 20000, ns: 15,778,375, ns/i: 788.9
-    pattern = r'name:\s+(\w+)_(\w+)_([^,]+),\s+threads:\s+([\d,]+),\s+iters:\s+[\d,]+,\s+ns:\s+[\d,]+,\s+ns/i:\s+([\d.,]+)'
+    pattern = re.compile(
+        r"^\s*name:\s*(?P<name>[^,^]+),\s*"
+        r"threads:\s*(?P<threads>[0-9_,]+(?:\s*[kM])?),\s*"
+        r"iters:\s*(?P<iters>[0-9_,]+(?:\s*[kM])?),\s*"
+        r"ns:\s*(?P<ns>[0-9_,]+(?:\s*[kM])?),\s*"
+        r"ns/i:\s*(?P<ns_per_iter>[0-9_,]+(?:\.[0-9]+)?)\s*$",
+        re.MULTILINE,
+    )
 
-    for match in re.finditer(pattern, content):
-        allocator_prefix = match.group(1)  # e.g., "mi" for mimalloc
-        thread_type = match.group(2)       # e.g., "mt" or "st"
-        test_suffix = match.group(3)       # e.g., "a-64" or "adrww"
-        threads = int(match.group(4).replace(',', ''))
-        ns_per_iter = float(match.group(5).replace(',', ''))
+    for match in pattern.finditer(content):
+        full_name = match.group("name")
+        allocator_prefix, separator, test_name = full_name.partition("_")
+
+        assert separator, f"invalid benchmark name: {full_name!r}"
 
         allocator = metadata.allocator_prefix_to_name(allocator_prefix)
+        iterations = parse_integer(match.group("iters"))
+        total_ns = parse_integer(match.group("ns"))
 
-        # Create test name: thread_type + test_suffix (e.g., "st_a" or "mt_adrww-64")
-        test_name = f"{thread_type}_{test_suffix}"
+        # Calculate this from the unrounded total instead of using the
+        # rounded value printed in the ns/i field.
+        ns_per_iter = total_ns / iterations
 
-        if allocator not in results:
-            results[allocator] = {}
-        results[allocator][test_name] = ns_per_iter
+        results.setdefault(allocator, {})[test_name] = ns_per_iter
 
     return results
 
