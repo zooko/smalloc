@@ -1,6 +1,37 @@
 #!/bin/bash
 
-source "$(dirname "$0")/tools.sh"
+usage() {
+    cat <<EOF
+Usage: ${0##*/} NEW_VERSION
+
+Update Cargo.toml and Cargo.lock, commit the version changes, and create
+a Git tag. NEW_VERSION must be greater than the current version and
+must not include the leading "v".
+
+Example:
+  ${0##*/} 7.7.0
+EOF
+}
+
+if [[ $# == 1 && "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+if [[ $# != 1 || -z "$1" ]]; then
+    echo "Error: exactly one NEW_VERSION argument is required." >&2
+    echo >&2
+    usage >&2
+    exit 2
+fi
+
+NEW_VERSION=$1
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+cd "$REPO_ROOT"
+source "$SCRIPT_DIR/tools.sh"
 
 CURRENT_TAG=$(get_git_tag)
 if [[ ! "$CURRENT_TAG" =~ ^v ]]; then
