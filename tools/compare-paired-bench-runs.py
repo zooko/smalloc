@@ -356,7 +356,7 @@ print(
 for row in rows:
     difference = f"{row['difference']:+.3f}%"
 
-    if row["significant"]:
+    if row["significant"] and abs(row['difference']) >= 1:
         difference += " *"
     else:
         difference += "  "
@@ -378,10 +378,6 @@ categories = [
     (
         "Single-threaded",
         [row for row in rows if row["kind"] == "st"],
-    ),
-    (
-        "Multithreaded, all",
-        [row for row in rows if row["kind"] == "mt"],
     ),
     (
         "Multithreaded, 32 threads",
@@ -508,7 +504,7 @@ print(
 for summary in summaries:
     median_value = f"{summary['median']:+.3f}%"
 
-    if summary["range_excludes_zero"]:
+    if summary["range_excludes_zero"] and abs(summary['median']) >= 1:
         median_value += " †"
     else:
         median_value += "  "
@@ -531,5 +527,5 @@ print("  Negative differences mean the new version is faster.")
 print("  Categories overlap intentionally.")
 print("  Category medians treat each benchmark as one observation.")
 print("  F/S means faster/slower; sig. means individually significant.")
-print("  * means the benchmark's 95% paired interval excludes zero.")
-print("  † next to a category median means every benchmark in that category moved in the same direction.")
+print("  * means the benchmark's 95% paired interval excludes zero and its mean ≥ 1%.")
+print("  † next to a category median means every benchmark in that category moved in the same direction and their median ≥ 1%.")

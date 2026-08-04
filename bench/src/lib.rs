@@ -29,7 +29,7 @@ macro_rules! with_all_allocators {
 pub fn format_u64(n: u64) -> String {
     let (n, suffix) = if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
         (n / 1_000_000, " M")
-    } else if n >= 1_000 && n % 1_000 == 0 {
+    } else if n >= 1_000 && n.is_multiple_of(1_000) {
         (n / 1_000, " k")
     } else {
         (n, "")
