@@ -142,7 +142,7 @@ unsafe impl GlobalAlloc for Smalloc {
             // The "Growers" strategy.
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
-            let newp = inner.alloc(reqsc, false, inner.get_or_init_smbp());
+            let newp = inner.alloc(reqsc, false, ptr_to_smbp(p_addr));
             if newp.is_null() {
                 // smalloc slots must be exhausted
                 return newp;
@@ -681,6 +681,15 @@ fn sc_to_sentinel_slotnum(sc: SizeClass) -> SlotNum {
 }
 
 #[inline(always)]
+/// Return the address of the smbp.
+fn ptr_to_smbp(p_addr: usize) -> usize {
+    // Zero out all the smalloc-addr bits from the p_addr
+    const SMALLOC_ADDR_MASK: usize = gen_mask!(SMALLOC_REGION_BITS, usize);
+
+    p_addr & !SMALLOC_ADDR_MASK
+}
+
+#[inline(always)]
 /// Return the address of the flh for this slab.
 fn ptr_to_flhaddr(p_addr: usize) -> usize {
     // The flhptr for this sizeclass and slabnum is at this location, which we can calculate by
@@ -688,11 +697,8 @@ fn ptr_to_flhaddr(p_addr: usize) -> usize {
     const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
     let flhbits = (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
 
-    // Now zero out all the smalloc-addr bits from the p_addr, then OR in the flhoffset and you've
-    // got your flh addr.
-    const MASK_SMALLOC_ADDRS: usize = gen_mask!(SMALLOC_REGION_BITS, usize);
-
-    (p_addr & !MASK_SMALLOC_ADDRS) | flhbits
+    // Get the smbp, OR in the flh addr bits, and you've got your flh addr.
+    ptr_to_smbp(p_addr) | flhbits
 }
 
 #[cfg(test)]
