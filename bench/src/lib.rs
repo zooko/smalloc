@@ -60,19 +60,25 @@ unsafe impl GlobalAlloc for GlobalAllocWrap {
     }
 }
 
-pub fn singlethread_bench<T, F>(bf: F, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> Nanoseconds
+pub fn singlethread_bench<T>(
+    bf: fn(&T, &mut TestState, u64),
+    iters_per_batch: u64,
+    num_batches: u16,
+    name: &str,
+    al: &T,
+    seed: u64,
+) -> Nanoseconds
 where
     T: GlobalAlloc,
-    F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
     let mut results_ns = Vec::with_capacity(num_batches as usize);
 
     for _batch in 0..num_batches {
         let mut s = TestState::new(iters_per_batch, seed);
         let start = platform::p::thread_cputime();
-        for _i in 0..iters_per_batch {
-            bf(al, &mut s);
-        }
+
+        bf(al, &mut s, iters_per_batch);
+
         let end = platform::p::thread_cputime();
         s.clean_up(al);
 
@@ -83,16 +89,26 @@ where
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads:     1, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}", format_u64(iters_per_batch));
+    println!(
+        "name: {name:>16}, threads:     1, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}",
+        format_u64(iters_per_batch)
+    );
 
     median_ns
 }
 
 /// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
-pub fn multithread_bench<T, F>(bf: F, threads: u32, iters_per_batch: u64, num_batches: u16, name: &str, al: &T, seed: u64) -> Nanoseconds
+pub fn multithread_bench<T>(
+    bf: fn(&T, &mut TestState, u64),
+    threads: u32,
+    iters_per_batch: u64,
+    num_batches: u16,
+    name: &str,
+    al: &T,
+    seed: u64,
+) -> Nanoseconds
 where
-    T: GlobalAlloc + Send + Sync,
-    F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
+    T: GlobalAlloc + Send + Sync + 'static,
 {
     let mut results_ns = Vec::with_capacity(num_batches as usize);
 
@@ -211,10 +227,18 @@ where
 ///
 /// Thanks to Claude Opus 4.5 for writing 90% of this function for me.
 #[allow(clippy::too_many_arguments)]
-pub fn multithread_hotspot_inner<T, F>(f: F, hot_threads: u32, cool_threads_per_hot_thread: u32, iters_pbpht: u64, num_batches: u16, name: &str, al: &T, l: Layout) -> Nanoseconds
+pub fn multithread_hotspot_inner<T>(
+    f: fn(&T, &mut TestState, u64),
+    hot_threads: u32,
+    cool_threads_per_hot_thread: u32,
+    iters_pbpht: u64,
+    num_batches: u16,
+    name: &str,
+    al: &T,
+    l: Layout
+) -> Nanoseconds
 where
     T: GlobalAlloc + Send + Sync,
-    F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
     let hot_threads = hot_threads as usize;
     let cool_per_hot = cool_threads_per_hot_thread as usize;
@@ -254,9 +278,7 @@ where
                     setup_complete_barrier.wait();
                     hot_start_barrier.wait();
 
-                    for _ in 0..iters_pbpht {
-                        f(al, &mut ts);
-                    }
+                    f(al, &mut ts, iters_pbpht);
 
                     hot_finish_barrier.wait();
                     ts.clean_up(al);

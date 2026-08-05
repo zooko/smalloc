@@ -27,22 +27,278 @@ pub mod dev_instance {
     }
 }
 
-#[inline(always)]
-pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // random coin
-    let coin = s.next_coin() % 3;
-    if s.ps.is_empty() || coin == 0 {
+#[inline(never)]
+pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
+        // random coin
+        let coin = s.next_coin() % 3;
+        if s.ps.is_empty() || coin == 0 {
+            // Malloc
+            let lt = s.next_layout();
+            let p = unsafe { al.alloc(lt) };
+            debug_assert!(!p.is_null(), "{lt:?}");
+            // Write to the allocation
+            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
+
+            #[cfg(debug_assertions)] {
+                debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.insert((p as usize, lt));
+
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.get_p_biased();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po as *mut u8, min(BYTES2.len(), lto.size())) };
+                }
+            }
+
+            s.ps.push((p as usize, lt));
+        } else if coin == 1 {
+            // Free
+            debug_assert!(!s.ps.is_empty());
+
+            let (p, lt) = s.remove_next_p();
+
+            #[cfg(debug_assertions)] {
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.get_p_biased();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), po as *mut u8, min(BYTES3.len(), lto.size())) };
+                }
+
+                debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.remove(&(p, lt));
+            }
+
+            // Read from this location before dealloc'ing it.
+            unsafe {
+                let ln = min(BYTES1.len(), lt.size());
+                let data = std::slice::from_raw_parts(p as *const u8, ln);
+                // Useful assertion for looking for bugs when testing, plus when this is used for
+                // benchmarking, this prevents the compiler from optimizing away the read.
+
+                assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}, BYTES4: {BYTES4:?}, BYTES5: {BYTES5:?}");
+            }
+            unsafe { al.dealloc(p as *mut u8, lt) };
+        } else {
+            // Realloc
+            debug_assert!(!s.ps.is_empty());
+
+            let (p, lt) = s.remove_next_p();
+
+            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align());
+            #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
+
+            let newlt = s.next_layout();
+
+            // Read from this location before realloc'ing it.
+            unsafe {
+                let ln = min(BYTES1.len(), lt.size());
+                let data = std::slice::from_raw_parts(p as *const u8, ln);
+                // Useful assertion for looking for bugs when testing, plus when this is used for
+                // benchmarking, this prevents the compiler from optimizing away the read.
+
+	        assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln]);
+            }
+            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+            // Write to the (possibly new) location after realloc'ing it.
+            unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), newp, min(BYTES4.len(), newlt.size())) };
+
+            debug_assert!(!s.m.contains(&(newp as usize, newlt)), "{:?} {}-{}", newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
+            #[cfg(debug_assertions)] { s.m.insert((newp as usize, newlt)); }
+
+            #[cfg(debug_assertions)] {
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.get_p_biased();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), po as *mut u8, min(BYTES5.len(), lto.size())) };
+                }
+            }
+
+            s.ps.push((newp as usize, newlt));
+        }
+    }
+}
+
+#[inline(never)]
+pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
+        // random coin
+        let coin = s.next_coin() % 3;
+        if s.ps.is_empty() || coin == 0 {
+            // Malloc
+            let lt = s.next_layout();
+            let p = unsafe { al.alloc(lt) };
+            debug_assert!(!p.is_null(), "{lt:?}");
+
+            #[cfg(debug_assertions)] {
+                debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.insert((p as usize, lt));
+            }
+
+            s.ps.push((p as usize, lt));
+        } else if coin == 1 {
+            // Free
+            debug_assert!(!s.ps.is_empty());
+
+            let (p, lt) = s.remove_next_p();
+	    
+            #[cfg(debug_assertions)] {
+                debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+	        s.m.remove(&(p, lt));
+	    }
+
+            unsafe { al.dealloc(p as *mut u8, lt) };
+        } else {
+            // Realloc
+            debug_assert!(!s.ps.is_empty());
+
+	    let (p, lt) = s.remove_next_p();
+
+            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}, m.len(): {}", p, lt.size(), lt.align(), s.m.len());
+            #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
+
+            let newlt = s.next_layout();
+
+            let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
+
+            debug_assert!(!s.m.contains(&(newp as usize, newlt)), "{:?} {}-{}", newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
+            #[cfg(debug_assertions)] { s.m.insert((newp as usize, newlt)); }
+
+            s.ps.push((newp as usize, newlt));
+        }
+    }
+}
+
+#[inline(never)]
+pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
+        // random coin
+        let coin = s.next_coin() % 2;
+        if s.ps.is_empty() || coin == 0 {
+            // Malloc
+            let lt = s.next_layout();
+            let p = unsafe { al.alloc(lt) };
+            debug_assert!(!p.is_null(), "{lt:?}");
+            // Write to the allocation
+            unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
+
+            #[cfg(debug_assertions)] {
+                debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.insert((p as usize, lt));
+
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.get_p_biased();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po as *mut u8, min(BYTES2.len(), lto.size())) };
+                }
+            }
+
+            s.ps.push((p as usize, lt));
+
+            if s.cached_8 > 0 {
+                s.cached_8 -= 1;
+            } else {
+                s.num_popped_out_of_8_cache += 1;
+            }
+            if s.cached_512 > 0 {
+                s.cached_512 -= 1;
+            } else {
+                s.num_popped_out_of_512_cache += 1;
+            }
+        } else {
+            // Free
+            debug_assert!(!s.ps.is_empty());
+
+            let (p, lt) = s.remove_next_p();
+
+            #[cfg(debug_assertions)] {
+                // Write to a random (other) allocation...
+                if !s.ps.is_empty() {
+                    let (po, lto) = s.get_p_biased();
+                    unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), po as *mut u8, min(BYTES3.len(), lto.size())) };
+                }
+
+                debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.remove(&(p, lt));
+            }
+
+            // Read from this location before dealloc'ing it.
+            unsafe {
+                let ln = min(BYTES1.len(), lt.size());
+                let data = std::slice::from_raw_parts(p as *const u8, ln);
+                // Useful assertion for looking for bugs when testing, plus when this is used for
+                // benchmarking, this prevents the compiler from optimizing away the read.
+
+                assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}");
+            }
+            unsafe { al.dealloc(p as *mut u8, lt) };
+
+            s.cached_8 = min(8, s.cached_8 + 1);
+            s.cached_512 = min(512, s.cached_512 + 1);
+        }
+    }
+}
+
+#[inline(never)]
+pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
+        // random coin
+        let coin = s.next_coin() % 2;
+        if s.ps.is_empty() || coin == 0 {
+            // Malloc
+            let lt = s.next_layout();
+            let p = unsafe { al.alloc(lt) };
+            debug_assert!(!p.is_null(), "{lt:?}");
+
+            #[cfg(debug_assertions)] {
+                debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.insert((p as usize, lt));
+            }
+
+            s.ps.push((p as usize, lt));
+
+            if s.cached_8 > 0 {
+                s.cached_8 -= 1;
+            } else {
+                s.num_popped_out_of_8_cache += 1;
+            }
+            if s.cached_512 > 0 {
+                s.cached_512 -= 1;
+            } else {
+                s.num_popped_out_of_512_cache += 1;
+            }
+        } else {
+            // Free
+            debug_assert!(!s.ps.is_empty());
+
+            let (p, lt) = s.remove_next_p();
+
+            #[cfg(debug_assertions)] {
+                debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+                s.m.remove(&(p, lt));
+            }
+
+            unsafe { al.dealloc(p as *mut u8, lt) };
+
+            s.cached_8 = min(8, s.cached_8 + 1);
+            s.cached_512 = min(512, s.cached_512 + 1);
+        }
+    }
+}
+
+#[inline(never)]
+pub fn aww<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
-        debug_assert!(!p.is_null(), "{lt:?}");
+        debug_assert!(!p.is_null(), "lt: {lt:?}");
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(debug_assertions)] { s.m.insert((p as usize, lt)); }
         // Write to the allocation
         unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
 
         #[cfg(debug_assertions)] {
-            debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.insert((p as usize, lt));
-
             // Write to a random (other) allocation...
             if !s.ps.is_empty() {
                 let (po, lto) = s.get_p_biased();
@@ -51,280 +307,46 @@ pub fn adrww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
         }
 
         s.ps.push((p as usize, lt));
-    } else if coin == 1 {
-        // Free
-        debug_assert!(!s.ps.is_empty());
-
-        let (p, lt) = s.remove_next_p();
-
-        #[cfg(debug_assertions)] {
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.get_p_biased();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), po as *mut u8, min(BYTES3.len(), lto.size())) };
-            }
-
-            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.remove(&(p, lt));
-        }
-
-        // Read from this location before dealloc'ing it.
-        unsafe {
-            let ln = min(BYTES1.len(), lt.size());
-            let data = std::slice::from_raw_parts(p as *const u8, ln);
-            // Useful assertion for looking for bugs when testing, plus when this is used for
-            // benchmarking, this prevents the compiler from optimizing away the read.
-
-            assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}, BYTES4: {BYTES4:?}, BYTES5: {BYTES5:?}");
-        }
-        unsafe { al.dealloc(p as *mut u8, lt) };
-    } else {
-        // Realloc
-        debug_assert!(!s.ps.is_empty());
-
-        let (p, lt) = s.remove_next_p();
-
-        debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align());
-        #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
-
-        let newlt = s.next_layout();
-
-        // Read from this location before realloc'ing it.
-        unsafe {
-            let ln = min(BYTES1.len(), lt.size());
-            let data = std::slice::from_raw_parts(p as *const u8, ln);
-            // Useful assertion for looking for bugs when testing, plus when this is used for
-            // benchmarking, this prevents the compiler from optimizing away the read.
-
-	    assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln] || *data == BYTES4[..ln] || *data == BYTES5[..ln]);
-        }
-        let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
-        // Write to the (possibly new) location after realloc'ing it.
-        unsafe { std::ptr::copy_nonoverlapping(BYTES4.as_ptr(), newp, min(BYTES4.len(), newlt.size())) };
-
-        debug_assert!(!s.m.contains(&(newp as usize, newlt)), "{:?} {}-{}", newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
-        #[cfg(debug_assertions)] { s.m.insert((newp as usize, newlt)); }
-
-        #[cfg(debug_assertions)] {
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.get_p_biased();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES5.as_ptr(), po as *mut u8, min(BYTES5.len(), lto.size())) };
-            }
-        }
-
-        s.ps.push((newp as usize, newlt));
     }
 }
 
-#[inline(always)]
-pub fn adr<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // random coin
-    let coin = s.next_coin() % 3;
-    if s.ps.is_empty() || coin == 0 {
+#[inline(never)]
+pub fn a<T: GlobalAlloc>(al: &T, s: &mut TestState, iters: u64) {
+    for _ in 0..iters {
         // Malloc
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
-        debug_assert!(!p.is_null(), "{lt:?}");
-
-        #[cfg(debug_assertions)] {
-            debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.insert((p as usize, lt));
-        }
+        debug_assert!(!p.is_null(), "lt: {lt:?}");
+        debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
+        #[cfg(debug_assertions)] { s.m.insert((p as usize, lt)); }
 
         s.ps.push((p as usize, lt));
-    } else if coin == 1 {
-        // Free
-        debug_assert!(!s.ps.is_empty());
-
-        let (p, lt) = s.remove_next_p();
-	
-        #[cfg(debug_assertions)] {
-            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-	    s.m.remove(&(p, lt));
-	}
-
-        unsafe { al.dealloc(p as *mut u8, lt) };
-    } else {
-        // Realloc
-        debug_assert!(!s.ps.is_empty());
-
-	let (p, lt) = s.remove_next_p();
-
-        debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}, m.len(): {}", p, lt.size(), lt.align(), s.m.len());
-        #[cfg(debug_assertions)] { s.m.remove(&(p, lt)); }
-
-        let newlt = s.next_layout();
-
-        let newp = unsafe { al.realloc(p as *mut u8, lt, newlt.size()) };
-
-        debug_assert!(!s.m.contains(&(newp as usize, newlt)), "{:?} {}-{}", newp, newlt.size(), newlt.align()); // This line is the only reason s.m exists.
-        #[cfg(debug_assertions)] { s.m.insert((newp as usize, newlt)); }
-
-        s.ps.push((newp as usize, newlt));
     }
 }
 
-#[inline(always)]
-pub fn adww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // random coin
-    let coin = s.next_coin() % 2;
-    if s.ps.is_empty() || coin == 0 {
-        // Malloc
+#[inline(never)]
+pub fn one_ad<T: GlobalAlloc>(
+    al: &T,
+    s: &mut TestState,
+    iters: u64,
+) {
+    for _ in 0..iters {
         let lt = s.next_layout();
         let p = unsafe { al.alloc(lt) };
-        debug_assert!(!p.is_null(), "{lt:?}");
-        // Write to the allocation
-        unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
-
-        #[cfg(debug_assertions)] {
-            debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.insert((p as usize, lt));
-
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.get_p_biased();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po as *mut u8, min(BYTES2.len(), lto.size())) };
-            }
-        }
-
-        s.ps.push((p as usize, lt));
-
-        if s.cached_8 > 0 {
-            s.cached_8 -= 1;
-        } else {
-            s.num_popped_out_of_8_cache += 1;
-        }
-        if s.cached_512 > 0 {
-            s.cached_512 -= 1;
-        } else {
-            s.num_popped_out_of_512_cache += 1;
-        }
-    } else {
-        // Free
-        debug_assert!(!s.ps.is_empty());
-
-        let (p, lt) = s.remove_next_p();
-
-        #[cfg(debug_assertions)] {
-            // Write to a random (other) allocation...
-            if !s.ps.is_empty() {
-                let (po, lto) = s.get_p_biased();
-                unsafe { std::ptr::copy_nonoverlapping(BYTES3.as_ptr(), po as *mut u8, min(BYTES3.len(), lto.size())) };
-            }
-
-            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.remove(&(p, lt));
-        }
-
-        // Read from this location before dealloc'ing it.
-        unsafe {
-            let ln = min(BYTES1.len(), lt.size());
-            let data = std::slice::from_raw_parts(p as *const u8, ln);
-            // Useful assertion for looking for bugs when testing, plus when this is used for
-            // benchmarking, this prevents the compiler from optimizing away the read.
-
-            assert!(*data == BYTES1[..ln] || *data == BYTES2[..ln] || *data == BYTES3[..ln], "data: {data:?}, BYTES1: {BYTES1:?}, BYTES2: {BYTES2:?}, BYTES3: {BYTES3:?}");
-        }
-        unsafe { al.dealloc(p as *mut u8, lt) };
-
-        s.cached_8 = min(8, s.cached_8 + 1);
-        s.cached_512 = min(512, s.cached_512 + 1);
+        debug_assert!(!p.is_null(), "lt: {lt:?}");
+        unsafe { al.dealloc(p, lt) };
     }
 }
 
-#[inline(always)]
-pub fn ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // random coin
-    let coin = s.next_coin() % 2;
-    if s.ps.is_empty() || coin == 0 {
-        // Malloc
-        let lt = s.next_layout();
-        let p = unsafe { al.alloc(lt) };
-        debug_assert!(!p.is_null(), "{lt:?}");
-
-        #[cfg(debug_assertions)] {
-            debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.insert((p as usize, lt));
-        }
-
-        s.ps.push((p as usize, lt));
-
-        if s.cached_8 > 0 {
-            s.cached_8 -= 1;
-        } else {
-            s.num_popped_out_of_8_cache += 1;
-        }
-        if s.cached_512 > 0 {
-            s.cached_512 -= 1;
-        } else {
-            s.num_popped_out_of_512_cache += 1;
-        }
-    } else {
-        // Free
-        debug_assert!(!s.ps.is_empty());
-
-        let (p, lt) = s.remove_next_p();
-
-        #[cfg(debug_assertions)] {
-            debug_assert!(s.m.contains(&(p, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-            s.m.remove(&(p, lt));
-        }
-
-        unsafe { al.dealloc(p as *mut u8, lt) };
-
-        s.cached_8 = min(8, s.cached_8 + 1);
-        s.cached_512 = min(512, s.cached_512 + 1);
-    }
-}
-
-#[inline(always)]
-pub fn aww<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // Malloc
-    let lt = s.next_layout();
-    let p = unsafe { al.alloc(lt) };
-    debug_assert!(!p.is_null(), "lt: {lt:?}");
-    debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-    #[cfg(debug_assertions)] { s.m.insert((p as usize, lt)); }
-    // Write to the allocation
-    unsafe { std::ptr::copy_nonoverlapping(BYTES1.as_ptr(), p, min(BYTES1.len(), lt.size())) };
-
-    #[cfg(debug_assertions)] {
-        // Write to a random (other) allocation...
-        if !s.ps.is_empty() {
-            let (po, lto) = s.get_p_biased();
-            unsafe { std::ptr::copy_nonoverlapping(BYTES2.as_ptr(), po as *mut u8, min(BYTES2.len(), lto.size())) };
-        }
-    }
-
-    s.ps.push((p as usize, lt));
-}
-
-#[inline(always)]
-pub fn a<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // Malloc
-    let lt = s.next_layout();
-    let p = unsafe { al.alloc(lt) };
-    debug_assert!(!p.is_null(), "lt: {lt:?}");
-    debug_assert!(!s.m.contains(&(p as usize, lt)), "{:?} {}-{}", p, lt.size(), lt.align()); // This line is the only reason s.m exists.
-    #[cfg(debug_assertions)] { s.m.insert((p as usize, lt)); }
-
-    s.ps.push((p as usize, lt));
-}
-
-#[inline(always)]
-pub fn one_ad<T: GlobalAlloc>(al: &T, s: &mut TestState) {
-    // Malloc
-    let lt = s.next_layout();
-    let p = unsafe { al.alloc(lt) };
-    debug_assert!(!p.is_null(), "lt: {lt:?}");
-    unsafe { al.dealloc(p, lt) };
-}
-
-pub fn help_test_multithreaded_with_allocator<T, F>(f: F, threads: u32, iters_per_batch: u64, al: &T, tses: &mut [TestState])
+pub fn help_test_multithreaded_with_allocator<T>(
+    f: fn(&T, &mut TestState, u64),
+    threads: u32,
+    iters_per_batch: u64,
+    al: &T,
+    tses: &mut [TestState],
+)
 where
     T: GlobalAlloc + Send + Sync,
-    F: Fn(&T, &mut TestState) + Sync + Send + Copy + 'static
 {
     assert!(tses.len() >= threads as usize, "Need at least {} TestStates", threads);
 
@@ -334,9 +356,7 @@ where
         for t in 0..threads {
             scope.spawn(move || {
                 let s = unsafe { &mut *(tses_ptr as *mut TestState).add(t as usize) };
-                for _i in 0..iters_per_batch {
-                    f(al, s);
-                }
+                f(al, s, iters_per_batch);
             });
         }
     });
