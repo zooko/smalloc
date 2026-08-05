@@ -98,6 +98,8 @@ where
 }
 
 /// Returns median nanoseconds per batch (not per iter -- all the time taken for all the iters in that batch)
+///
+/// Thread creation and joining are outside the timed interval.
 pub fn multithread_bench<T>(
     bf: fn(&T, &mut TestState, u64),
     threads: u32,
@@ -114,29 +116,80 @@ where
 
     for _batch in 0..num_batches {
         let mut tses: Vec<TestState> = Vec::with_capacity(threads as usize);
-        for _i in 0..threads {
+
+        for _ in 0..threads {
             tses.push(TestState::new(iters_per_batch, seed));
         }
 
-        let start = platform::p::clock_monotonic_raw();
-        help_test_multithreaded_with_allocator(bf, threads, iters_per_batch, al, &mut tses);
-        let end = platform::p::clock_monotonic_raw();
-        let batch_ns = end - start;
+        let ready_barrier = Barrier::new(threads as usize + 1);
+        let start_barrier = Barrier::new(threads as usize + 1);
+        let finish_barrier = Barrier::new(threads as usize + 1);
+
+        let batch_ns = thread::scope(|scope| {
+            let tses_ptr = tses.as_mut_ptr() as usize;
+
+            for thread_index in 0..threads {
+                let ready_barrier = &ready_barrier;
+                let start_barrier = &start_barrier;
+                let finish_barrier = &finish_barrier;
+
+                scope.spawn(move || {
+                    let state = unsafe {
+                        &mut *(tses_ptr as *mut TestState)
+                            .add(thread_index as usize)
+                    };
+
+                    // Report that this worker has been created and is ready.
+                    ready_barrier.wait();
+
+                    // Wait until the timed interval begins.
+                    start_barrier.wait();
+
+                    bf(al, state, iters_per_batch);
+
+                    // Report that this worker has finished.
+                    finish_barrier.wait();
+                });
+            }
+
+            // Wait until every worker exists and is ready. Thread creation
+            // is therefore excluded from the timed interval.
+            ready_barrier.wait();
+
+            let start = platform::p::clock_monotonic_raw();
+
+            // Release all workers.
+            start_barrier.wait();
+
+            // Wait until all workers have finished their benchmark work.
+            finish_barrier.wait();
+
+            let end = platform::p::clock_monotonic_raw();
+
+            assert!(end > start);
+            end - start
+        });
+
         results_ns.push(batch_ns);
 
-        // Dealloc all allocations so that we don't run out of space.
-        for mut ts in tses {
-            ts.clean_up(al);
+        // Deallocate all remaining allocations outside the timed interval.
+        for mut state in tses {
+            state.clean_up(al);
         }
     }
 
     results_ns.sort_unstable();
     let median_ns = results_ns[results_ns.len() / 2];
     let nspi = median_ns.per_iter(iters_per_batch);
-    println!("name: {name:>16}, threads: {threads:>5}, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}", format_u64(iters_per_batch));
+
+    println!(
+        "name: {name:>16}, threads: {threads:>5}, iters: {:>10}, ns: {median_ns:>14}, ns/i: {nspi:>11}",
+        format_u64(iters_per_batch)
+    );
 
     median_ns
 }
+
 
 /// This is to stress test the case that many threads are simultaneously free'ing slots in the same
 /// slab as each other.
