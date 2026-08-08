@@ -25,7 +25,7 @@ get_git_tag() {
 GIT_TAG=$(get_git_tag)
 
 get_git_clean_status() {
-    [ -z "$(git status --porcelain)" ] && echo clean || echo dirty
+    [ -z "$(git status --porcelain)" ] && echo clean || echo "dirty-$(git diff --binary HEAD | b3sum --no-names)"
 }
 GIT_CLEAN_STATUS=$(get_git_clean_status)
 
