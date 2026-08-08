@@ -165,20 +165,20 @@ Figure 1: Memory layout of slots and slabs and free-list-heads
 
 free list head pointers
 
-                                         sla sc   flh
+                                       slab  sc   flh
        ---------------------------------------------
-                                        [sl][sc ][f]
-       000000000000000000000000000000000------------
+                                      [slab][sc ][f]
+       0000000000000000000000000000000--------------
 
 slabs
-   0 unused (space reused for flh's as shown above)
-
-   1 unused
-
                   .- reserved for touched bit
         slab  sc  | slotnum                     data
   sc   [    ][   ]v[                          ][   ] slotsize slots slabs
   --   --------------------------------------------- -------- ----- -----
+   0  unused (space used for flh's as shown above)
+
+   1  unused
+
        [slab][sc ] [slotnum                      ][]
    2   ------00010----------------------------------     2^ 2  2^31   2^6
 
