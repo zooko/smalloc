@@ -97,17 +97,15 @@ METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT=(
 [[ -n ${GIT_TAG//[[:space:]]/} ]] && METADATA_ARGS_TO_PASS_TO_PYTHON_SCRIPT+=(--git-tag "${GIT_TAG//[[:space:]]/}")
 
 SMALLOC_ONLY=""
-new_args=()
+BENCHMARK_ARGS=()
 
 for arg in "$@"; do
     if [[ "$arg" == "--smalloc-only" ]]; then
         SMALLOC_ONLY="--smalloc-only"
     else
-        new_args+=("$arg")
+        BENCHMARK_ARGS+=("$arg")
     fi
 done
-
-set -- "${new_args[@]}"
 
 ALLOCATOR_LIST=()
 
