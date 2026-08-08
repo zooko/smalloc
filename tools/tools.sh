@@ -6,38 +6,74 @@ get_timestamp() {
 TIMESTAMP=$(get_timestamp)
 
 get_git_source() {
-    RES=$(git remote get-url origin 2>/dev/null)
-    RES="${RES:-unknown}"
-    [[ "$RES" == git@* ]] && RES=$(echo "$RES" | sed 's|^git@\([^:]*\):\(.*\)|https://\1/\2|')
-    RES="${RES%.git}"
-    echo "${RES}"
+    local directory="${1:-.}"
+    local result
+
+    result=$(git -C "$directory" remote get-url origin 2>/dev/null || true)
+    result="${result:-unknown}"
+
+    if [[ "$result" == git@* ]]; then
+        result=$(
+            printf '%s\n' "$result" |
+                sed 's|^git@$$[^:]*$$:$$.*$$|https://\1/\2|'
+        )
+    fi
+
+    result="${result%.git}"
+    printf '%s\n' "$result"
 }
-GIT_SOURCE=$(get_git_source)
 
 get_git_commit() {
-    git rev-parse HEAD
+    local directory="${1:-.}"
+    git -C "$directory" rev-parse HEAD 2>/dev/null || echo unknown
 }
-GIT_COMMIT=$(get_git_commit)
 
 get_git_tag() {
-    git describe --tags --abbrev=0 2>/dev/null || echo
+    local directory="${1:-.}"
+    git -C "$directory" describe --tags --abbrev=0 2>/dev/null || true
 }
-GIT_TAG=$(get_git_tag)
 
 get_git_clean_status() {
-    [ -z "$(git status --porcelain)" ] && echo clean || echo "dirty-$(git diff --binary HEAD | b3sum --no-names)"
+    local directory="${1:-.}"
+
+    if ! git -C "$directory" rev-parse --git-dir >/dev/null 2>&1; then
+        echo unknown
+    elif [[ -z "$(git -C "$directory" status --porcelain)" ]]; then
+        echo clean
+    else
+        echo "dirty-$(
+            git -C "$directory" diff --binary HEAD |
+                b3sum --no-names
+        )"
+    fi
 }
+
+GIT_SOURCE=$(get_git_source)
+GIT_COMMIT=$(get_git_commit)
+GIT_TAG=$(get_git_tag)
+
 if [[ -n "${BENCHMARK_GIT_CLEAN_STATUS_OVERRIDE:-}" ]]; then
     GIT_CLEAN_STATUS="$BENCHMARK_GIT_CLEAN_STATUS_OVERRIDE"
 else
     GIT_CLEAN_STATUS=$(get_git_clean_status)
 fi
 
+# Print metadata captured when tools.sh was sourced.
 print_git_metadata() {
     echo "git source: $GIT_SOURCE"
     echo "git commit: $GIT_COMMIT"
     echo "git tag: $GIT_TAG"
     echo "git clean status: $GIT_CLEAN_STATUS"
+}
+
+# Dynamically inspect the repository at DIRECTORY.
+print_current_git_metadata() {
+    local directory="${1:-.}"
+
+    echo "git source: $(get_git_source "$directory")"
+    echo "git commit: $(get_git_commit "$directory")"
+    echo "git tag: $(get_git_tag "$directory")"
+    echo "git clean status: $(get_git_clean_status "$directory")"
 }
 
 get_cpu_type_str() {
