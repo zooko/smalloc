@@ -136,7 +136,13 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
     all_tests = set()
     for alloc_ratios in ratios.values():
         for test_name in alloc_ratios.keys():
-            if test_name.startswith(f"{test_type}_"):
+            if (
+                    test_name.startswith(f"{test_type}_")
+                    and (
+                        test_type != "mt"
+                        or test_name.endswith("ww-32")
+                    )
+            ):
                 all_tests.add(test_name)
 
     tests = sorted(all_tests)
@@ -247,7 +253,7 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
   </style>\n''')
 
     # Title
-    type_label = "Single-Threaded" if test_type == "st" else "Multi-Threaded"
+    type_label = "Single-Threaded" if test_type == "st" else "Multi-Threaded (32 Threads)"
     title_y = 30
     svg_parts.append(f'  <text x="{svg_width/2}" y="{title_y}" class="title" text-anchor="middle">{type_label} Performance by Test</text>\n')
     scale_label = "log scale" if use_log_scale else "linear scale"
@@ -374,6 +380,10 @@ def generate_detailed_graph(ratios, results, test_type, output_file, metadata_di
         # Test label below group
         group_center_x = group_x + (n_allocators * bar_width) / 2
         test_label = test.split('_', 1)[1] if '_' in test else test
+        if test_type == "mt":
+            test_label = test_label.removesuffix("-32")
+        if test_type == "st":
+            test_label = test_label.removesuffix("-1")
         svg_parts.append(f'  <text x="{group_center_x}" y="{chart_bottom_y + 20}" class="test-label" text-anchor="middle">{metadata.escape_xml(test_label)}</text>\n')
 
     # Legend

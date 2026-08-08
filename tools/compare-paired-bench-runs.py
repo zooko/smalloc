@@ -62,10 +62,6 @@ INVARIANT_METADATA_FIELDS = tuple(
     if key != "timestamp"
 )
 
-ROUNDS = 20
-T_CRITICAL_95_DF_19 = 2.093024054
-
-
 def parse_integer(text):
     text = text.strip()
     multiplier = 1
@@ -116,13 +112,32 @@ def parse_file(filename):
     return results, run_metadata
 
 
-def load_runs(directory):
+def discover_rounds(directory):
+    paired_runs = directory / "tmp/paired-runs"
+
+    rounds = sorted(
+        int(filename.stem)
+        for filename in paired_runs.glob("*.txt")
+        if filename.stem.isdigit()
+    )
+
+    if not rounds:
+        raise SystemExit(f"no numbered benchmark runs found in {paired_runs}")
+
+    return rounds
+
+
+def load_runs(directory, round_numbers):
     runs = []
     metadata_runs = []
     filenames = []
 
-    for round_number in range(1, ROUNDS + 1):
-        filename = directory / "tmp/paired-runs" / f"{round_number:02d}.txt"
+    for round_number in round_numbers:
+        filename = (
+            directory
+            / "tmp/paired-runs"
+            / f"{round_number:02d}.txt"
+        )
         results, run_metadata = parse_file(filename)
 
         assert results, f"no benchmark results in {filename}"
@@ -132,7 +147,6 @@ def load_runs(directory):
         filenames.append(filename)
 
     return runs, metadata_runs, filenames
-
 
 def validate_candidate_metadata(
     candidate_name,
@@ -215,19 +229,35 @@ def geometric_mean(values):
     return math.exp(mean([math.log(value) for value in values]))
 
 
+def median_confidence_interval(values, confidence=0.95):
+    values = sorted(values)
+    n = len(values)
+    tail_probability = (1 - confidence) / 2
+    cumulative_probability = 0
+    k = 0
+
+    for i in range(n):
+        cumulative_probability += math.comb(n, i) / 2**n
+
+        if cumulative_probability <= tail_probability:
+            k = i + 1
+        else:
+            break
+
+    if k == 0:
+        return values[0], values[-1]
+
+    return values[k - 1], values[n - k]
+
+
 def paired_summary(old, new):
-    log_ratios = [
-        math.log(new_value / old_value)
+    ratios = [
+        new_value / old_value
         for old_value, new_value in zip(old, new)
     ]
 
-    average = mean(log_ratios)
-    standard_error = statistics.stdev(log_ratios) / math.sqrt(len(log_ratios))
-    margin = T_CRITICAL_95_DF_19 * standard_error
-
-    ratio = math.exp(average)
-    lower = math.exp(average - margin)
-    upper = math.exp(average + margin)
+    ratio = statistics.median(ratios)
+    lower, upper = median_confidence_interval(ratios)
 
     return ratio, lower, upper
 
@@ -280,11 +310,38 @@ def category_summary(name, selected):
     }
 
 
+old_round_numbers = discover_rounds(old_directory)
+new_round_numbers = discover_rounds(new_directory)
+
+if old_round_numbers != new_round_numbers:
+    old_only = sorted(set(old_round_numbers) - set(new_round_numbers))
+    new_only = sorted(set(new_round_numbers) - set(old_round_numbers))
+
+    errors = ["baseline and test candidates have different paired rounds"]
+
+    if old_only:
+        errors.append(
+            "  only in baseline: "
+            + ", ".join(map(str, old_only))
+        )
+
+    if new_only:
+        errors.append(
+            "  only in test: "
+            + ", ".join(map(str, new_only))
+        )
+
+    raise SystemExit("\n".join(errors))
+
+round_numbers = old_round_numbers
+
 old_runs, old_metadata, old_filenames = load_runs(
-    old_directory
+    old_directory,
+    round_numbers,
 )
 new_runs, new_metadata, new_filenames = load_runs(
-    new_directory
+    new_directory,
+    round_numbers,
 )
 
 validate_candidate_metadata(
@@ -329,7 +386,7 @@ name_width = max(len("benchmark"), max(len(row["name"]) for row in rows))
 
 print(f"Baseline directory: {old_directory}")
 print(f"Test directory:     {new_directory}")
-print(f"Paired rounds:      {ROUNDS}")
+print(f"Paired rounds:      {len(round_numbers)}")
 print(f"Benchmarks:         {len(rows)}")
 print()
 
@@ -344,13 +401,18 @@ print_candidate_metadata(
 print()
 print("* = 95% paired interval excludes zero")
 print()
-print("Per-benchmark paired comparison")
-print("-------------------------------")
+print("Per-benchmark paired comparison:")
 print(
     f"{'benchmark':<{name_width}}  "
-    f"{'old median':>12}  "
-    f"{'new median':>12}  "
-    f"{'difference':>12}"
+    f"{'old':>12}  "
+    f"{'new':>12}  "
+    f"{'paired diff':>12}"
+)
+print(
+    f"{'-'*len('benchmark'):<{name_width}}  "
+    f"{'-'*len('old'):>12}  "
+    f"{'-'*len('new'):>12}  "
+    f"{'-'*len('paired diff'):>12}"
 )
 
 for row in rows:
@@ -492,13 +554,18 @@ category_width = max(
 )
 
 print()
-print("Category trends")
-print("---------------")
+print("Category trends:")
 print(
     f"{'category':<{category_width}}  "
     f"{'n':>3}  "
     f"{'median diff':>13}  "
     f"{'range':>21}  "
+)
+print(
+    f"{'-'*len('category'):<{category_width}}  "
+    f"{'-'*len('n'):>3}  "
+    f"{'-'*len('median diff'):>13}  "
+    f"{'-'*len('range'):>21}  "
 )
 
 for summary in summaries:
