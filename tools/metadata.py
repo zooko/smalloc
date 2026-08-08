@@ -54,7 +54,47 @@ def escape_xml(text):
     """Escape special XML characters."""
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
+def escape_xml_comment(text):
+    """Make text legal inside an XML comment."""
+    text = str(text).replace("--", "- -")
+
+    # XML comment content must not end with a hyphen.
+    if text.endswith("-"):
+        text += " "
+
+    return text
+
 def add_svg_metadata(args, metadata_y, svg_parts, svg_width):
+    # Add complete metadata as a non-rendered XML comment.
+    comment_fields = [
+        ("timestamp", args.timestamp),
+        ("git source", args.git_source),
+        ("git commit", args.git_commit),
+        ("git tag", args.git_tag),
+        ("git clean status", args.git_clean_status),
+        ("CPU", args.cpu),
+        ("OS", args.os),
+        ("CPU count", args.cpu_count),
+        ("smalloc version", args.smalloc_dep_version),
+    ]
+
+    comment_fields = [
+        (name, value)
+        for name, value in comment_fields
+        if value is not None and str(value).strip()
+    ]
+
+    if comment_fields:
+        svg_parts.append("  <!--\n")
+        svg_parts.append("  Benchmark metadata\n")
+
+        for name, value in comment_fields:
+            line = escape_xml_comment(f"{name}: {value}")
+            svg_parts.append(f"  {line}\n")
+
+        svg_parts.append("  -->\n")
+
+    # Keep the existing visibly rendered metadata.
     line0_parts = []
     if args.timestamp:
         line0_parts.append(f"Timestamp: {args.timestamp}")
@@ -69,7 +109,9 @@ def add_svg_metadata(args, metadata_y, svg_parts, svg_width):
 
     line2_parts = []
     if args.git_clean_status:
-        line2_parts.append(f"Git Clean Status: {args.git_clean_status}")
+        line2_parts.append(
+            f"Git Clean Status: {args.git_clean_status}"
+        )
 
     line3_parts = []
     if args.cpu:
@@ -79,11 +121,29 @@ def add_svg_metadata(args, metadata_y, svg_parts, svg_width):
     if args.cpu_count:
         line3_parts.append(f"CPU count: {args.cpu_count}")
 
-    if line0_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y}" class="metadata" text-anchor="middle">{escape_xml(" · ".join(line0_parts))}</text>\n')
-    if line1_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 14}" class="metadata" text-anchor="middle">{" · ".join(line1_parts)}</text>\n')
-    if line2_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 28}" class="metadata" text-anchor="middle">{" · ".join(line2_parts)}</text>\n')
-    if line3_parts:
-        svg_parts.append(f'  <text x="{svg_width/2}" y="{metadata_y + 42}" class="metadata" text-anchor="middle">{" · ".join(line3_parts)}</text>\n')
+    line4_parts = []
+    if args.smalloc_dep_version:
+        line4_parts.append(
+            f"smalloc version: {args.smalloc_dep_version}"
+        )
+
+    visible_lines = [
+        (0, line0_parts),
+        (14, line1_parts),
+        (28, line2_parts),
+        (42, line3_parts),
+        (56, line4_parts),
+    ]
+
+    for offset, parts in visible_lines:
+        if not parts:
+            continue
+
+        text = escape_xml(" · ".join(parts))
+
+        svg_parts.append(
+            f'  <text x="{svg_width / 2}" '
+            f'y="{metadata_y + offset}" '
+            f'class="metadata" text-anchor="middle">'
+            f"{text}</text>\n"
+        )
