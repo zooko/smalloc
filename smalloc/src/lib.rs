@@ -71,7 +71,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             let inner = self.inner();
-            inner.alloc(sc, false, inner.get_or_init_smbp())
+            inner.alloc(sc, false, inner.get_slot_prefix())
         }
     }
 
@@ -97,7 +97,7 @@ unsafe impl GlobalAlloc for Smalloc {
             null_mut()
         } else {
             let inner = self.inner();
-            inner.alloc(sc, true, inner.get_or_init_smbp())
+            inner.alloc(sc, true, inner.get_slot_prefix())
         }
     }
 
@@ -142,7 +142,8 @@ unsafe impl GlobalAlloc for Smalloc {
             // The "Growers" strategy.
             let reqsc = if (plat::p::SC_FOR_PAGE..GROWERS_SC).contains(&reqsc) { GROWERS_SC } else { reqsc };
 
-            let newp = inner.alloc(reqsc, false, ptr_to_smbp(p_addr));
+            let slot_prefix = p_addr & !SN_D_T_SC_BITS_MASK;
+            let newp = inner.alloc(reqsc, false, slot_prefix);
             if newp.is_null() {
                 // smalloc slots must be exhausted
                 return newp;
@@ -204,6 +205,25 @@ pub mod i {
             }
         }
 
+        #[inline(always)]
+        pub fn get_slot_prefix(&self) -> usize {
+            SLOT_PREFIX.with(|cell| {
+                let slot_prefix = cell.get();
+
+                if slot_prefix != 0 {
+                    slot_prefix
+                } else {
+                    let smbp = self.get_or_init_smbp();
+                    let threadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
+                    let slabnum = threadnum & SLABNUM_BITS_ALONE_MASK;
+                    let slot_prefix = smbp | (slabnum as usize) << SLABNUM_ADDR_SHIFT_BITS;
+
+                    cell.set(slot_prefix);
+                    slot_prefix
+                }
+            })
+        }
+
         // AI usage note: this design of initialization was co-designed by GPT-5.6 Sol and me, and
         // this implementation was written by GPT-5.6 Sol and then I manually retyped it from the
         // chat window into here one character at a time to change it to my preferred style and to
@@ -239,14 +259,15 @@ pub mod i {
 
         #[inline(always)]
         /// zeromem says whether to ensure that the allocated memory is all zeroed out or not
-        pub fn alloc(&self, orig_sc: SizeClass, zeromem: bool, smbp: usize) -> *mut u8 {
+        pub fn alloc(&self, orig_sc: SizeClass, zeromem: bool, orig_slot_prefix: usize) -> *mut u8 {
             debug_assert!(orig_sc >= NUM_UNUSED_SCS);
             debug_assert!(orig_sc < NUM_SCS);
+            debug_assert!(could_be_slot_prefix(orig_slot_prefix));
+            debug_assert!(orig_slot_prefix & !SMALLOC_ADDR_MASK == self.smbp.load(Relaxed));
 
             // If the slab is full, or if there is a collision when updating the flh, we'll switch to
             // another slab in this same sizeclass.
-            let orig_slabnum = get_slabnum();
-            let mut slabnum = orig_slabnum;
+            let mut slot_prefix = orig_slot_prefix;
             let mut a_slab_was_full = false;
 
             // If all slabs in the sizeclass are full, we'll switch to the next sizeclass.
@@ -254,8 +275,9 @@ pub mod i {
 
             loop {
                 // The flhptr for this sizeclass and slabnum is at this location:
-                let slabnum_and_sc = (slabnum as usize) << NUM_SC_BITS | sc as usize;
-                let flhptr = smbp | slabnum_and_sc << FLHWORD_SIZE_BITS;
+                let flhptr = (slot_prefix & !SMALLOC_ADDR_MASK)
+                    | ((slot_prefix & SLABNUM_BITS_ADDR_MASK) >> SLOTADDR_TO_FLHADDR_SHIFT_BITS)
+                    | (sc as usize) << FLHWORD_SIZE_BITS;
 
                 // Load the value from the flh
                 let flh = unsafe { AtomicU64::from_ptr(flhptr as *mut u64) };
@@ -281,7 +303,9 @@ pub mod i {
                     // There is a slot available in the free list.
 
                     // Here's the pointer to the current first entry:
-                    let curfirstentry_p = smbp | (slabnum_and_sc << NUM_SN_D_T_BITS) | (curfirstentryslotnum as usize) << sc;
+                    let curfirstentry_p = slot_prefix
+                        | (sc as usize) << NUM_SN_D_T_BITS
+                        | (curfirstentryslotnum as usize) << sc;
                     debug_assert!(self.is_smalloc_ptr(curfirstentry_p), "curfirstentry_p: {curfirstentry_p}/{curfirstentry_p:b}");
 
                     let next_entry = if curfirstentrynexttouchedbit != 0 {
@@ -331,30 +355,30 @@ pub mod i {
                             unsafe { core::ptr::write_bytes(curfirstentry_p as *mut u8, 0, 1 << sc) };
                         }
 
-                        if slabnum != orig_slabnum {
+                        if slot_prefix != orig_slot_prefix {
                             // The slabnum changed. Save the new slabnum for next time.
-                            set_slab_num(slabnum);
+                            set_slot_prefix(slot_prefix);
                         }
 
                         break curfirstentry_p as *mut u8;
                     } else {
                         // We encountered an update collision on the flh. Fail over to a different
                         // slab in the same size class.
-                        slabnum = failover_slabnum(slabnum);
+                        slot_prefix = failover_slot_prefix(slot_prefix);
                     }
                 } else {
                     // If we got here then curfirstentryslotnum == sentinelslotnum, meaning no next
                     // entry, meaning the free list is empty, meaning this slab is full. Overflow to a
                     // different slab in the same size class.
 
-                    slabnum = failover_slabnum(slabnum);
+                    slot_prefix = failover_slot_prefix(slot_prefix);
 
-                    if slabnum != orig_slabnum {
+                    if slot_prefix != orig_slot_prefix {
                         // We have not necessarily cycled through all slabs in this sizeclass yet,
                         // so keep trying, but make a note that at least one of the slabs in this
-                        // sizeclass was full. (Note that if orig_slabnum is the only one that is
-                        // full then we'll cycle through all of them *twice* before failing over to
-                        // a bigger sizeclass. That's fine.)
+                        // sizeclass was full. (Note that if the slab indicated by orig_slot_prefix
+                        // is the only one that is full then we'll cycle through all of them *twice*
+                        // before failing over to a bigger sizeclass. That's fine.)
                         a_slab_was_full = true;
                     } else {
                         // ... meaning we've tried each slab in this size class at least once and
@@ -477,6 +501,9 @@ pub mod i {
     // This is how many bits hold the data, the slotnum, and the next-touched-bit:
     pub const NUM_SN_D_T_BITS: u8 = NUM_UNUSED_SCS + NUM_SCS; // 34
 
+    // Mask of all the slotnum, data, touched, and sc bits:
+    pub const SN_D_T_SC_BITS_MASK: usize = gen_mask!(NUM_SN_D_T_BITS + NUM_SC_BITS, usize);
+
     // How many bits that we can independently control fit into the allocatable space?
     const fn bits_holdable(n: usize) -> u8 {
         assert!(n > 0);
@@ -486,6 +513,9 @@ pub mod i {
     // smalloc region to have all of its trailing bits 0 so that we can do nice bitwise arithmetic
     // on smalloc pointers.
     pub const SMALLOC_REGION_BITS: u8 = bits_holdable(ALLOCATABLE) - 1;
+
+    // Mask covering all of the bits of an address within the smalloc region.
+    pub const SMALLOC_ADDR_MASK: usize = gen_mask!(SMALLOC_REGION_BITS, usize);
 
     // There are 2^NUM_SLABS_BITS slabs in each size class. Here we calculate the the largest number
     // of slabs we can accomodate within the limits of the virtual memory address space, given the
@@ -499,16 +529,24 @@ pub mod i {
 
     // This is how many bits to shift a slabnum to the left to fit it into a slot/data address:
     pub const SLABNUM_ADDR_SHIFT_BITS: u8 = NUM_SN_D_T_BITS + NUM_SC_BITS; // 39
+
+    // This is how many bits to shift a slabnum and/or sc to the right to move it from its position
+    // in a slot/data address to its position in an flh address:
+    pub const SLOTADDR_TO_FLHADDR_SHIFT_BITS: u8 = SLABNUM_ADDR_SHIFT_BITS - NUM_SC_BITS - FLHWORD_SIZE_BITS; // 31
+
     // Mask of the bits of the slabnum in a slot's or data byte's address:
     pub const SLABNUM_BITS_ADDR_MASK: usize = (SLABNUM_BITS_ALONE_MASK as usize) << SLABNUM_ADDR_SHIFT_BITS; // 0b111111000000000000000000000000000000000000000
 
     // Mask of the bits of the sizeclass in a slot's address:
     pub const SC_BITS_ADDR_MASK: usize = gen_mask!(NUM_SC_BITS, usize) << NUM_SN_D_T_BITS; // 0b111110000000000000000000000000000000000
 
+    // Mask of the bits of the slabnum and the sc in a slot's or data byte's address:
+    pub const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK; // 0b111111111110000000000000000000000000000000000
+
     // The following constants are just for calculating lowest and highest addresses which are used
     // for bounds checking. The highest address is also used to calculate the total virtual memory
     // address space we need to reserve.
-    
+
     pub const NUM_SLOTS_IN_HIGHEST_SC: u64 = 1 << NUM_UNUSED_SCS; // 4
     pub const HIGHEST_SLOTNUM_IN_HIGHEST_SC: u64 = NUM_SLOTS_IN_HIGHEST_SC - 2; // 2; The extra -1 is because the last slot isn't used since its slotnum is the sentinel slotnum.
 
@@ -518,9 +556,9 @@ pub mod i {
     pub const LOWEST_SMALLOC_SLOT_ADDR: usize = (NUM_UNUSED_SCS as usize) << NUM_SN_D_T_BITS; // 0b100000000000000000000000000000000000
 
     // The smalloc address of the slot with the highest address is:
-    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111111110100000000000000000000000000000000 == 35_173_634_670_591
+    pub const HIGHEST_SMALLOC_SLOT_ADDR: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK | (HIGHEST_SLOTNUM_IN_HIGHEST_SC as usize) << DATA_ADDR_BITS_IN_HIGHEST_SC; // 0b111111111110100000000000000000000000000000000 == 35_171_487_186_944
 
-    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_BYTE_ADDR + 1 + EXTRA_ALLOC_FOR_ALIGN; // 0b111111111110101111111111111111111111111111111 == 70_358_006_755_328
+    pub const TOTAL_VIRTUAL_MEMORY: usize = HIGHEST_SMALLOC_BYTE_ADDR + 1 + EXTRA_ALLOC_FOR_ALIGN; // 0b1111111111110101111111111111111111000000000000 == 70_358_006_755_328
 
     /// The size class of the given pointer.
     #[inline(always)]
@@ -531,10 +569,6 @@ pub mod i {
 
 pub use i::*;
 
-
-// ---- Constant having to do with slab failover ----
-
-const SLABNUM_ALONE_MASK: u8 = gen_mask!(NUM_SLABS_BITS, u8); // 0b111111
 
 // ---- Constant having to do with slot (and free list) pointers ----
 
@@ -561,7 +595,7 @@ const ENTRY_SLOTNUM_MASK: u32 = gen_mask!(NUM_SN_BITS, u32);
 // ---- Constants for calculating the total virtual address space to reserve ----
 
 // The smalloc address of the highest-addressed byte of a smalloc slot is:
-const HIGHEST_SMALLOC_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111111111101111111111111111111111111111111
+const HIGHEST_SMALLOC_BYTE_ADDR: usize = HIGHEST_SMALLOC_SLOT_ADDR | gen_mask!(DATA_ADDR_BITS_IN_HIGHEST_SC, usize); // 0b111111111110101111111111111111111111111111111 == 35_173_634_670_591
 
 // We need to allocate extra bytes so that we can align the smalloc base pointer so that all of the
 // trailing bits of the smalloc base pointer are zeros.
@@ -592,58 +626,45 @@ use core::sync::atomic::AtomicU8;
 use core::cell::Cell;
 
 static GLOBAL_THREAD_NUM: AtomicU8 = AtomicU8::new(0);
-const SLAB_NUM_SENTINEL: SlabNum = SlabNum::MAX;
+
 thread_local! {
-    // "Slab And Step NUMbers" xxx
-    static SAS_NUMS: Cell<SlabNum> = const { Cell::new(SLAB_NUM_SENTINEL) };
+    static SLOT_PREFIX: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Get the slab number for this thread. On first call, initializes xxx
+// xxx maybe move this somewhere else in this file
 #[inline(always)]
-fn get_slabnum() -> SlabNum {
+fn could_be_slot_prefix(candidate_slot_prefix: usize) -> bool {
+    let candidate_smbp = candidate_slot_prefix & !SMALLOC_ADDR_MASK;
+    let candidate_slabnum_bits = candidate_slot_prefix & SLABNUM_BITS_ADDR_MASK;
 
-    SAS_NUMS.with(|cell| {
-        let slabnum = cell.get();
-        if slabnum == SLAB_NUM_SENTINEL {
-            let threadnum = GLOBAL_THREAD_NUM.fetch_add(1, Relaxed);
-            let slabnum = threadnum & SLABNUM_ALONE_MASK;
-            cell.set(slabnum);
-            slabnum
-        } else {
-            slabnum
-        }
-    })
+    candidate_smbp != 0
+        && candidate_slot_prefix == (candidate_smbp | candidate_slabnum_bits)
+        && candidate_smbp.checked_add(HIGHEST_SMALLOC_BYTE_ADDR).is_some()
 }
 
 #[inline(always)]
-fn set_slab_num(slabnum: SlabNum) {
-    SAS_NUMS.with(|cell| {
-        cell.set(slabnum);
+fn set_slot_prefix(slot_prefix: usize) {
+    debug_assert!(could_be_slot_prefix(slot_prefix));
+
+    SLOT_PREFIX.with(|cell| {
+        cell.set(slot_prefix);
     });
 }
 
-/// Pick a new slab to fail over to. This is used in two cases in `inner_alloc()`: a. when a slab is
-/// full, and b. when there is a multithreading collision on the flh.
-///
-/// xxx made it simpler update docs xxx; Which new slabnumber shall we fail over to? A certain number, d, added to the current slab
-/// number, and d should have these properties:
-///
-/// 1. It should be relatively prime to the number of slabs so that we will try all slabs before
-///    returning to the original one.
-///
-/// 2. It should use the information from the thread number, not just the (strictly lesser)
-///    information from the original slab number.
-/// 
-/// 3. It should be relatively prime to each other d used by other threads so that multiple threads
-///    stepping at once will minimally "step" on each other (e.g. if one thread increased its slab
-///    number by 3 and another by 6, then they'd be more likely to re-collide before trying all
-///    possible slab numbers, but if they're relatively prime to each other then they'll be
-///    minimally likely to recollide soon). This implies that d needs to be prime, which also
-///    satisfies requirement 1 above.
 #[inline(always)]
-fn failover_slabnum(slabnum: SlabNum) -> SlabNum {
+fn failover_slot_prefix(slot_prefix: usize) -> usize {
+    debug_assert!(could_be_slot_prefix(slot_prefix));
+
     const SLAB_FAILOVER_NUM: SlabNum = (1u8 << NUM_SLABS_BITS) / 3; // 21
-    (slabnum.wrapping_add(SLAB_FAILOVER_NUM)) & SLABNUM_ALONE_MASK
+    const SLAB_FAILOVER_ADDR: usize = (SLAB_FAILOVER_NUM as usize) << SLABNUM_ADDR_SHIFT_BITS;
+
+    let new_slot_prefix =
+        (slot_prefix & !SLABNUM_BITS_ADDR_MASK)
+        | (slot_prefix.wrapping_add(SLAB_FAILOVER_ADDR) & SLABNUM_BITS_ADDR_MASK);
+
+    debug_assert!(could_be_slot_prefix(new_slot_prefix));
+
+    new_slot_prefix
 }
 
 #[doc(hidden)]
@@ -675,30 +696,21 @@ fn ptr_to_slotnum(p_addr: usize) -> SlotNum {
 }
 
 #[inline(always)]
-/// Return the sentinel slotnum for this size class.
+/// The sentinel slotnum for this size class.
 fn sc_to_sentinel_slotnum(sc: SizeClass) -> SlotNum {
     gen_mask!(NUM_SN_BITS - (sc - NUM_UNUSED_SCS), SlotNum)
 }
 
 #[inline(always)]
-/// Return the address of the smbp.
-fn ptr_to_smbp(p_addr: usize) -> usize {
-    // Zero out all the smalloc-addr bits from the p_addr
-    const SMALLOC_ADDR_MASK: usize = gen_mask!(SMALLOC_REGION_BITS, usize);
-
-    p_addr & !SMALLOC_ADDR_MASK
-}
-
-#[inline(always)]
-/// Return the address of the flh for this slab.
+/// The address of the flh for this slab.
 fn ptr_to_flhaddr(p_addr: usize) -> usize {
     // The flhptr for this sizeclass and slabnum is at this location, which we can calculate by
     // masking in the slabnum and sizeclass bits from the address and shifting them right:
-    const SLABNUM_AND_SC_ADDR_MASK: usize = SLABNUM_BITS_ADDR_MASK | SC_BITS_ADDR_MASK;
-    let flhbits = (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> (NUM_SN_D_T_BITS - FLHWORD_SIZE_BITS);
+    let flhbits = (p_addr & SLABNUM_AND_SC_ADDR_MASK) >> SLOTADDR_TO_FLHADDR_SHIFT_BITS;
 
-    // Get the smbp, OR in the flh addr bits, and you've got your flh addr.
-    ptr_to_smbp(p_addr) | flhbits
+    // Zero out all the smalloc-addr bits from the p_addr, OR in the flh addr bits, and you've got
+    // your flh addr.
+    (p_addr & !SMALLOC_ADDR_MASK) | flhbits
 }
 
 #[cfg(test)]

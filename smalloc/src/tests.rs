@@ -4,6 +4,14 @@ use std::sync::atomic::Ordering::Relaxed;
 use crate::*;
 use std::alloc::{Layout, GlobalAlloc};
 
+fn get_slabnum(sm: &Smalloc) -> SlabNum {
+    let slot_prefix = sm.inner().get_slot_prefix();
+
+    assert!(could_be_slot_prefix(slot_prefix));
+
+    ((slot_prefix & SLABNUM_BITS_ADDR_MASK) >> SLABNUM_ADDR_SHIFT_BITS) as SlabNum
+}
+
 /// If we've allocated all the slots from a slab, the next allocation of that sizeclass comes
 /// from a different slab of the same sizeclass. This test doesn't work for the largest
 /// sizeclass simply because the test assumes you can allocate 2 slots...
@@ -12,12 +20,11 @@ fn help_test_overflow_to_other_slab(sc: u8) {
     debug_assert!(sc <= (NUM_SCS - 2)); // This test code needs at least 3 slots.
 
     let sm = get_testsmalloc();
-    sm.inner().get_or_init_smbp();
 
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
 
-    let slabnum = get_slabnum();
+    let slabnum = get_slabnum(sm);
     debug_assert!(slabnum < NUM_SLABS, "slabnum: {slabnum}, NUM_SLABS: {NUM_SLABS}");
 
     let numslots = help_numslots(sc);
@@ -100,7 +107,7 @@ fn help_test_overflow_to_other_sizeclass_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = get_slabnum();
+    let slabnum = get_slabnum(sm);
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -150,7 +157,7 @@ fn help_test_overflow_to_other_sizeclass_twice_at_once(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = get_slabnum();
+    let slabnum = get_slabnum(sm);
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -208,7 +215,7 @@ fn help_test_overflow_to_other_sizeclass_twice_in_a_row(sc: u8) {
     let siz = help_slotsize(sc);
     let l = Layout::from_size_align(siz, 1).unwrap();
     let numslots = help_numslots(sc);
-    let slabnum = get_slabnum();
+    let slabnum = get_slabnum(sm);
 
     // Step 0: allocate a slot and store information about it in local variables:
     let p1 = unsafe { sm.alloc(l) };
@@ -292,7 +299,7 @@ fn help_alloc_four_times_singlethreaded(sm: &Smalloc, reqsize: usize, reqalign: 
 
     let l = Layout::from_size_align(reqsize, reqalign).unwrap();
 
-    let slabnum = get_slabnum();
+    let slabnum = get_slabnum(sm);
     let orig_slabnum = slabnum;
 
     let p1 = unsafe { sm.alloc(l) };
@@ -510,7 +517,6 @@ nextest_unit_tests! {
     /// allocation will fail.
     fn overflow_from_all_largest_large_slots_slabs() {
         let sm = get_testsmalloc();
-        sm.inner().get_or_init_smbp();
 
         let sc = NUM_SCS - 1;
         let siz = help_slotsize(sc);
@@ -521,6 +527,7 @@ nextest_unit_tests! {
         // Step 0: reach into each slab's `flh` and set it to the max slot number (which means the
         // free list is empty).
         for slabnum in 0..NUM_SLABS {
+            sm.inner().get_slot_prefix(); // initialize internal structure
             sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
         }
 
@@ -533,7 +540,6 @@ nextest_unit_tests! {
     /// allocation will come from another one.
     fn overflow_from_one_largest_large_slots_slab() {
         let sm = get_testsmalloc();
-        sm.inner().get_or_init_smbp();
 
         let sc = NUM_SCS - 1;
         let siz = help_slotsize(sc);
@@ -543,7 +549,7 @@ nextest_unit_tests! {
 
         // Step 0: reach into the current slab's `flh` and set it to the max slot number (which
         // means the free list is empty).
-        let slabnum = get_slabnum();
+        let slabnum = get_slabnum(sm);
         sm.help_set_flh_singlethreaded(sc, highestslotnum, slabnum);
 
         // Step 1: allocate a slot
