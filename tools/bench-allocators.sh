@@ -19,10 +19,11 @@ rm -f $RESF "${GRAPH_BASE}*"
 echo "TIMESTAMP: ${TIMESTAMP}" 2>&1 | tee -a $RESF
 gather_and_print_git_metadata 2>&1 | tee -a $RESF
 print_machine_metadata 2>&1 | tee -a $RESF
+echo "smalloc version: $(get_smalloc_dep_version .)" 2>&1 | tee -a $RESF
 
 ALLOCATORS=$(IFS=,; echo "${ALLOCATOR_LIST[*]}")
 
-cargo --offline build --release --package bench --features=$ALLOCATORS
+cargo --locked --offline build --release --package bench --features=$ALLOCATORS
 
 ./target/release/bench "${SMALLOC_ONLY}" "${@}" 2>&1 | tee -a $RESF
 
