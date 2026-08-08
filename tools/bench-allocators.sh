@@ -17,7 +17,7 @@ mkdir -p ${OUTPUT_DIR}
 rm -f $RESF "${GRAPH_BASE}*"
 
 echo "TIMESTAMP: ${TIMESTAMP}" 2>&1 | tee -a $RESF
-gather_and_print_git_metadata 2>&1 | tee -a $RESF
+print_git_metadata 2>&1 | tee -a $RESF
 print_machine_metadata 2>&1 | tee -a $RESF
 echo "smalloc version: $(get_smalloc_dep_version .)" 2>&1 | tee -a $RESF
 

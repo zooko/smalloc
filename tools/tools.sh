@@ -27,13 +27,17 @@ GIT_TAG=$(get_git_tag)
 get_git_clean_status() {
     [ -z "$(git status --porcelain)" ] && echo clean || echo "dirty-$(git diff --binary HEAD | b3sum --no-names)"
 }
-GIT_CLEAN_STATUS=$(get_git_clean_status)
+if [[ -n "${BENCHMARK_GIT_CLEAN_STATUS_OVERRIDE:-}" ]]; then
+    GIT_CLEAN_STATUS="$BENCHMARK_GIT_CLEAN_STATUS_OVERRIDE"
+else
+    GIT_CLEAN_STATUS=$(get_git_clean_status)
+fi
 
-gather_and_print_git_metadata() {
-    echo "git source: $(get_git_source)"
-    echo "git commit: $(get_git_commit)"
-    echo "git tag: $(get_git_tag)"
-    echo "git clean status: $(get_git_clean_status)"
+print_git_metadata() {
+    echo "git source: $GIT_SOURCE"
+    echo "git commit: $GIT_COMMIT"
+    echo "git tag: $GIT_TAG"
+    echo "git clean status: $GIT_CLEAN_STATUS"
 }
 
 get_cpu_type_str() {
